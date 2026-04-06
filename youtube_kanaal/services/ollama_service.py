@@ -243,11 +243,7 @@ class OllamaService:
         if not narration and cleaned_facts:
             narration = " ".join(cleaned_facts)
         if cleaned_facts and len(narration.split()) < 45:
-            intro = f"Here are 3 facts about {topic_value}."
-            body = " ".join(f"Fact {index}: {fact}" for index, fact in enumerate(cleaned_facts, start=1))
-            outro = f"That is why {topic_value} stands out."
-            closer = f"That makes {topic_value} perfect for a fast visual Short packed with science and visuals."
-            narration = f"{intro} {body} {outro} {closer}"
+            narration = self._build_narration(topic_value, cleaned_facts)
         if len(narration.split()) < 45:
             narration = f"{narration} People remember {topic_value} because it looks so unusual on screen."
         repaired["narration"] = narration
@@ -258,15 +254,10 @@ class OllamaService:
 
     def _normalize_generated_short(self, content: GeneratedShort, topic: TopicChoice) -> GeneratedShort:
         facts = [self._normalize_sentence(fact) for fact in content.facts]
-        intro = f"Here are 3 facts about {topic.topic}."
-        body = " ".join(f"Fact {index}: {fact}" for index, fact in enumerate(facts, start=1))
-        outro = f"That is why {topic.topic} stands out."
-        closer = f"That makes {topic.topic} perfect for a fast visual Short packed with science and visuals."
+        narration_base = self._build_narration(topic.topic, facts)
         narration_candidates = [
-            f"{intro} {body} {outro} {closer} People remember {topic.topic} because it looks so unusual on screen.",
-            f"{intro} {body} {outro} {closer}",
-            f"{intro} {body} {outro}",
-            f"{intro} {body}",
+            f"{narration_base} People remember {topic.topic} because it looks so unusual on screen.",
+            narration_base,
             content.narration,
         ]
 
@@ -304,6 +295,19 @@ class OllamaService:
             cleaned = f"{cleaned}."
         return cleaned
 
+    def _build_narration(self, topic: str, facts: list[str]) -> str:
+        connectors = ["First", "Second", "Third"]
+        segments = [
+            f"{connector}, {self._normalize_sentence(fact)}"
+            for connector, fact in zip(connectors, facts)
+        ]
+        body = " ".join(segments)
+        return (
+            f"Here are 3 facts about {topic}. "
+            f"{body} "
+            f"That is why {topic} stands out, and why it works so well in a fast visual Short."
+        ).strip()
+
     def _fallback_topic(self, excluded_topics: list[str]) -> TopicChoice:
         excluded = {item.lower() for item in excluded_topics}
         for bucket, topic in chain.from_iterable(
@@ -333,9 +337,9 @@ class OllamaService:
         ]
         narration = (
             f"Here are 3 facts about {topic.topic}. "
-            f"Fact 1: {facts[0]} "
-            f"Fact 2: {facts[1]} "
-            f"Fact 3: {facts[2]} "
+            f"First, {facts[0]} "
+            f"Second, {facts[1]} "
+            f"Third, {facts[2]} "
             f"That is why {topic.topic} keeps showing up in science videos and documentaries."
         )
         return GeneratedShort(

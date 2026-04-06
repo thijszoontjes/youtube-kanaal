@@ -64,9 +64,13 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("PIPER_VOICE_MODEL_PATH"),
     )
     default_piper_voice: str = Field(
-        default="en_US-lessac-medium",
+        default="en_US-john-medium",
         validation_alias=AliasChoices("DEFAULT_PIPER_VOICE"),
     )
+    piper_length_scale: float = Field(default=1.0, validation_alias=AliasChoices("PIPER_LENGTH_SCALE"))
+    piper_noise_scale: float = Field(default=0.667, validation_alias=AliasChoices("PIPER_NOISE_SCALE"))
+    piper_noise_w_scale: float = Field(default=0.8, validation_alias=AliasChoices("PIPER_NOISE_W_SCALE"))
+    piper_sentence_silence: float = Field(default=0.12, validation_alias=AliasChoices("PIPER_SENTENCE_SILENCE"))
     whisper_cpp_binary: str = Field(
         default="whisper-cli",
         validation_alias=AliasChoices("WHISPER_CPP_BINARY"),
@@ -119,9 +123,13 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("MAX_SHORT_DURATION_SECONDS"),
     )
     subtitle_font_name: str = Field(default="Arial", validation_alias=AliasChoices("SUBTITLE_FONT_NAME"))
-    subtitle_font_size: int = Field(default=19, validation_alias=AliasChoices("SUBTITLE_FONT_SIZE"))
+    subtitle_font_size: int = Field(default=48, validation_alias=AliasChoices("SUBTITLE_FONT_SIZE"))
     subtitle_margin_v: int = Field(default=640, validation_alias=AliasChoices("SUBTITLE_MARGIN_V"))
-    subtitle_outline: int = Field(default=3, validation_alias=AliasChoices("SUBTITLE_OUTLINE"))
+    subtitle_outline: int = Field(default=5, validation_alias=AliasChoices("SUBTITLE_OUTLINE"))
+    subtitle_primary_color: str = Field(default="&H00FFFFFF", validation_alias=AliasChoices("SUBTITLE_PRIMARY_COLOR"))
+    subtitle_highlight_color: str = Field(default="&H006BFF7C", validation_alias=AliasChoices("SUBTITLE_HIGHLIGHT_COLOR"))
+    subtitle_outline_color: str = Field(default="&H00000000", validation_alias=AliasChoices("SUBTITLE_OUTLINE_COLOR"))
+    subtitle_back_color: str = Field(default="&H64000000", validation_alias=AliasChoices("SUBTITLE_BACK_COLOR"))
 
     @field_validator(
         "youtube_client_secret_path",

@@ -124,9 +124,9 @@ def test_ollama_service_normalizes_short_into_three_facts_intro(configured_env) 
 
     assert normalized.title == "3 Facts About Saturn"
     assert normalized.narration.startswith("Here are 3 facts about Saturn.")
-    assert "Fact 1:" in normalized.narration
-    assert "Fact 2:" in normalized.narration
-    assert "Fact 3:" in normalized.narration
+    assert "First," in normalized.narration
+    assert "Second," in normalized.narration
+    assert "Third," in normalized.narration
     assert normalized.subtitle_text == normalized.narration
 
 

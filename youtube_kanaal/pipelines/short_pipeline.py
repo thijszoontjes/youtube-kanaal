@@ -203,6 +203,11 @@ class ShortPipeline:
                 if not is_near_duplicate(content.title, recent_titles, self.settings.similarity_threshold):
                     runtime.stage_summaries["content_generation"] = content.model_dump(mode="json")
                     return content
+                if runtime.request.preferred_topic:
+                    retitled = self._retitle_requested_topic_content(content, recent_titles)
+                    if retitled is not None:
+                        runtime.stage_summaries["content_generation"] = retitled.model_dump(mode="json")
+                        return retitled
                 recent_titles.append(content.title)
                 last_error = PipelineStageError(
                     stage="content_generation",
@@ -252,7 +257,7 @@ class ShortPipeline:
         content: GeneratedShort,
         narration: NarrationAsset,
     ) -> list[VideoClipAsset]:
-        queries = list(dict.fromkeys(topic.visual_queries + content.keyword_queries()))
+        queries = self._build_video_queries(topic, content)
         with self._stage(runtime, "stock_video_download", {"queries": queries}):
             clips = self.pexels.fetch_clips(
                 queries=queries,
@@ -300,7 +305,7 @@ class ShortPipeline:
             output_path = self.ffmpeg.render_short(
                 plan=plan,
                 audio_path=narration.normalized_path,
-                subtitle_path=subtitles.srt_path,
+                subtitle_path=subtitles.ass_path or subtitles.srt_path,
                 working_dir=runtime.artifacts.video_dir,
                 output_path=final_video_path,
             )
@@ -533,6 +538,200 @@ class ShortPipeline:
         from youtube_kanaal.models.content import TOPIC_CATALOG
 
         return list(TOPIC_CATALOG.items())
+
+    def _retitle_requested_topic_content(
+        self,
+        content: GeneratedShort,
+        recent_titles: list[str],
+    ) -> GeneratedShort | None:
+        candidates = [
+            f"3 Facts About {content.topic}",
+            f"3 Wild Facts About {content.topic}",
+            f"3 Surprising Facts About {content.topic}",
+            f"3 Quick Facts About {content.topic}",
+            f"{content.topic}: 3 Facts You Should Know",
+        ]
+        payload = content.model_dump(mode="json")
+        for candidate in candidates:
+            if is_near_duplicate(candidate, recent_titles, self.settings.similarity_threshold):
+                continue
+            payload["title"] = candidate
+            return GeneratedShort.model_validate(payload)
+        return None
+
+    def _build_video_queries(self, topic: TopicChoice, content: GeneratedShort) -> list[str]:
+        topic_text = topic.topic
+        lowered_facts = " ".join(content.facts).lower()
+        queries: list[str] = []
+
+        if topic.bucket == "space":
+            queries.extend(
+                [
+                    f"{topic_text} in space",
+                    f"{topic_text} ringed planet" if "saturn" in topic_text.lower() else f"{topic_text} planet animation",
+                    f"{topic_text} planet animation",
+                    "solar system animation",
+                ]
+            )
+        elif topic.bucket == "animals":
+            if self._is_marine_topic(topic_text, lowered_facts):
+                queries.extend(
+                    [
+                        f"{topic_text} underwater",
+                        f"{topic_text} macro underwater",
+                        "reef macro ocean life",
+                        "underwater close up marine life",
+                    ]
+                )
+            else:
+                queries.extend(
+                    [
+                        f"{topic_text} close up",
+                        f"{topic_text} wildlife",
+                        f"{topic_text} nature",
+                        "animal close up",
+                    ]
+                )
+        elif topic.bucket == "ocean":
+            queries.extend(
+                [
+                    f"{topic_text} underwater",
+                    f"{topic_text} ocean",
+                    "underwater macro ocean life",
+                    "reef underwater",
+                ]
+            )
+        elif topic.bucket == "geography":
+            queries.extend(
+                [
+                    f"{topic_text} landscape",
+                    f"{topic_text} drone",
+                    f"{topic_text} nature",
+                    "travel landscape drone",
+                ]
+            )
+        elif topic.bucket == "architecture":
+            queries.extend(
+                [
+                    f"{topic_text} architecture",
+                    f"{topic_text} drone",
+                    f"{topic_text} exterior",
+                    "architectural detail",
+                ]
+            )
+        elif topic.bucket == "weather":
+            queries.extend(
+                [
+                    f"{topic_text} storm",
+                    f"{topic_text} sky",
+                    f"{topic_text} slow motion",
+                    "weather timelapse",
+                ]
+            )
+        elif topic.bucket == "food":
+            queries.extend(
+                [
+                    f"{topic_text} close up",
+                    f"{topic_text} preparation",
+                    f"{topic_text} macro",
+                    "food slow motion",
+                ]
+            )
+        elif topic.bucket == "human body":
+            queries.extend(
+                [
+                    f"{topic_text} anatomy animation",
+                    f"{topic_text} medical animation",
+                    "science animation body",
+                ]
+            )
+        elif topic.bucket == "history":
+            queries.extend(
+                [
+                    f"{topic_text} ruins",
+                    f"{topic_text} historical site",
+                    f"{topic_text} ancient architecture",
+                ]
+            )
+        elif topic.bucket == "inventions":
+            queries.extend(
+                [
+                    f"{topic_text} invention",
+                    f"{topic_text} machine close up",
+                    f"{topic_text} technology",
+                ]
+            )
+
+        queries.extend(self._fact_visual_queries(topic, content))
+        queries.extend(topic.visual_queries)
+        queries.extend(content.keyword_queries())
+        cleaned_queries = []
+        for query in queries:
+            normalized = " ".join(query.split()).strip()
+            if not normalized:
+                continue
+            if normalized.lower() == topic.bucket.lower():
+                continue
+            if topic.bucket == "space" and normalized.lower() == topic_text.lower():
+                continue
+            if normalized not in cleaned_queries:
+                cleaned_queries.append(normalized)
+        return cleaned_queries[:8]
+
+    def _is_marine_topic(self, topic: str, facts_text: str) -> bool:
+        marine_terms = {
+            "shrimp",
+            "octopus",
+            "octopuses",
+            "whale",
+            "whales",
+            "reef",
+            "coral",
+            "sea",
+            "ocean",
+            "mangrove",
+            "turtle",
+            "turtles",
+            "kelp",
+            "plankton",
+        }
+        combined = f"{topic} {facts_text}".lower()
+        return any(term in combined for term in marine_terms)
+
+    def _fact_visual_queries(self, topic: TopicChoice, content: GeneratedShort) -> list[str]:
+        fact_text = " ".join(content.facts).lower()
+        topic_text = topic.topic
+        queries: list[str] = []
+
+        keyword_map = {
+            "ring": f"{topic_text} ringed planet animation",
+            "rings": f"{topic_text} rings in space",
+            "moon": f"{topic_text} moon in space",
+            "moons": f"{topic_text} moon orbit animation",
+            "river": f"{topic_text} river aerial",
+            "rainforest": f"{topic_text} rainforest river",
+            "reef": f"{topic_text} reef underwater",
+            "coral": f"{topic_text} coral reef",
+            "underwater": f"{topic_text} underwater macro",
+            "ocean": f"{topic_text} ocean close up",
+            "storm": f"{topic_text} planet storm animation",
+            "lightning": f"{topic_text} lightning storm",
+            "mountain": f"{topic_text} mountain drone",
+            "volcano": f"{topic_text} volcano landscape",
+            "castle": f"{topic_text} castle exterior",
+            "bridge": f"{topic_text} bridge drone",
+            "brain": f"{topic_text} brain animation",
+            "heart": f"{topic_text} heart animation",
+            "fish": f"{topic_text} fish underwater",
+            "bird": f"{topic_text} bird close up",
+            "planet": f"{topic_text} in space",
+            "space": f"{topic_text} astronomy animation",
+        }
+
+        for keyword, query in keyword_map.items():
+            if keyword in fact_text and query not in queries:
+                queries.append(query)
+        return queries[:4]
 
 
 def validate_artifact_directory(run_id: str, run_dir: Path) -> ValidationResult:

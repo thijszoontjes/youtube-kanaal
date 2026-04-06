@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from youtube_kanaal.utils.subtitles import align_script_to_reference_srt, normalize_whisper_srt, parse_srt_text
+from youtube_kanaal.utils.subtitles import (
+    align_script_to_reference_srt,
+    build_ass_from_srt_text,
+    normalize_whisper_srt,
+    parse_srt_text,
+)
 
 
 def test_normalize_whisper_srt_splits_long_cues_into_shorter_chunks() -> None:
@@ -34,3 +39,27 @@ on the Mid-Atlantic Ridge.
 
     assert cues[0].text.startswith("Here")
     assert "Fact 1:" in aligned
+
+
+def test_build_ass_from_srt_text_creates_word_highlight_events() -> None:
+    srt_text = """1
+00:00:00,000 --> 00:00:02,000
+Here are 3 facts
+"""
+
+    ass_text = build_ass_from_srt_text(
+        srt_text,
+        font_name="Arial",
+        font_size=20,
+        margin_v=640,
+        outline=3,
+        primary_color="&H00FFFFFF",
+        highlight_color="&H006BFF7C",
+        outline_color="&H00000000",
+        back_color="&H64000000",
+    )
+
+    assert "[V4+ Styles]" in ass_text
+    assert "Dialogue:" in ass_text
+    assert "\\1c&H006BFF7C" in ass_text
+    assert "\\pos(540,1280)" in ass_text

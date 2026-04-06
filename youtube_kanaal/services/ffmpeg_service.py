@@ -97,8 +97,10 @@ class FFmpegService:
                     "-an",
                     "-c:v",
                     "libx264",
+                    "-threads",
+                    "2",
                     "-preset",
-                    "veryfast",
+                    "superfast",
                     "-crf",
                     "23",
                     str(segment_path),
@@ -137,6 +139,8 @@ class FFmpegService:
                 "1:a:0",
                 "-c:v",
                 "libx264",
+                "-threads",
+                "2",
                 "-preset",
                 "medium",
                 "-crf",
@@ -152,18 +156,7 @@ class FFmpegService:
             stage="video_rendering",
         )
 
-        style = (
-            f"FontName={self.settings.subtitle_font_name},"
-            f"FontSize={self.settings.subtitle_font_size},"
-            f"Outline={self.settings.subtitle_outline},"
-            f"MarginV={self.settings.subtitle_margin_v},"
-            "Alignment=2,MarginL=96,MarginR=96,Shadow=0,Bold=1,"
-            "PrimaryColour=&H00FFFFFF,BackColour=&H88000000"
-        )
-        subtitle_filter = (
-            f"subtitles=filename='{self._escape_filter_path(subtitle_path)}':original_size=1080x1920:"
-            f"force_style='{style}'"
-        )
+        subtitle_filter = self._subtitle_filter(subtitle_path)
         run_command(
             [
                 self.settings.ffmpeg_binary,
@@ -174,6 +167,8 @@ class FFmpegService:
                 subtitle_filter,
                 "-c:v",
                 "libx264",
+                "-threads",
+                "2",
                 "-preset",
                 "medium",
                 "-crf",
@@ -249,23 +244,40 @@ class FFmpegService:
         normalized = str(path.resolve()).replace("\\", "/")
         return normalized.replace(":", "\\:").replace("'", "\\'")
 
+    def _subtitle_filter(self, subtitle_path: Path) -> str:
+        if subtitle_path.suffix.lower() == ".ass":
+            return f"subtitles=filename='{self._escape_filter_path(subtitle_path)}':original_size=1080x1920"
+        style = (
+            f"FontName={self.settings.subtitle_font_name},"
+            f"FontSize={self.settings.subtitle_font_size},"
+            f"Outline={self.settings.subtitle_outline},"
+            f"MarginV={self.settings.subtitle_margin_v},"
+            "Alignment=2,MarginL=96,MarginR=96,Shadow=0,Bold=1,"
+            f"PrimaryColour={self.settings.subtitle_primary_color},"
+            f"BackColour={self.settings.subtitle_back_color}"
+        )
+        return (
+            f"subtitles=filename='{self._escape_filter_path(subtitle_path)}':original_size=1080x1920:"
+            f"force_style='{style}'"
+        )
+
     def _segment_filter(self, *, duration_seconds: float, variant: int) -> str:
         x_expr = (
-            "(in_w-out_w)/2+28*sin(t*0.95)"
+            "(in_w-out_w)/2+42*sin(t*1.10)"
             if variant % 2
-            else "(in_w-out_w)/2-24*sin(t*0.82)"
+            else "(in_w-out_w)/2-38*sin(t*0.95)"
         )
         y_expr = (
-            "(in_h-out_h)/2+18*cos(t*0.60)"
+            "(in_h-out_h)/2+28*cos(t*0.82)"
             if variant % 2
-            else "(in_h-out_h)/2+24*sin(t*0.55)"
+            else "(in_h-out_h)/2+34*sin(t*0.74)"
         )
         fade_out_start = max(duration_seconds - 0.18, 0.0)
         return (
-            "scale=1200:2134:force_original_aspect_ratio=increase,"
+            "scale=1080:1920:force_original_aspect_ratio=increase,"
             f"crop=1080:1920:x='{x_expr}':y='{y_expr}',"
-            "eq=saturation=1.18:contrast=1.08:brightness=0.02,"
-            "unsharp=5:5:0.6:3:3:0.0,"
+            "eq=saturation=1.24:contrast=1.12:brightness=0.03:gamma=0.98,"
+            "unsharp=5:5:0.75:3:3:0.0,"
             "fps=30,"
             f"fade=t=in:st=0:d=0.14,fade=t=out:st={fade_out_start:.2f}:d=0.14,"
             "format=yuv420p"
@@ -280,15 +292,6 @@ class FFmpegService:
     ) -> Path:
         if command_exists(self.settings.ffmpeg_binary):
             duration_seconds = self.audio_duration_seconds(audio_path)
-            subtitle_filter = (
-                f"subtitles=filename='{self._escape_filter_path(subtitle_path)}':original_size=1080x1920:"
-                f"force_style='FontName={self.settings.subtitle_font_name},"
-                f"FontSize={self.settings.subtitle_font_size},"
-                f"Outline={self.settings.subtitle_outline},"
-                f"MarginV={self.settings.subtitle_margin_v},"
-                "Alignment=2,MarginL=96,MarginR=96,Shadow=0,Bold=1,"
-                "PrimaryColour=&H00FFFFFF,BackColour=&H88000000'"
-            )
             run_command(
                 [
                     self.settings.ffmpeg_binary,
@@ -299,8 +302,6 @@ class FFmpegService:
                     f"color=c=black:s=1080x1920:r=30:d={duration_seconds:.2f}",
                     "-i",
                     str(audio_path),
-                    "-vf",
-                    subtitle_filter,
                     "-c:v",
                     "libx264",
                     "-pix_fmt",

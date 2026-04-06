@@ -64,7 +64,7 @@ class PexelsService:
                 raw_payloads.append({"query": query, "original_query": original_query, "response": payload})
                 candidates.extend(self._parse_results(query, payload))
         write_json(response_path, raw_payloads)
-        selected = self._select_and_download(candidates, target_duration_seconds)
+        selected = self._select_and_download(candidates, target_duration_seconds, queries=queries)
         if not selected:
             raise PipelineStageError(
                 stage="stock_video_download",
@@ -118,14 +118,21 @@ class PexelsService:
             duration = float(video.get("duration") or 0)
             width = int(best_file.get("width") or video.get("width") or 1)
             height = int(best_file.get("height") or video.get("height") or 1)
-            score = self._score_clip(duration_seconds=duration, width=width, height=height)
+            source_url = str(video.get("url") or "")
+            score = self._score_clip(
+                duration_seconds=duration,
+                width=width,
+                height=height,
+                query=query,
+                source_url=source_url,
+            )
             source_id = str(video.get("id"))
             cache_path = self.settings.cache_dir / "pexels" / f"{source_id}.mp4"
             clips.append(
                 VideoClipAsset(
                     source_id=source_id,
                     query=query,
-                    source_url=str(video.get("url") or ""),
+                    source_url=source_url,
                     download_url=str(best_file.get("link") or ""),
                     local_path=cache_path,
                     duration_seconds=duration,
@@ -152,22 +159,81 @@ class PexelsService:
         )
         return ranked[0] if ranked else None
 
-    def _score_clip(self, *, duration_seconds: float, width: int, height: int) -> float:
+    def _score_clip(self, *, duration_seconds: float, width: int, height: int, query: str, source_url: str) -> float:
         orientation_bonus = 2.0 if height >= width else 0.5
         duration_bonus = max(0.5, min(duration_seconds, 18) / 6)
         resolution_bonus = min(height / max(width, 1), 2.0)
-        return round(orientation_bonus + duration_bonus + resolution_bonus, 2)
+        relevance_bonus = self._relevance_bonus(query=query, source_url=source_url)
+        return round(max(0.0, orientation_bonus + duration_bonus + resolution_bonus + relevance_bonus), 2)
+
+    def _relevance_bonus(self, *, query: str, source_url: str) -> float:
+        query_tokens = {
+            token
+            for token in re.findall(r"[a-z0-9]+", query.lower())
+            if len(token) > 2 and token not in {"close", "macro", "drone", "slow", "motion", "animation"}
+        }
+        if not query_tokens:
+            return 0.0
+        haystack = set(re.findall(r"[a-z0-9]+", source_url.lower()))
+        overlap = len(query_tokens & haystack)
+        bonus = 0.0
+        if overlap >= 2:
+            bonus += 2.0
+        elif overlap == 1:
+            bonus += 0.8
+        else:
+            bonus -= 1.2
+
+        space_terms = {"saturn", "planet", "space", "moon", "solar", "astronomy", "orbit", "galaxy", "star", "telescope"}
+        space_hits = len(query_tokens & space_terms)
+        if space_hits:
+            astronomy_tokens = {"saturn", "space", "moon", "solar", "astronomy", "orbit", "galaxy", "star", "earth", "mars", "venus", "pluto", "eclipse", "nebula"}
+            unrelated_tokens = {
+                "woman",
+                "women",
+                "man",
+                "people",
+                "person",
+                "fingers",
+                "laptop",
+                "urban",
+                "street",
+                "city",
+                "writing",
+                "brain",
+                "desk",
+                "office",
+                "bus",
+                "tiny",
+                "landscape",
+                "cityscape",
+                "learning",
+            }
+            astronomy_overlap = len(haystack & astronomy_tokens)
+            planet_overlap = 1 if "planet" in haystack else 0
+            unrelated_overlap = len(haystack & unrelated_tokens)
+            if astronomy_overlap:
+                bonus += 2.6
+            elif planet_overlap:
+                bonus += 0.5
+            else:
+                bonus -= 2.4
+            if unrelated_overlap:
+                bonus -= 2.2
+        return round(bonus, 2)
 
     def _select_and_download(
         self,
         candidates: list[VideoClipAsset],
         target_duration_seconds: float,
+        *,
+        queries: list[str],
     ) -> list[VideoClipAsset]:
         chosen: list[VideoClipAsset] = []
         used_ids: set[str] = set()
         cumulative = 0.0
         desired_count = ideal_clip_count(target_duration_seconds)
-        for clip in sorted(candidates, key=lambda item: item.score, reverse=True):
+        for clip in self._prioritized_candidates(candidates, queries):
             if clip.source_id in used_ids:
                 continue
             self._download_clip(clip)
@@ -177,6 +243,33 @@ class PexelsService:
             if len(chosen) >= desired_count and cumulative >= target_duration_seconds:
                 break
         return chosen
+
+    def _prioritized_candidates(
+        self,
+        candidates: list[VideoClipAsset],
+        queries: list[str],
+    ) -> list[VideoClipAsset]:
+        grouped: dict[str, list[VideoClipAsset]] = {}
+        for clip in sorted(candidates, key=lambda item: item.score, reverse=True):
+            grouped.setdefault(clip.query, []).append(clip)
+
+        prioritized: list[VideoClipAsset] = []
+        used_ids: set[str] = set()
+
+        for query in queries:
+            for clip in grouped.get(query, []):
+                if clip.source_id in used_ids:
+                    continue
+                prioritized.append(clip)
+                used_ids.add(clip.source_id)
+                break
+
+        for clip in sorted(candidates, key=lambda item: item.score, reverse=True):
+            if clip.source_id in used_ids:
+                continue
+            prioritized.append(clip)
+            used_ids.add(clip.source_id)
+        return prioritized
 
     @retry(
         stop=stop_after_attempt(3),

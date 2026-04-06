@@ -74,7 +74,61 @@ def build_vtt_from_srt_text(srt_text: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def split_subtitle_lines(text: str, max_words_per_line: int = 4) -> list[str]:
+def build_ass_from_srt_text(
+    srt_text: str,
+    *,
+    font_name: str,
+    font_size: int,
+    margin_v: int,
+    outline: int,
+    primary_color: str,
+    highlight_color: str,
+    outline_color: str,
+    back_color: str,
+    margin_l: int = 96,
+    margin_r: int = 96,
+    alignment: int = 2,
+    style_name: str = "Shorts",
+) -> str:
+    cues = parse_srt_text(srt_text)
+    lines = [
+        "[Script Info]",
+        "ScriptType: v4.00+",
+        "PlayResX: 1080",
+        "PlayResY: 1920",
+        "ScaledBorderAndShadow: yes",
+        "WrapStyle: 2",
+        "",
+        "[V4+ Styles]",
+        (
+            "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,"
+            "Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,"
+            "Alignment,MarginL,MarginR,MarginV,Encoding"
+        ),
+        (
+            f"Style: {style_name},{font_name},{font_size},{primary_color},{highlight_color},"
+            f"{outline_color},{back_color},-1,0,0,0,100,100,0,0,1,{outline},0,"
+            f"{alignment},{margin_l},{margin_r},{margin_v},1"
+        ),
+        "",
+        "[Events]",
+        "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text",
+    ]
+
+    for cue in cues:
+        lines.extend(
+            _build_ass_events_for_cue(
+                cue,
+                style_name=style_name,
+                primary_color=primary_color,
+                highlight_color=highlight_color,
+                y_position=max(240, 1920 - margin_v),
+            )
+        )
+    return "\n".join(lines).strip() + "\n"
+
+
+def split_subtitle_lines(text: str, max_words_per_line: int = 3) -> list[str]:
     words = text.split()
     chunks: list[str] = []
     for index in range(0, len(words), max_words_per_line):
@@ -87,7 +141,7 @@ def estimate_runtime_from_text(text: str, words_per_second: float = 2.6) -> floa
 
 
 def ideal_clip_count(total_duration_seconds: float) -> int:
-    return max(4, ceil(total_duration_seconds / 5.5))
+    return max(5, ceil(total_duration_seconds / 4.5))
 
 
 def parse_srt_text(srt_text: str) -> list[SubtitleCue]:
@@ -119,8 +173,8 @@ def parse_srt_text(srt_text: str) -> list[SubtitleCue]:
 def normalize_whisper_srt(
     srt_text: str,
     *,
-    max_words_per_cue: int = 4,
-    max_chars_per_line: int = 18,
+    max_words_per_cue: int = 3,
+    max_chars_per_line: int = 16,
     min_cue_duration_seconds: float = 0.45,
 ) -> str:
     normalized_cues: list[SubtitleCue] = []
@@ -179,8 +233,8 @@ def align_script_to_reference_srt(
     reference_srt_text: str,
     script_text: str,
     *,
-    max_words_per_cue: int = 4,
-    max_chars_per_line: int = 18,
+    max_words_per_cue: int = 3,
+    max_chars_per_line: int = 16,
     min_cue_duration_seconds: float = 0.45,
 ) -> str:
     reference_cues = parse_srt_text(reference_srt_text)
@@ -317,3 +371,94 @@ def _merge_brief_cues(
         )
         index += 1
     return merged
+
+
+def _build_ass_events_for_cue(
+    cue: SubtitleCue,
+    *,
+    style_name: str,
+    primary_color: str,
+    highlight_color: str,
+    y_position: int,
+) -> list[str]:
+    line_groups = [line.split() for line in cue.text.splitlines() if line.strip()]
+    word_positions = [
+        (line_index, word_index)
+        for line_index, words in enumerate(line_groups)
+        for word_index in range(len(words))
+    ]
+    if not word_positions:
+        return []
+
+    total_duration = max(cue.end_seconds - cue.start_seconds, 0.3)
+    weights = [
+        max(len(line_groups[line_index][word_index].strip(".,:;!?")), 1)
+        for line_index, word_index in word_positions
+    ]
+    total_weight = sum(weights)
+    cursor = cue.start_seconds
+    events: list[str] = []
+
+    for index, (line_index, word_index) in enumerate(word_positions):
+        if index == len(word_positions) - 1:
+            next_cursor = cue.end_seconds
+        else:
+            proportional = total_duration * (weights[index] / total_weight)
+            next_cursor = cursor + max(proportional, 0.06)
+        if next_cursor > cue.end_seconds:
+            next_cursor = cue.end_seconds
+        event_text = _render_ass_highlighted_text(
+            line_groups,
+            highlight_line=line_index,
+            highlight_word=word_index,
+            primary_color=primary_color,
+            highlight_color=highlight_color,
+            y_position=y_position,
+        )
+        events.append(
+            (
+                f"Dialogue: 0,{_format_ass_timestamp(cursor)},{_format_ass_timestamp(next_cursor)},"
+                f"{style_name},,0,0,0,,{event_text}"
+            )
+        )
+        cursor = next_cursor
+    return events
+
+
+def _render_ass_highlighted_text(
+    line_groups: list[list[str]],
+    *,
+    highlight_line: int,
+    highlight_word: int,
+    primary_color: str,
+    highlight_color: str,
+    y_position: int,
+) -> str:
+    rendered_lines: list[str] = []
+    for line_index, words in enumerate(line_groups):
+        rendered_words: list[str] = []
+        for word_index, word in enumerate(words):
+            escaped = _escape_ass_text(word)
+            if line_index == highlight_line and word_index == highlight_word:
+                rendered_words.append(
+                    f"{{\\1c{highlight_color}\\bord4}}{escaped}{{\\1c{primary_color}\\bord3}}"
+                )
+            else:
+                rendered_words.append(escaped)
+        rendered_lines.append(" ".join(rendered_words))
+    return f"{{\\an5\\pos(540,{y_position})}}" + r"\N".join(rendered_lines)
+
+
+def _escape_ass_text(text: str) -> str:
+    return text.replace("\\", r"\\").replace("{", "(").replace("}", ")")
+
+
+def _format_ass_timestamp(seconds: float) -> str:
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    whole_seconds = int(seconds % 60)
+    centiseconds = int(round((seconds - int(seconds)) * 100))
+    if centiseconds == 100:
+        centiseconds = 0
+        whole_seconds += 1
+    return f"{hours}:{minutes:02d}:{whole_seconds:02d}.{centiseconds:02d}"

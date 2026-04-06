@@ -14,6 +14,7 @@ class NarrationAsset(BaseModel):
 class SubtitleAsset(BaseModel):
     srt_path: Path
     vtt_path: Path | None = None
+    ass_path: Path | None = None
 
 
 class VideoClipAsset(BaseModel):
