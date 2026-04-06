@@ -3,7 +3,9 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from youtube_kanaal.config import load_settings
 from youtube_kanaal.models.content import GeneratedShort, TopicChoice
+from youtube_kanaal.services.ollama_service import OllamaService
 
 
 def test_topic_choice_requires_catalog_topic() -> None:
@@ -55,3 +57,20 @@ def test_generated_short_estimated_duration_is_positive() -> None:
     )
 
     assert short.estimated_duration_seconds() > 0
+
+
+def test_ollama_service_repairs_bucket_from_catalog_topic(configured_env) -> None:
+    service = OllamaService(load_settings())
+
+    repaired = service._repair_model_response(
+        response_text=(
+            '{"bucket":"youtube shorts","topic":"saturn",'
+            '"visual_queries":["Saturn rings","Saturn moons"],'
+            '"search_terms":["Saturn","Ring system"]}'
+        ),
+        model_cls=TopicChoice,
+    )
+
+    assert repaired is not None
+    assert repaired.bucket == "space"
+    assert repaired.topic == "Saturn"

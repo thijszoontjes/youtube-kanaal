@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import httpx
@@ -14,6 +15,9 @@ from youtube_kanaal.utils.subtitles import ideal_clip_count
 
 class PexelsService:
     """Pexels API adapter for searching and caching stock footage."""
+
+    _BOOLEAN_SPLIT_RE = re.compile(r"\s+\b(?:or|and)\b\s+|\s*\|\|\s*|\s*\|\s*")
+    _QUERY_CLEAN_RE = re.compile(r"[^a-zA-Z0-9\s&'\-]")
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -54,10 +58,11 @@ class PexelsService:
 
         raw_payloads: list[dict[str, object]] = []
         candidates: list[VideoClipAsset] = []
-        for query in queries:
-            payload = self._search(query)
-            raw_payloads.append({"query": query, "response": payload})
-            candidates.extend(self._parse_results(query, payload))
+        for original_query in queries:
+            for query in self._expand_queries(original_query):
+                payload = self._search(query)
+                raw_payloads.append({"query": query, "original_query": original_query, "response": payload})
+                candidates.extend(self._parse_results(query, payload))
         write_json(response_path, raw_payloads)
         selected = self._select_and_download(candidates, target_duration_seconds)
         if not selected:
@@ -86,6 +91,21 @@ class PexelsService:
         )
         response.raise_for_status()
         return response.json()
+
+    def _expand_queries(self, query: str) -> list[str]:
+        parts = self._BOOLEAN_SPLIT_RE.split(query.strip())
+        cleaned_parts: list[str] = []
+        for part in parts:
+            cleaned = self._clean_query(part)
+            if cleaned and cleaned not in cleaned_parts:
+                cleaned_parts.append(cleaned)
+        fallback = self._clean_query(query)
+        return cleaned_parts or ([fallback] if fallback else [])
+
+    def _clean_query(self, query: str) -> str:
+        cleaned = query.replace('"', " ").replace("“", " ").replace("”", " ")
+        cleaned = self._QUERY_CLEAN_RE.sub(" ", cleaned)
+        return " ".join(cleaned.split()).strip()
 
     def _parse_results(self, query: str, payload: dict[str, object]) -> list[VideoClipAsset]:
         clips: list[VideoClipAsset] = []

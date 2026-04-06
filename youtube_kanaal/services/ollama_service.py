@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from itertools import chain
 from pathlib import Path
 from typing import TypeVar
@@ -24,7 +25,7 @@ class OllamaService:
         self.settings = settings
         self.client = httpx.Client(
             base_url=self.settings.ollama_base_url,
-            timeout=self.settings.network_timeout_seconds,
+            timeout=self.settings.ollama_timeout_seconds,
         )
 
     def list_models(self) -> list[str]:
@@ -114,7 +115,13 @@ class OllamaService:
             response_text = payload.get("response", "").strip()
             if not response_text:
                 raise ValueError("Ollama returned an empty response.")
-            return model_cls.model_validate_json(response_text)
+            try:
+                return model_cls.model_validate_json(response_text)
+            except ValidationError:
+                repaired = self._repair_model_response(response_text=response_text, model_cls=model_cls)
+                if repaired is not None:
+                    return repaired
+                raise
 
         try:
             return _request()
@@ -125,6 +132,46 @@ class OllamaService:
                 probable_cause=str(exc),
                 details_path=prompt_output_path,
             ) from exc
+
+    def _repair_model_response(self, *, response_text: str, model_cls: type[TModel]) -> TModel | None:
+        try:
+            payload = json.loads(response_text)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+
+        repaired_payload = dict(payload)
+        catalog_match = self._resolve_catalog_topic(str(repaired_payload.get("topic", "")))
+        if catalog_match is not None:
+            bucket, canonical_topic = catalog_match
+            repaired_payload["bucket"] = bucket
+            repaired_payload["topic"] = canonical_topic
+
+        if model_cls is TopicChoice:
+            repaired_payload.setdefault(
+                "visual_queries",
+                [repaired_payload.get("topic", ""), f"{repaired_payload.get('topic', '')} close up"],
+            )
+            repaired_payload.setdefault(
+                "search_terms",
+                [repaired_payload.get("topic", ""), repaired_payload.get("bucket", "")],
+            )
+
+        try:
+            return model_cls.model_validate(repaired_payload)
+        except ValidationError:
+            return None
+
+    def _resolve_catalog_topic(self, topic: str) -> tuple[str, str] | None:
+        normalized = topic.strip().lower()
+        if not normalized:
+            return None
+        for bucket, topics in TOPIC_CATALOG.items():
+            for candidate in topics:
+                if candidate.lower() == normalized:
+                    return bucket, candidate
+        return None
 
     def _fallback_topic(self, excluded_topics: list[str]) -> TopicChoice:
         excluded = {item.lower() for item in excluded_topics}

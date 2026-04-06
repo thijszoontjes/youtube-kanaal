@@ -102,6 +102,7 @@ class Settings(BaseSettings):
     )
 
     network_timeout_seconds: int = Field(default=30, validation_alias=AliasChoices("NETWORK_TIMEOUT_SECONDS"))
+    ollama_timeout_seconds: int = Field(default=180, validation_alias=AliasChoices("OLLAMA_TIMEOUT_SECONDS"))
     retry_attempts: int = Field(default=3, validation_alias=AliasChoices("RETRY_ATTEMPTS"))
     allow_placeholder_video: bool = Field(
         default=False,

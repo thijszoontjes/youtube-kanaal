@@ -26,3 +26,7 @@ data/*.sqlite3
 # Tooling
 .DS_Store
 Thumbs.db
+client_secret.json.json
+*.egg-info/
+python-installer.exe
+tools/

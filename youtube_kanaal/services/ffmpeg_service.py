@@ -156,7 +156,7 @@ class FFmpegService:
             "Alignment=2,PrimaryColour=&H00FFFFFF,BackColour=&H80000000"
         )
         subtitle_filter = (
-            f"subtitles={self._escape_filter_path(subtitle_path)}:force_style='{style}'"
+            f"subtitles=filename='{self._escape_filter_path(subtitle_path)}':force_style='{style}'"
         )
         run_command(
             [
@@ -241,7 +241,7 @@ class FFmpegService:
 
     def _escape_filter_path(self, path: Path) -> str:
         normalized = str(path.resolve()).replace("\\", "/")
-        return normalized.replace(":", "\\:")
+        return normalized.replace(":", "\\:").replace("'", "\\'")
 
     def _render_mock_short(
         self,
@@ -253,7 +253,7 @@ class FFmpegService:
         if command_exists(self.settings.ffmpeg_binary):
             duration_seconds = self.audio_duration_seconds(audio_path)
             subtitle_filter = (
-                f"subtitles={self._escape_filter_path(subtitle_path)}:"
+                f"subtitles=filename='{self._escape_filter_path(subtitle_path)}':"
                 f"force_style='FontName={self.settings.subtitle_font_name},"
                 f"FontSize={self.settings.subtitle_font_size},"
                 f"Outline={self.settings.subtitle_outline},"
