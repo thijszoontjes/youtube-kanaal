@@ -147,16 +147,33 @@ class OllamaService:
             bucket, canonical_topic = catalog_match
             repaired_payload["bucket"] = bucket
             repaired_payload["topic"] = canonical_topic
+        elif model_cls is TopicChoice:
+            bucket_match = self._resolve_bucket_candidate(
+                bucket=str(repaired_payload.get("bucket", "")),
+                topic=str(repaired_payload.get("topic", "")),
+            )
+            if bucket_match is not None:
+                bucket, canonical_topic = bucket_match
+                repaired_payload["bucket"] = bucket
+                repaired_payload["topic"] = canonical_topic
 
         if model_cls is TopicChoice:
-            repaired_payload.setdefault(
-                "visual_queries",
-                [repaired_payload.get("topic", ""), f"{repaired_payload.get('topic', '')} close up"],
-            )
-            repaired_payload.setdefault(
-                "search_terms",
-                [repaired_payload.get("topic", ""), repaired_payload.get("bucket", "")],
-            )
+            topic_value = str(repaired_payload.get("topic", "")).strip()
+            bucket_value = str(repaired_payload.get("bucket", "")).strip()
+            visual_queries = repaired_payload.get("visual_queries")
+            cleaned_visuals = []
+            if isinstance(visual_queries, list):
+                cleaned_visuals = [str(item).strip() for item in visual_queries if str(item).strip()]
+            if len(cleaned_visuals) < 2:
+                cleaned_visuals.extend([topic_value, f"{topic_value} close up", bucket_value])
+            repaired_payload["visual_queries"] = list(dict.fromkeys(cleaned_visuals))[:5]
+            search_terms = repaired_payload.get("search_terms")
+            cleaned_terms = []
+            if isinstance(search_terms, list):
+                cleaned_terms = [str(item).strip() for item in search_terms if str(item).strip()]
+            if not cleaned_terms:
+                cleaned_terms.extend([topic_value, f"{topic_value} {bucket_value}", bucket_value])
+            repaired_payload["search_terms"] = list(dict.fromkeys(cleaned_terms))[:6]
 
         try:
             return model_cls.model_validate(repaired_payload)
@@ -171,6 +188,13 @@ class OllamaService:
             for candidate in topics:
                 if candidate.lower() == normalized:
                     return bucket, candidate
+        return None
+
+    def _resolve_bucket_candidate(self, *, bucket: str, topic: str) -> tuple[str, str] | None:
+        candidates = [bucket.strip().lower(), topic.strip().lower()]
+        for candidate in candidates:
+            if candidate in TOPIC_CATALOG:
+                return candidate, TOPIC_CATALOG[candidate][0]
         return None
 
     def _fallback_topic(self, excluded_topics: list[str]) -> TopicChoice:

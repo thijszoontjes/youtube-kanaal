@@ -74,3 +74,20 @@ def test_ollama_service_repairs_bucket_from_catalog_topic(configured_env) -> Non
     assert repaired is not None
     assert repaired.bucket == "space"
     assert repaired.topic == "Saturn"
+
+
+def test_ollama_service_repairs_bucket_only_response(configured_env) -> None:
+    service = OllamaService(load_settings())
+
+    repaired = service._repair_model_response(
+        response_text=(
+            '{"bucket":"youtube","topic":"space",'
+            '"visual_queries":["saturn rings"],'
+            '"search_terms":["galaxy","universe"]}'
+        ),
+        model_cls=TopicChoice,
+    )
+
+    assert repaired is not None
+    assert repaired.bucket == "space"
+    assert repaired.topic == "Saturn"
