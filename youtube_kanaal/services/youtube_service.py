@@ -21,10 +21,7 @@ class YouTubeService:
 
     def authenticate(self, *, force: bool = False) -> Path:
         if self.settings.mock_mode:
-            token_path = self.settings.youtube_token_path
-            token_path.parent.mkdir(parents=True, exist_ok=True)
-            token_path.write_text(json.dumps({"mock": True}, indent=2), encoding="utf-8")
-            return token_path
+            return self.settings.youtube_token_path
 
         try:
             from google.auth.transport.requests import Request
@@ -49,7 +46,11 @@ class YouTubeService:
         credentials = None
         token_path = self.settings.youtube_token_path
         if token_path.exists() and not force:
-            credentials = Credentials.from_authorized_user_file(str(token_path), YOUTUBE_UPLOAD_SCOPE)
+            try:
+                credentials = Credentials.from_authorized_user_file(str(token_path), YOUTUBE_UPLOAD_SCOPE)
+            except (ValueError, json.JSONDecodeError, OSError):
+                self._backup_invalid_token(token_path)
+                credentials = None
 
         if credentials and credentials.expired and credentials.refresh_token:
             credentials.refresh(Request())
@@ -163,3 +164,11 @@ class YouTubeService:
                 time.sleep(min(2**attempts, 8))
                 continue
         return dict(response)
+
+    def _backup_invalid_token(self, token_path: Path) -> None:
+        if not token_path.exists():
+            return
+        backup_path = token_path.with_name(
+            f"{token_path.stem}.invalid-{time.strftime('%Y%m%d-%H%M%S')}{token_path.suffix}"
+        )
+        token_path.replace(backup_path)
