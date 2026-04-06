@@ -49,7 +49,7 @@ The pipeline is built around a local-first stack:
 The default behavior is safe and conservative:
 
 - uploads are off unless you pass `--upload`
-- privacy defaults to `private`
+- privacy defaults to `public`
 - outputs are written into the project and copied to `~/Downloads`
 - no YouTube password is ever requested or stored
 
@@ -168,7 +168,7 @@ OLLAMA_MODEL=llama3.1:8b-instruct
 PEXELS_API_KEY=
 YOUTUBE_CLIENT_SECRET_PATH=./data/credentials/client_secret.json
 YOUTUBE_TOKEN_PATH=./data/credentials/youtube_token.json
-DEFAULT_PRIVACY_STATUS=private
+DEFAULT_PRIVACY_STATUS=public
 PIPER_VOICE_MODEL_PATH=./cache/piper/en_US-john-medium.onnx
 WHISPER_MODEL_PATH=./cache/whisper/ggml-base.en.bin
 DOWNLOADS_DIR=~/Downloads
@@ -327,12 +327,12 @@ python -m youtube_kanaal make-short --debug
 python -m youtube_kanaal make-short --upload
 ```
 
-Uploads default to `private`. That is intentional. Google may apply extra restrictions to newly created or unverified API projects, so keeping the default private is the safest starting point.
+Uploads now default to `public` in this local setup, because that is what the current channel workflow expects.
 
 If you want a different default later, change:
 
 ```dotenv
-DEFAULT_PRIVACY_STATUS=unlisted
+DEFAULT_PRIVACY_STATUS=private
 ```
 
 ## Batch Generate 3 Shorts

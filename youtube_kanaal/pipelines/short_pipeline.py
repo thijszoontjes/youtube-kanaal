@@ -350,11 +350,12 @@ class ShortPipeline:
                 runtime.stage_summaries["youtube_upload"] = metadata.model_dump(mode="json")
                 return metadata
             self.youtube.authenticate(force=False)
+            upload_hashtags = content.upload_hashtags(minimum=10)
             metadata = self.youtube.upload_video(
                 video_path=final_video_path,
-                title=content.title,
-                description=f"{content.description}\n\n{' '.join(content.hashtags)}",
-                hashtags=content.hashtags,
+                title=content.upload_title(hashtag_count=3),
+                description=content.upload_description(minimum_hashtags=10),
+                hashtags=upload_hashtags,
                 privacy_status=runtime.request.privacy_status or self.settings.default_privacy_status,
                 response_path=runtime.artifacts.responses_dir / "youtube_upload.json",
             )

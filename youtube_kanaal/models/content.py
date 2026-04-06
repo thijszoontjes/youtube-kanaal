@@ -154,6 +154,26 @@ _BANNED_PHRASES: tuple[str, ...] = (
 )
 _EMOJI_RE = re.compile(r"[\U00010000-\U0010FFFF]")
 _WHITESPACE_RE = re.compile(r"\s+")
+_WORD_RE = re.compile(r"[A-Za-z0-9]+")
+_GENERIC_TITLE_HASHTAGS: tuple[str, ...] = (
+    "#Shorts",
+    "#Facts",
+    "#DidYouKnow",
+    "#LearnOnYouTube",
+    "#InterestingFacts",
+)
+_BUCKET_HASHTAGS: dict[str, tuple[str, ...]] = {
+    "animals": ("#Wildlife", "#AnimalFacts", "#Nature"),
+    "space": ("#Space", "#Astronomy", "#SolarSystem"),
+    "geography": ("#TravelFacts", "#Geography", "#Earth"),
+    "history": ("#History", "#WorldHistory", "#DidYouKnowHistory"),
+    "inventions": ("#Innovation", "#Inventions", "#Technology"),
+    "ocean": ("#Ocean", "#MarineLife", "#Underwater"),
+    "food": ("#FoodFacts", "#Foodie", "#Cooking"),
+    "human body": ("#HumanBody", "#Science", "#Biology"),
+    "weather": ("#Weather", "#NatureFacts", "#Storms"),
+    "architecture": ("#Architecture", "#Design", "#Structures"),
+}
 
 
 class TopicChoice(BaseModel):
@@ -207,7 +227,7 @@ class GeneratedShort(BaseModel):
     topic: str
     title: str = Field(min_length=15, max_length=80)
     description: str = Field(min_length=40, max_length=500)
-    hashtags: list[str] = Field(min_length=3, max_length=8)
+    hashtags: list[str] = Field(min_length=3, max_length=15)
     narration: str = Field(min_length=80, max_length=700)
     facts: list[str] = Field(min_length=3, max_length=3)
     subtitle_text: str = Field(min_length=20, max_length=700)
@@ -271,6 +291,7 @@ class GeneratedShort(BaseModel):
             raise ValueError("Narration should be roughly 20-35 seconds of speech.")
         if len(self.title) > 70:
             raise ValueError("Title is too long for a Short.")
+        self.hashtags = self._expand_hashtags(self.hashtags)
         return self
 
     def estimated_duration_seconds(self) -> float:
@@ -278,3 +299,95 @@ class GeneratedShort(BaseModel):
 
     def keyword_queries(self) -> list[str]:
         return [self.topic, f"{self.topic} {self.bucket}", self.bucket]
+
+    def upload_hashtags(self, minimum: int = 10) -> list[str]:
+        hashtags = self._expand_hashtags(self.hashtags)
+        return hashtags[: max(minimum, len(hashtags))]
+
+    def upload_title(self, *, hashtag_count: int = 3, max_length: int = 100) -> str:
+        chosen = self._title_hashtags(count=hashtag_count)
+        if not chosen:
+            return self.title
+        suffix = " ".join(chosen)
+        candidate = f"{self.title} {suffix}".strip()
+        if len(candidate) <= max_length:
+            return candidate
+        allowed_title_length = max_length - len(suffix) - 1
+        trimmed_title = self.title[:allowed_title_length].rstrip(" -|,")
+        return f"{trimmed_title} {suffix}".strip()
+
+    def upload_description(self, minimum_hashtags: int = 10) -> str:
+        hashtags = " ".join(self.upload_hashtags(minimum=minimum_hashtags))
+        return f"{self.description}\n\n{hashtags}".strip()
+
+    def _expand_hashtags(self, base_hashtags: list[str]) -> list[str]:
+        candidates: list[str] = []
+        candidates.extend(self._core_hashtag_candidates())
+        candidates.extend(base_hashtags)
+        candidates.extend(self._title_phrase_hashtag_candidates())
+        candidates.extend(_GENERIC_TITLE_HASHTAGS)
+
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            tag = self._normalize_hashtag(candidate)
+            if not tag:
+                continue
+            key = tag.lower()
+            if key in seen:
+                continue
+            normalized.append(tag)
+            seen.add(key)
+        return normalized[:15]
+
+    def _title_hashtags(self, *, count: int) -> list[str]:
+        generic = {tag.lower() for tag in _GENERIC_TITLE_HASHTAGS}
+        preferred = []
+        preferred.extend(self._core_hashtag_candidates())
+        preferred.extend(self.hashtags)
+        preferred.extend(self.upload_hashtags())
+
+        chosen: list[str] = []
+        seen: set[str] = set()
+        for candidate in preferred:
+            tag = self._normalize_hashtag(candidate)
+            if not tag or tag.lower() in generic:
+                continue
+            if tag.lower() in seen:
+                continue
+            chosen.append(tag)
+            seen.add(tag.lower())
+        return chosen[:count]
+
+    def _core_hashtag_candidates(self) -> list[str]:
+        candidates: list[str] = []
+        topic_tag = self._normalize_hashtag(self.topic)
+        if topic_tag:
+            candidates.append(topic_tag)
+        candidates.extend(_BUCKET_HASHTAGS.get(self.bucket, ()))
+        return candidates
+
+    def _title_phrase_hashtag_candidates(self) -> list[str]:
+        topic_tag = self._normalize_hashtag(self.topic)
+        title_tokens = [token for token in _WORD_RE.findall(self.title) if len(token) > 2]
+        topic_tokens = [token for token in _WORD_RE.findall(self.topic) if len(token) > 2]
+        fact_tokens = [token for token in _WORD_RE.findall(" ".join(self.facts)) if len(token) > 4]
+
+        phrases: list[str] = []
+        if topic_tag:
+            phrases.append(topic_tag)
+        if topic_tokens:
+            phrases.append("#" + "".join(word.capitalize() for word in topic_tokens))
+        if title_tokens:
+            phrases.append("#" + "".join(word.capitalize() for word in title_tokens[:3]))
+        if len(title_tokens) >= 4:
+            phrases.append("#" + "".join(word.capitalize() for word in title_tokens[1:4]))
+        if fact_tokens:
+            phrases.append("#" + "".join(word.capitalize() for word in fact_tokens[:2]))
+        return phrases
+
+    def _normalize_hashtag(self, raw_value: str) -> str | None:
+        words = _WORD_RE.findall(raw_value)
+        if not words:
+            return None
+        return "#" + "".join(word.capitalize() for word in words)

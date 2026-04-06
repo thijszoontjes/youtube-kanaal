@@ -21,3 +21,4 @@ def test_content_prompt_contains_recent_titles() -> None:
     prompt = build_content_generation_prompt(topic, ["3 Facts About Penguins"])
     assert "3 Facts About Penguins" in prompt
     assert '"topic": "axolotls"' in prompt
+    assert "Generate at least 10 relevant hashtags" in prompt

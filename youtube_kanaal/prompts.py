@@ -55,6 +55,7 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
         - No politics, religion, celebrity gossip, explicit content, dangerous advice, or medical claims
         - Avoid title similarity to these recent titles: {excluded}
         - Subtitle text must exactly match the spoken narration
+        - Generate at least 10 relevant hashtags
         - Hashtags should start with #
         - Return strict JSON only
 
@@ -64,7 +65,7 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
           "topic": "{topic.topic}",
           "title": "<title>",
           "description": "<description>",
-          "hashtags": ["#tag1", "#tag2", "#tag3"],
+          "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5", "#tag6", "#tag7", "#tag8", "#tag9", "#tag10"],
           "narration": "<full narration>",
           "facts": ["<fact 1>", "<fact 2>", "<fact 3>"],
           "subtitle_text": "<subtitle version of narration>"

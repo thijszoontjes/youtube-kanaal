@@ -57,6 +57,40 @@ def test_generated_short_estimated_duration_is_positive() -> None:
     )
 
     assert short.estimated_duration_seconds() > 0
+    assert len(short.upload_hashtags()) >= 10
+
+
+def test_generated_short_builds_upload_metadata_with_hashtags() -> None:
+    short = GeneratedShort(
+        bucket="space",
+        topic="Saturn",
+        title="3 Facts About Saturn",
+        description="A short description that is comfortably long enough for validation and upload metadata.",
+        hashtags=["#space", "#saturn", "#planetfacts"],
+        narration=(
+            "Here are 3 facts about Saturn. First, Saturn has famous rings made mostly of ice. "
+            "Second, Saturn has many moons including Titan. Third, Saturn is so low in density that it would float in water. "
+            "That is why Saturn stands out in a fast visual Short made for science fans everywhere."
+        ),
+        facts=[
+            "Saturn has famous rings made mostly of ice.",
+            "Saturn has many moons including Titan.",
+            "Saturn is so low in density that it would float in water.",
+        ],
+        subtitle_text=(
+            "Here are 3 facts about Saturn. First, Saturn has famous rings made mostly of ice. "
+            "Second, Saturn has many moons including Titan. Third, Saturn is so low in density that it would float in water. "
+            "That is why Saturn stands out in a fast visual Short made for science fans everywhere."
+        ),
+    )
+
+    upload_title = short.upload_title()
+    upload_description = short.upload_description()
+
+    assert len(short.upload_hashtags()) >= 10
+    assert upload_title.count("#") >= 3
+    assert "#Saturn" in upload_title
+    assert "#Space" in upload_description
 
 
 def test_ollama_service_repairs_bucket_from_catalog_topic(configured_env) -> None:
@@ -128,6 +162,7 @@ def test_ollama_service_normalizes_short_into_three_facts_intro(configured_env) 
     assert "Second," in normalized.narration
     assert "Third," in normalized.narration
     assert normalized.subtitle_text == normalized.narration
+    assert len(normalized.hashtags) >= 10
 
 
 def test_ollama_service_repairs_generated_short_with_missing_description(configured_env) -> None:
@@ -146,4 +181,4 @@ def test_ollama_service_repairs_generated_short_with_missing_description(configu
 
     assert repaired is not None
     assert repaired.description.startswith("Three fast facts about mantis shrimp")
-    assert len(repaired.hashtags) >= 3
+    assert len(repaired.hashtags) >= 10

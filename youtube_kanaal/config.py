@@ -53,7 +53,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("YOUTUBE_TOKEN_PATH"),
     )
     default_privacy_status: str = Field(
-        default="private",
+        default="public",
         validation_alias=AliasChoices("DEFAULT_PRIVACY_STATUS"),
     )
 
