@@ -48,11 +48,13 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
         - English only
         - Exactly 3 concise, accurate-sounding facts
         - Strong clear title, no emoji
+        - The narration must open with: "Here are 3 facts about {topic.topic}."
+        - Then present Fact 1, Fact 2, and Fact 3 clearly
         - Narration length roughly 20-35 seconds
         - No uncertainty phrases
         - No politics, religion, celebrity gossip, explicit content, dangerous advice, or medical claims
         - Avoid title similarity to these recent titles: {excluded}
-        - Subtitle text should match the spoken narration closely
+        - Subtitle text must exactly match the spoken narration
         - Hashtags should start with #
         - Return strict JSON only
 

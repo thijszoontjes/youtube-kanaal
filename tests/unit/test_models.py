@@ -91,3 +91,59 @@ def test_ollama_service_repairs_bucket_only_response(configured_env) -> None:
     assert repaired is not None
     assert repaired.bucket == "space"
     assert repaired.topic == "Saturn"
+
+
+def test_ollama_service_normalizes_short_into_three_facts_intro(configured_env) -> None:
+    service = OllamaService(load_settings())
+    topic = TopicChoice(
+        bucket="space",
+        topic="Saturn",
+        visual_queries=["Saturn", "Saturn rings"],
+        search_terms=["Saturn", "space"],
+    )
+    content = GeneratedShort(
+        bucket="space",
+        topic="Saturn",
+        title="Saturn Ring Wonders",
+        description="A short description that is comfortably long enough for validation and metadata.",
+        hashtags=["#shorts", "#space", "#saturn"],
+        narration=(
+            "Saturn has rings and a moon called Titan. The planet is light for its size, which surprises a lot of people. "
+            "Its storms can be dramatic and long lasting in the upper atmosphere, and scientists keep studying them closely. "
+            "That mix of scale, motion, and mystery makes Saturn one of the most visually striking planets in short videos."
+        ),
+        facts=[
+            "Saturn's rings are made mostly of ice.",
+            "Titan is larger than the planet Mercury.",
+            "Saturn is so low in density that it would float in water.",
+        ],
+        subtitle_text="Something else entirely",
+    )
+
+    normalized = service._normalize_generated_short(content, topic)
+
+    assert normalized.title == "3 Facts About Saturn"
+    assert normalized.narration.startswith("Here are 3 facts about Saturn.")
+    assert "Fact 1:" in normalized.narration
+    assert "Fact 2:" in normalized.narration
+    assert "Fact 3:" in normalized.narration
+    assert normalized.subtitle_text == normalized.narration
+
+
+def test_ollama_service_repairs_generated_short_with_missing_description(configured_env) -> None:
+    service = OllamaService(load_settings())
+
+    repaired = service._repair_model_response(
+        response_text=(
+            '{"bucket":"animals","topic":"mantis shrimp","title":"Mantis Shrimp Wonders",'
+            '"description":"","hashtags":["#oceanlife"],'
+            '"narration":"Here are 3 facts about mantis shrimp. Fact 1: They punch fast. Fact 2: They see many colors. '
+            'Fact 3: They live in warm seas.","facts":["They punch fast.","They see many colors.","They live in warm seas."],'
+            '"subtitle_text":"Mantis shrimp"}'
+        ),
+        model_cls=GeneratedShort,
+    )
+
+    assert repaired is not None
+    assert repaired.description.startswith("Three fast facts about mantis shrimp")
+    assert len(repaired.hashtags) >= 3

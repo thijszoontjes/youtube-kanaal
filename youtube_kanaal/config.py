@@ -119,9 +119,9 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("MAX_SHORT_DURATION_SECONDS"),
     )
     subtitle_font_name: str = Field(default="Arial", validation_alias=AliasChoices("SUBTITLE_FONT_NAME"))
-    subtitle_font_size: int = Field(default=18, validation_alias=AliasChoices("SUBTITLE_FONT_SIZE"))
-    subtitle_margin_v: int = Field(default=280, validation_alias=AliasChoices("SUBTITLE_MARGIN_V"))
-    subtitle_outline: int = Field(default=2, validation_alias=AliasChoices("SUBTITLE_OUTLINE"))
+    subtitle_font_size: int = Field(default=19, validation_alias=AliasChoices("SUBTITLE_FONT_SIZE"))
+    subtitle_margin_v: int = Field(default=640, validation_alias=AliasChoices("SUBTITLE_MARGIN_V"))
+    subtitle_outline: int = Field(default=3, validation_alias=AliasChoices("SUBTITLE_OUTLINE"))
 
     @field_validator(
         "youtube_client_secret_path",

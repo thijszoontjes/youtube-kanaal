@@ -78,6 +78,10 @@ class FFmpegService:
         segment_paths: list[Path] = []
         for index, segment in enumerate(plan.segments, start=1):
             segment_path = segments_dir / f"segment-{index:02d}.mp4"
+            segment_filter = self._segment_filter(
+                duration_seconds=segment.duration_seconds,
+                variant=index,
+            )
             run_command(
                 [
                     self.settings.ffmpeg_binary,
@@ -89,7 +93,7 @@ class FFmpegService:
                     "-i",
                     str(segment.clip_path),
                     "-vf",
-                    "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,format=yuv420p",
+                    segment_filter,
                     "-an",
                     "-c:v",
                     "libx264",
@@ -153,10 +157,12 @@ class FFmpegService:
             f"FontSize={self.settings.subtitle_font_size},"
             f"Outline={self.settings.subtitle_outline},"
             f"MarginV={self.settings.subtitle_margin_v},"
-            "Alignment=2,PrimaryColour=&H00FFFFFF,BackColour=&H80000000"
+            "Alignment=2,MarginL=96,MarginR=96,Shadow=0,Bold=1,"
+            "PrimaryColour=&H00FFFFFF,BackColour=&H88000000"
         )
         subtitle_filter = (
-            f"subtitles=filename='{self._escape_filter_path(subtitle_path)}':force_style='{style}'"
+            f"subtitles=filename='{self._escape_filter_path(subtitle_path)}':original_size=1080x1920:"
+            f"force_style='{style}'"
         )
         run_command(
             [
@@ -243,6 +249,28 @@ class FFmpegService:
         normalized = str(path.resolve()).replace("\\", "/")
         return normalized.replace(":", "\\:").replace("'", "\\'")
 
+    def _segment_filter(self, *, duration_seconds: float, variant: int) -> str:
+        x_expr = (
+            "(in_w-out_w)/2+28*sin(t*0.95)"
+            if variant % 2
+            else "(in_w-out_w)/2-24*sin(t*0.82)"
+        )
+        y_expr = (
+            "(in_h-out_h)/2+18*cos(t*0.60)"
+            if variant % 2
+            else "(in_h-out_h)/2+24*sin(t*0.55)"
+        )
+        fade_out_start = max(duration_seconds - 0.18, 0.0)
+        return (
+            "scale=1200:2134:force_original_aspect_ratio=increase,"
+            f"crop=1080:1920:x='{x_expr}':y='{y_expr}',"
+            "eq=saturation=1.18:contrast=1.08:brightness=0.02,"
+            "unsharp=5:5:0.6:3:3:0.0,"
+            "fps=30,"
+            f"fade=t=in:st=0:d=0.14,fade=t=out:st={fade_out_start:.2f}:d=0.14,"
+            "format=yuv420p"
+        )
+
     def _render_mock_short(
         self,
         *,
@@ -253,12 +281,13 @@ class FFmpegService:
         if command_exists(self.settings.ffmpeg_binary):
             duration_seconds = self.audio_duration_seconds(audio_path)
             subtitle_filter = (
-                f"subtitles=filename='{self._escape_filter_path(subtitle_path)}':"
+                f"subtitles=filename='{self._escape_filter_path(subtitle_path)}':original_size=1080x1920:"
                 f"force_style='FontName={self.settings.subtitle_font_name},"
                 f"FontSize={self.settings.subtitle_font_size},"
                 f"Outline={self.settings.subtitle_outline},"
                 f"MarginV={self.settings.subtitle_margin_v},"
-                "Alignment=2,PrimaryColour=&H00FFFFFF,BackColour=&H80000000'"
+                "Alignment=2,MarginL=96,MarginR=96,Shadow=0,Bold=1,"
+                "PrimaryColour=&H00FFFFFF,BackColour=&H88000000'"
             )
             run_command(
                 [

@@ -78,12 +78,13 @@ class OllamaService:
             return content
         prompt = build_content_generation_prompt(topic, excluded_titles)
         write_text(prompt_path, prompt)
-        return self._generate_model(
+        content = self._generate_model(
             prompt=prompt,
             stage="content_generation",
             prompt_output_path=response_path,
             model_cls=GeneratedShort,
         )
+        return self._normalize_generated_short(content, topic)
 
     def _generate_model(
         self,
@@ -174,6 +175,8 @@ class OllamaService:
             if not cleaned_terms:
                 cleaned_terms.extend([topic_value, f"{topic_value} {bucket_value}", bucket_value])
             repaired_payload["search_terms"] = list(dict.fromkeys(cleaned_terms))[:6]
+        elif model_cls is GeneratedShort:
+            repaired_payload = self._repair_generated_short_payload(repaired_payload)
 
         try:
             return model_cls.model_validate(repaired_payload)
@@ -196,6 +199,110 @@ class OllamaService:
             if candidate in TOPIC_CATALOG:
                 return candidate, TOPIC_CATALOG[candidate][0]
         return None
+
+    def _repair_generated_short_payload(self, payload: dict[str, object]) -> dict[str, object]:
+        repaired = dict(payload)
+        topic_value = str(repaired.get("topic", "")).strip()
+        bucket_value = str(repaired.get("bucket", "")).strip().lower()
+
+        catalog_match = self._resolve_catalog_topic(topic_value)
+        if catalog_match is not None:
+            bucket_value, topic_value = catalog_match
+        else:
+            bucket_match = self._resolve_bucket_candidate(bucket=bucket_value, topic=topic_value)
+            if bucket_match is not None:
+                bucket_value, topic_value = bucket_match
+
+        repaired["bucket"] = bucket_value
+        repaired["topic"] = topic_value
+
+        title = str(repaired.get("title", "")).strip()
+        if not title:
+            title = f"3 Facts About {topic_value}"
+        repaired["title"] = title
+
+        description = str(repaired.get("description", "")).strip()
+        if len(description) < 40:
+            description = f"Three fast facts about {topic_value} for a visual YouTube Short made locally."
+        repaired["description"] = description
+
+        hashtags = repaired.get("hashtags")
+        cleaned_hashtags = []
+        if isinstance(hashtags, list):
+            cleaned_hashtags = [str(tag).strip() for tag in hashtags if str(tag).strip()]
+        cleaned_hashtags.extend(["#shorts", "#facts", f"#{topic_value.title().replace(' ', '')}"])
+        repaired["hashtags"] = list(dict.fromkeys(cleaned_hashtags))[:8]
+
+        facts = repaired.get("facts")
+        cleaned_facts = []
+        if isinstance(facts, list):
+            cleaned_facts = [self._normalize_sentence(str(fact)) for fact in facts if str(fact).strip()]
+        repaired["facts"] = cleaned_facts[:3]
+
+        narration = str(repaired.get("narration", "")).strip()
+        if not narration and cleaned_facts:
+            narration = " ".join(cleaned_facts)
+        if cleaned_facts and len(narration.split()) < 45:
+            intro = f"Here are 3 facts about {topic_value}."
+            body = " ".join(f"Fact {index}: {fact}" for index, fact in enumerate(cleaned_facts, start=1))
+            outro = f"That is why {topic_value} stands out."
+            closer = f"That makes {topic_value} perfect for a fast visual Short packed with science and visuals."
+            narration = f"{intro} {body} {outro} {closer}"
+        if len(narration.split()) < 45:
+            narration = f"{narration} People remember {topic_value} because it looks so unusual on screen."
+        repaired["narration"] = narration
+
+        subtitle_text = str(repaired.get("subtitle_text", "")).strip()
+        repaired["subtitle_text"] = narration if len(subtitle_text.split()) < 10 else subtitle_text
+        return repaired
+
+    def _normalize_generated_short(self, content: GeneratedShort, topic: TopicChoice) -> GeneratedShort:
+        facts = [self._normalize_sentence(fact) for fact in content.facts]
+        intro = f"Here are 3 facts about {topic.topic}."
+        body = " ".join(f"Fact {index}: {fact}" for index, fact in enumerate(facts, start=1))
+        outro = f"That is why {topic.topic} stands out."
+        closer = f"That makes {topic.topic} perfect for a fast visual Short packed with science and visuals."
+        narration_candidates = [
+            f"{intro} {body} {outro} {closer} People remember {topic.topic} because it looks so unusual on screen.",
+            f"{intro} {body} {outro} {closer}",
+            f"{intro} {body} {outro}",
+            f"{intro} {body}",
+            content.narration,
+        ]
+
+        title = content.title.strip()
+        if "3 facts" not in title.lower():
+            title = f"3 Facts About {topic.topic}"
+
+        base_payload = content.model_dump(mode="json")
+        base_payload.update(
+            {
+                "bucket": topic.bucket,
+                "topic": topic.topic,
+                "title": title,
+                "facts": facts,
+            }
+        )
+
+        for narration in narration_candidates:
+            candidate_payload = dict(base_payload)
+            candidate_payload["narration"] = narration
+            candidate_payload["subtitle_text"] = narration
+            try:
+                return GeneratedShort.model_validate(candidate_payload)
+            except ValidationError:
+                continue
+
+        base_payload["subtitle_text"] = content.narration
+        return GeneratedShort.model_validate(base_payload)
+
+    def _normalize_sentence(self, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            return cleaned
+        if cleaned[-1] not in ".!?":
+            cleaned = f"{cleaned}."
+        return cleaned
 
     def _fallback_topic(self, excluded_topics: list[str]) -> TopicChoice:
         excluded = {item.lower() for item in excluded_topics}
@@ -225,10 +332,10 @@ class OllamaService:
             f"{topic.topic.title()} is visually striking, which makes it perfect for a short explainer.",
         ]
         narration = (
-            f"Here are three facts about {topic.topic}. "
-            f"Fact one: {facts[0]} "
-            f"Fact two: {facts[1]} "
-            f"Fact three: {facts[2]} "
+            f"Here are 3 facts about {topic.topic}. "
+            f"Fact 1: {facts[0]} "
+            f"Fact 2: {facts[1]} "
+            f"Fact 3: {facts[2]} "
             f"That is why {topic.topic} keeps showing up in science videos and documentaries."
         )
         return GeneratedShort(

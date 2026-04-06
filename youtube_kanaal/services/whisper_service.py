@@ -7,7 +7,12 @@ from youtube_kanaal.exceptions import ConfigurationError, PipelineStageError
 from youtube_kanaal.models.assets import SubtitleAsset
 from youtube_kanaal.utils.files import write_text
 from youtube_kanaal.utils.process import run_command
-from youtube_kanaal.utils.subtitles import build_timed_subtitles, build_vtt_from_srt_text, split_subtitle_lines
+from youtube_kanaal.utils.subtitles import (
+    align_script_to_reference_srt,
+    build_timed_subtitles,
+    build_vtt_from_srt_text,
+    split_subtitle_lines,
+)
 
 
 class WhisperService:
@@ -47,8 +52,15 @@ class WhisperService:
                 str(audio_path),
                 "-l",
                 "en",
+                "-ml",
+                "24",
+                "-sow",
                 "-osrt",
                 "-ovtt",
+                "-oj",
+                "-ojf",
+                "--prompt",
+                subtitle_text,
                 "-of",
                 str(output_base_path),
             ],
@@ -62,4 +74,10 @@ class WhisperService:
                 message="whisper.cpp did not create an SRT file.",
                 probable_cause="Check whisper binary arguments and model path.",
             )
+        normalized_srt_text = align_script_to_reference_srt(
+            srt_path.read_text(encoding="utf-8"),
+            subtitle_text,
+        )
+        write_text(srt_path, normalized_srt_text)
+        write_text(vtt_path, build_vtt_from_srt_text(normalized_srt_text))
         return SubtitleAsset(srt_path=srt_path, vtt_path=vtt_path if vtt_path.exists() else None)
