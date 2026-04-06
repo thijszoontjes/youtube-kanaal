@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+
+# Environment and secrets
+.env
+data/credentials/client_secret.json
+data/credentials/youtube_token.json
+
+# Local runtime artifacts
+logs/
+output/
+cache/
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+
+# Tooling
+.DS_Store
+Thumbs.db

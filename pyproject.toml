@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "youtube-kanaal"
+version = "0.1.0"
+description = "Local YouTube Shorts pipeline for generating, rendering, and optionally uploading English Shorts."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+  { name = "Thijs Zoontjes" }
+]
+dependencies = [
+  "google-api-python-client>=2.170.0",
+  "google-auth-oauthlib>=1.2.2",
+  "httpx>=0.28.1",
+  "pydantic>=2.11.4",
+  "pydantic-settings>=2.9.1",
+  "rich>=14.0.0",
+  "tenacity>=9.1.2",
+  "typer>=0.16.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.5",
+  "pytest-cov>=6.1.1",
+]
+
+[project.scripts]
+youtube-kanaal = "youtube_kanaal.cli:main"
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["youtube_kanaal*"]
+
+[tool.uv]
+dev-dependencies = [
+  "pytest>=8.3.5",
+  "pytest-cov>=6.1.1",
+]
