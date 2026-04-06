@@ -8,7 +8,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from youtube_kanaal.config import load_settings, project_root
+from youtube_kanaal.config import Settings, load_settings, project_root
 from youtube_kanaal.db import Database
 from youtube_kanaal.exceptions import PipelineStageError, YoutubeKanaalError
 from youtube_kanaal.models import BatchRequest, ShortRunRequest
@@ -57,12 +57,48 @@ def _print_failure(error: Exception) -> None:
 
 def _run_pipeline(request: ShortRunRequest) -> None:
     _, pipeline = _bootstrap(debug=request.debug, mock_mode=request.mock_mode)
+    _preflight_pipeline_requirements(request, pipeline.settings)
     try:
         result = pipeline.run(request)
     except Exception as exc:
         _print_failure(exc)
         raise typer.Exit(code=1) from exc
     _render_result(result)
+
+
+def _preflight_pipeline_requirements(request: ShortRunRequest, settings: Settings) -> None:
+    if request.mock_mode:
+        return
+
+    report = DoctorService(settings).run()
+    required_names = {
+        "Python version",
+        "FFmpeg",
+        "Ollama reachable",
+        "Ollama model",
+        "Piper",
+        "Piper voice model",
+        "whisper.cpp",
+        "whisper model path",
+        "Pexels API key",
+        "Downloads folder",
+    }
+    if request.upload:
+        required_names.add("YouTube OAuth client JSON")
+
+    blocking = [
+        check
+        for check in report.checks
+        if check.name in required_names and check.status in {"fail", "warn"}
+    ]
+    if not blocking:
+        return
+
+    console.print("[red]Pipeline prerequisites are not ready.[/red]")
+    for check in blocking:
+        console.print(f"- {check.name}: {check.status} | {check.action or check.details}")
+    console.print("Run `python -m youtube_kanaal doctor` after fixing the items above.")
+    raise typer.Exit(code=1)
 
 
 def _update_env_file(env_path: Path, key: str, value: str) -> None:
