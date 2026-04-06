@@ -36,6 +36,7 @@ def configured_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str,
         "YOUTUBE_CLIENT_SECRET_PATH": str(client_secret_path),
         "YOUTUBE_TOKEN_PATH": str(credentials_dir / "youtube_token.json"),
         "PEXELS_API_KEY": "mock-key",
+        "ALLOW_PLACEHOLDER_VIDEO": "true",
         "PIPER_VOICE_MODEL_PATH": str(cache_dir / "piper" / "mock.onnx"),
         "WHISPER_MODEL_PATH": str(cache_dir / "whisper" / "ggml-base.en.bin"),
     }

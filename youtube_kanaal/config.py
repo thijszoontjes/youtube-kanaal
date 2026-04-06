@@ -103,6 +103,10 @@ class Settings(BaseSettings):
 
     network_timeout_seconds: int = Field(default=30, validation_alias=AliasChoices("NETWORK_TIMEOUT_SECONDS"))
     retry_attempts: int = Field(default=3, validation_alias=AliasChoices("RETRY_ATTEMPTS"))
+    allow_placeholder_video: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("ALLOW_PLACEHOLDER_VIDEO"),
+    )
     pexels_results_per_query: int = Field(default=12, validation_alias=AliasChoices("PEXELS_RESULTS_PER_QUERY"))
     similarity_threshold: float = Field(default=0.86, validation_alias=AliasChoices("SIMILARITY_THRESHOLD"))
     min_short_duration_seconds: int = Field(

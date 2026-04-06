@@ -2,6 +2,33 @@
 
 Local, terminal-first YouTube Shorts automation for English Shorts in the format `3 facts about X`.
 
+## Quick Start
+
+Run one Short:
+
+```bash
+python -m youtube_kanaal make-short
+python -m youtube_kanaal make-short --upload
+```
+
+Run a batch:
+
+```bash
+python -m youtube_kanaal make-batch --count 3
+python -m youtube_kanaal make-batch --count 3 --upload
+```
+
+Run tests:
+
+```bash
+python -m pytest
+python -m pytest tests/feature
+python -m pytest tests/e2e
+python -m youtube_kanaal test-pipeline
+```
+
+`test-pipeline` is a smoke test. For a playable preview MP4 it still needs FFmpeg installed.
+
 The pipeline is built around a local-first stack:
 
 - Ollama for topic and script generation
@@ -145,6 +172,94 @@ Run this once if `.env` does not exist:
 ```bash
 python -m youtube_kanaal init-config
 ```
+
+## What You Still Need
+
+For the app itself, the last private credentials you still need are:
+
+- `PEXELS_API_KEY` in `.env`
+- Google OAuth desktop client JSON at `data/credentials/client_secret.json` or your configured `YOUTUBE_CLIENT_SECRET_PATH`
+
+You do not need your YouTube password.
+
+You will also still need local tool/model setup for actual production runs:
+
+- FFmpeg installed
+- Ollama installed with the configured model pulled
+- a local Piper voice model
+- a local whisper.cpp model
+
+Those are local dependencies, not secrets.
+
+## How To Get `PEXELS_API_KEY`
+
+1. Go to `https://www.pexels.com/api/`
+2. Sign in or create a Pexels account.
+3. Open the API page and request an API key.
+4. Copy the generated key from your Pexels API dashboard.
+5. Open your local `.env` file in this repo.
+6. Set:
+
+```dotenv
+PEXELS_API_KEY=your_real_pexels_key_here
+```
+
+Where to put it:
+
+- file: `.env`
+- key name: `PEXELS_API_KEY`
+
+How to verify it:
+
+```bash
+python -m youtube_kanaal auth-pexels
+```
+
+## How To Get Google OAuth `client_secret.json`
+
+This is for YouTube upload. It is not your password.
+
+1. Go to `https://console.cloud.google.com/`
+2. Sign in with the Google account that manages your YouTube channel.
+3. Create a new Google Cloud project, or select an existing one.
+4. In that project, enable the `YouTube Data API v3`.
+5. Go to `APIs & Services` -> `OAuth consent screen`.
+6. Configure the consent screen. For personal use, `External` is usually fine.
+7. Add the app details and save.
+8. Go to `APIs & Services` -> `Credentials`.
+9. Click `Create Credentials` -> `OAuth client ID`.
+10. Choose `Desktop app`.
+11. Create it and download the JSON file.
+12. Rename it to `client_secret.json` if you want to use the default path.
+13. Put the file here in this repo:
+
+```text
+data/credentials/client_secret.json
+```
+
+Or set a custom path in `.env`:
+
+```dotenv
+YOUTUBE_CLIENT_SECRET_PATH=/absolute/path/to/client_secret.json
+```
+
+Where to find it later:
+
+- in Google Cloud: `APIs & Services` -> `Credentials`
+- locally in this project: `data/credentials/client_secret.json`
+
+How to create the reusable token after that:
+
+```bash
+python -m youtube_kanaal auth-youtube
+```
+
+What happens next:
+
+- your browser opens once
+- you approve access
+- the app saves a local token file at `data/credentials/youtube_token.json` or your configured `YOUTUBE_TOKEN_PATH`
+- later uploads reuse that token
 
 ## How YouTube OAuth Works
 

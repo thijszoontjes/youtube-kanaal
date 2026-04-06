@@ -67,8 +67,11 @@ class FFmpegService:
     ) -> Path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         if self.settings.mock_mode:
-            output_path.write_bytes(b"FAKE_MP4")
-            return output_path
+            return self._render_mock_short(
+                audio_path=audio_path,
+                subtitle_path=subtitle_path,
+                output_path=output_path,
+            )
 
         segments_dir = working_dir / "segments"
         segments_dir.mkdir(parents=True, exist_ok=True)
@@ -185,8 +188,12 @@ class FFmpegService:
                 message="Rendered video was not created or is empty.",
                 probable_cause="FFmpeg failed before producing the final MP4.",
             )
-        if self.settings.mock_mode:
-            return {"path": str(video_path), "size": video_path.stat().st_size, "mock": True}
+        if self._is_placeholder_video(video_path):
+            return {
+                "path": str(video_path),
+                "size": video_path.stat().st_size,
+                "mock_placeholder": True,
+            }
 
         ffprobe_binary = self._ffprobe_binary()
         if not command_exists(ffprobe_binary):
@@ -235,3 +242,69 @@ class FFmpegService:
     def _escape_filter_path(self, path: Path) -> str:
         normalized = str(path.resolve()).replace("\\", "/")
         return normalized.replace(":", "\\:")
+
+    def _render_mock_short(
+        self,
+        *,
+        audio_path: Path,
+        subtitle_path: Path,
+        output_path: Path,
+    ) -> Path:
+        if command_exists(self.settings.ffmpeg_binary):
+            duration_seconds = self.audio_duration_seconds(audio_path)
+            subtitle_filter = (
+                f"subtitles={self._escape_filter_path(subtitle_path)}:"
+                f"force_style='FontName={self.settings.subtitle_font_name},"
+                f"FontSize={self.settings.subtitle_font_size},"
+                f"Outline={self.settings.subtitle_outline},"
+                f"MarginV={self.settings.subtitle_margin_v},"
+                "Alignment=2,PrimaryColour=&H00FFFFFF,BackColour=&H80000000'"
+            )
+            run_command(
+                [
+                    self.settings.ffmpeg_binary,
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    f"color=c=black:s=1080x1920:r=30:d={duration_seconds:.2f}",
+                    "-i",
+                    str(audio_path),
+                    "-vf",
+                    subtitle_filter,
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-preset",
+                    "veryfast",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "192k",
+                    "-shortest",
+                    str(output_path),
+                ],
+                timeout_seconds=300,
+                stage="video_rendering",
+            )
+            return output_path
+
+        if self.settings.allow_placeholder_video:
+            output_path.write_bytes(b"FAKE_MP4")
+            return output_path
+
+        raise PipelineStageError(
+            stage="video_rendering",
+            message="Cannot create a playable MP4 because FFmpeg is not installed.",
+            probable_cause=(
+                "This run used mock mode. The old placeholder MP4 behavior is disabled to avoid "
+                "broken files in Downloads. Install FFmpeg and rerun."
+            ),
+        )
+
+    def _is_placeholder_video(self, video_path: Path) -> bool:
+        try:
+            return video_path.read_bytes() == b"FAKE_MP4"
+        except OSError:
+            return False
