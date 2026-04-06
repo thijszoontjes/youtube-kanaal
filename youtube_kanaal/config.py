@@ -104,6 +104,14 @@ class Settings(BaseSettings):
         default_factory=lambda: project_root() / "data" / "youtube_kanaal.db",
         validation_alias=AliasChoices("DATABASE_PATH"),
     )
+    scheduled_run_times: str = Field(
+        default="13:00,18:00,22:00",
+        validation_alias=AliasChoices("SCHEDULED_RUN_TIMES"),
+    )
+    scheduled_task_prefix: str = Field(
+        default="youtube-kanaal-auto-upload",
+        validation_alias=AliasChoices("SCHEDULED_TASK_PREFIX"),
+    )
 
     network_timeout_seconds: int = Field(default=30, validation_alias=AliasChoices("NETWORK_TIMEOUT_SECONDS"))
     ollama_timeout_seconds: int = Field(default=180, validation_alias=AliasChoices("OLLAMA_TIMEOUT_SECONDS"))
@@ -155,6 +163,20 @@ class Settings(BaseSettings):
         if normalized not in {"private", "unlisted", "public"}:
             raise ValueError("DEFAULT_PRIVACY_STATUS must be private, unlisted, or public.")
         return normalized
+
+    @field_validator("scheduled_run_times")
+    @classmethod
+    def _validate_scheduled_run_times(cls, value: str) -> str:
+        parts = [item.strip() for item in value.split(",") if item.strip()]
+        if not parts:
+            raise ValueError("SCHEDULED_RUN_TIMES must contain at least one HH:MM value.")
+        for item in parts:
+            hours, minutes = item.split(":") if ":" in item else ("", "")
+            if not (hours.isdigit() and minutes.isdigit() and len(hours) == 2 and len(minutes) == 2):
+                raise ValueError("SCHEDULED_RUN_TIMES must use HH:MM 24-hour times.")
+            if not (0 <= int(hours) <= 23 and 0 <= int(minutes) <= 59):
+                raise ValueError("SCHEDULED_RUN_TIMES must use valid HH:MM 24-hour times.")
+        return ",".join(dict.fromkeys(parts))
 
     @model_validator(mode="after")
     def _validate_duration_window(self) -> "Settings":

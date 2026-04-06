@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -16,6 +17,12 @@ from youtube_kanaal.pipelines import ShortPipeline, validate_artifact_directory
 from youtube_kanaal.services.doctor import DoctorService
 from youtube_kanaal.services.pexels_service import PexelsService
 from youtube_kanaal.services.youtube_service import YouTubeService
+from youtube_kanaal.utils.process import run_command
+from youtube_kanaal.utils.scheduling import (
+    build_windows_task_action,
+    build_windows_task_name,
+    parse_schedule_times,
+)
 
 app = typer.Typer(help="Local YouTube Shorts pipeline.", add_completion=False)
 console = Console()
@@ -116,6 +123,19 @@ def _update_env_file(env_path: Path, key: str, value: str) -> None:
     env_path.write_text("\n".join(output_lines).strip() + "\n", encoding="utf-8")
 
 
+def _resolve_scheduled_python(python_executable: Path | None) -> Path:
+    if python_executable:
+        resolved = python_executable.expanduser().resolve()
+        if not resolved.exists():
+            raise typer.BadParameter(f"Python executable not found: {resolved}")
+        return resolved
+
+    repo_python = project_root() / ".venv" / "Scripts" / "python.exe"
+    if repo_python.exists():
+        return repo_python.resolve()
+    return Path(sys.executable).resolve()
+
+
 @app.command()
 def make_short(
     upload: bool = typer.Option(False, help="Upload to YouTube after rendering."),
@@ -166,6 +186,92 @@ def make_batch(
             failures += 1
     if failures:
         raise typer.Exit(code=1)
+
+
+@app.command()
+def scheduled_run(
+    upload: bool = typer.Option(True, help="Upload the generated Short after rendering."),
+    debug: bool = typer.Option(False, help="Enable verbose logging."),
+    privacy_status: Optional[str] = typer.Option(None, help="YouTube privacy status."),
+    no_downloads: bool = typer.Option(False, help="Skip copying the final MP4 to Downloads."),
+) -> None:
+    """Run one scheduled automation cycle."""
+
+    _run_pipeline(
+        ShortRunRequest(
+            upload=upload,
+            debug=debug,
+            privacy_status=privacy_status,
+            save_to_downloads=not no_downloads,
+            mock_mode=False,
+        )
+    )
+
+
+@app.command()
+def install_windows_schedule(
+    times: Optional[str] = typer.Option(
+        None,
+        help="Comma-separated local times in HH:MM format. Defaults to SCHEDULED_RUN_TIMES.",
+    ),
+    upload: bool = typer.Option(True, help="Upload automatically after each scheduled render."),
+    debug: bool = typer.Option(False, help="Enable verbose logging for scheduled runs."),
+    privacy_status: Optional[str] = typer.Option(None, help="Optional privacy override for scheduled uploads."),
+    task_prefix: Optional[str] = typer.Option(None, help="Task Scheduler name prefix."),
+    python_executable: Optional[Path] = typer.Option(None, help="Python executable to use for the scheduled tasks."),
+    force: bool = typer.Option(True, help="Overwrite existing scheduled tasks with the same names."),
+) -> None:
+    """Install daily Windows Task Scheduler jobs for automated Shorts."""
+
+    if sys.platform != "win32":
+        raise typer.BadParameter("install-windows-schedule is only supported on Windows.")
+
+    settings = load_settings()
+    schedule_times = parse_schedule_times(times or settings.scheduled_run_times)
+    prefix = task_prefix or settings.scheduled_task_prefix
+    repo_root = project_root().resolve()
+    script_path = (repo_root / "scripts" / "run_scheduled_short.ps1").resolve()
+    if not script_path.exists():
+        raise typer.BadParameter(f"Missing scheduler script: {script_path}")
+    python_path = _resolve_scheduled_python(python_executable)
+
+    installed_tasks: list[str] = []
+    for time_value in schedule_times:
+        task_name = build_windows_task_name(prefix=prefix, time_value=time_value)
+        action = build_windows_task_action(
+            script_path=script_path,
+            repo_root=repo_root,
+            python_executable=python_path,
+            upload=upload,
+            debug=debug,
+            privacy_status=privacy_status,
+        )
+        command = [
+            "schtasks",
+            "/Create",
+            "/SC",
+            "DAILY",
+            "/ST",
+            time_value,
+            "/TN",
+            task_name,
+            "/TR",
+            action,
+        ]
+        if force:
+            command.append("/F")
+        run_command(command, timeout_seconds=120, stage="schedule_install")
+        installed_tasks.append(task_name)
+
+    table = Table(title="Windows Schedule Installed")
+    table.add_column("Task")
+    table.add_column("Time")
+    table.add_column("Upload")
+    table.add_column("Action")
+    for task_name, time_value in zip(installed_tasks, schedule_times):
+        table.add_row(task_name, time_value, "yes" if upload else "no", "scheduled-run")
+    console.print(table)
+    console.print(f"Scheduled tasks use local Windows time on this machine and call {script_path}.")
 
 
 @app.command()
