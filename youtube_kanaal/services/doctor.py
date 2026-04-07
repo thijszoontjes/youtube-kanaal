@@ -21,6 +21,9 @@ class DoctorService:
         self.pexels = PexelsService(settings)
 
     def run(self) -> DoctorReport:
+        narration_details = self.settings.narration_engine
+        if self.settings.narration_engine == "xtts" and self.settings.xtts_fallback_to_piper:
+            narration_details = "xtts with Piper fallback"
         checks = [
             self._python_check(),
             self._binary_check("FFmpeg", self.settings.ffmpeg_binary),
@@ -29,7 +32,7 @@ class DoctorService:
             DoctorCheck(
                 name="Narration engine",
                 status="ok",
-                details=self.settings.narration_engine,
+                details=narration_details,
                 action=None,
             ),
             *self._narration_checks(),
@@ -87,13 +90,15 @@ class DoctorService:
         )
 
     def _xtts_checks(self) -> list[DoctorCheck]:
+        samples = XTTSService(self.settings).discover_reference_sources()
+        samples_ready = bool(samples)
+        fallback_enabled = self.settings.xtts_fallback_to_piper
         runtime_ok = command_exists("docker") if self.settings.xtts_runtime == "docker" else command_exists(self.settings.xtts_binary)
         runtime_details = (
             f"docker -> {self.settings.xtts_docker_image}"
             if self.settings.xtts_runtime == "docker"
             else f"binary -> {self.settings.xtts_binary}"
         )
-        samples = XTTSService(self.settings).discover_reference_sources()
         sample_dir = self.settings.xtts_speaker_wav_dir
         sample_details = (
             f"{len(samples)} sample(s) ready"
@@ -103,19 +108,35 @@ class DoctorService:
         return [
             DoctorCheck(
                 name="XTTS runtime",
-                status="ok" if runtime_ok else "fail",
+                status="ok" if runtime_ok else ("warn" if fallback_enabled and not samples_ready else "fail"),
                 details=runtime_details,
                 action=None
                 if runtime_ok
-                else "Install Docker Desktop or set XTTS_RUNTIME=binary with a working tts command.",
+                else (
+                    "Install Docker Desktop or set XTTS_RUNTIME=binary with a working tts command."
+                    if not (fallback_enabled and not samples_ready)
+                    else "XTTS is not ready yet, but the pipeline can still fall back to Piper until you add voice memos."
+                ),
             ),
             DoctorCheck(
                 name="XTTS speaker samples",
-                status="ok" if samples else "fail",
+                status="ok" if samples else ("warn" if fallback_enabled else "fail"),
                 details=sample_details,
                 action=None
                 if samples
-                else "Add 1-5 English voice memos to XTTS_SPEAKER_WAV_DIR or set XTTS_SPEAKER_WAV_PATH.",
+                else (
+                    "Add 1-5 English voice memos to XTTS_SPEAKER_WAV_DIR or set XTTS_SPEAKER_WAV_PATH."
+                    if not fallback_enabled
+                    else "Add 1-5 English voice memos to use your own voice. Until then the pipeline falls back to Piper."
+                ),
+            ),
+            *(
+                [
+                    self._binary_check("Piper", self.settings.piper_binary),
+                    self._piper_voice_check(),
+                ]
+                if fallback_enabled and not samples_ready
+                else []
             ),
         ]
 

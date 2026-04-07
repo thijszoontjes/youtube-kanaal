@@ -191,6 +191,7 @@ PIPER_VOICE_MODEL_PATH=./cache/piper/en_US-john-medium.onnx
 XTTS_RUNTIME=docker
 XTTS_SPEAKER_WAV_DIR=./data/voice_samples/en
 XTTS_LANGUAGE=en
+XTTS_FALLBACK_TO_PIPER=true
 WHISPER_MODEL_PATH=./cache/whisper/ggml-base.en.bin
 DOWNLOADS_DIR=~/Downloads
 SCHEDULED_RUN_TIMES=13:00,18:00,22:00
@@ -216,6 +217,7 @@ NARRATION_ENGINE=xtts
 XTTS_RUNTIME=docker
 XTTS_LANGUAGE=en
 XTTS_SPEAKER_WAV_DIR=./data/voice_samples/en
+XTTS_FALLBACK_TO_PIPER=true
 ```
 
 4. Pull the free XTTS image once:
@@ -235,6 +237,8 @@ sh scripts/install_xtts_docker.sh
 ```bash
 .venv/bin/python -m youtube_kanaal make-short
 ```
+
+If your voice memos are not there yet, the app now falls back automatically to the original Piper voice so scheduled runs do not fail.
 
 If you want to switch back to the original local voice, set `NARRATION_ENGINE=piper`.
 
@@ -467,6 +471,11 @@ The scheduled tasks call:
 - `scripts/run_scheduled_short.ps1`
 - which runs `python -m youtube_kanaal make-short --upload`
 
+For Linux servers and cloud VMs, use:
+
+- `scripts/run_scheduled_short.sh`
+- which runs `python -m youtube_kanaal scheduled-run`
+
 You can also test one scheduled cycle manually:
 
 ```bash
@@ -494,6 +503,45 @@ You can also use cron, for example:
 ```cron
 0 9 * * * cd /ABSOLUTE/PATH/TO/youtube-kanaal && . .venv/bin/activate && python -m youtube_kanaal make-batch --count 3
 ```
+
+For a Linux VM that should upload three times a day, a better cron example is:
+
+```cron
+0 13 * * * cd /ABSOLUTE/PATH/TO/youtube-kanaal && sh scripts/run_scheduled_short.sh
+0 18 * * * cd /ABSOLUTE/PATH/TO/youtube-kanaal && sh scripts/run_scheduled_short.sh
+0 22 * * * cd /ABSOLUTE/PATH/TO/youtube-kanaal && sh scripts/run_scheduled_short.sh
+```
+
+## Best Free 24/7 Hosting
+
+For this specific repo, the best free hosting option is usually an Oracle Cloud Always Free Ubuntu VM.
+
+Why this is the best fit:
+
+- the VM stays online, so your local models, logs, and downloaded assets remain on disk
+- cron works well for exactly `3` daily runs
+- this repo is local-model heavy, so stateless runners are a worse fit because they would keep redownloading models
+
+Recommended implementation path:
+
+1. Create an Oracle Cloud Free Tier account and choose your home region carefully.
+2. Create an Ubuntu VM in the Always Free tier.
+3. SSH into the VM.
+4. Install the base dependencies: `git`, `ffmpeg`, `python3`, `python3-venv`, `python3-pip`, `curl`, `build-essential`, and `cmake`.
+5. Install Docker and Ollama on the VM.
+6. Clone this repo onto the VM and run `sh scripts/setup_project.sh`.
+7. Copy your working `.env` values onto the VM.
+8. Copy `data/credentials/client_secret.json` and your working `data/credentials/youtube_token.json` from your local machine to the VM.
+9. Copy or recreate the local model assets the pipeline needs, especially the Piper voice model and whisper model.
+10. If you want to try your own cloned voice on the VM too, copy your English voice memos into `data/voice_samples/en`.
+11. Run `python -m youtube_kanaal doctor` on the VM until all required checks pass for the voice path you want to use.
+12. Test one real upload manually with `python -m youtube_kanaal scheduled-run`.
+13. Add the three cron lines above so the VM runs automatically every day.
+
+Practical note:
+
+- keep `XTTS_FALLBACK_TO_PIPER=true` on the server, so the uploads still continue with the original AI voice if your own voice samples are missing or not ready there yet
+- for a headless VM, the easiest YouTube auth flow is usually to authenticate once on your own machine and then copy the resulting token file to the VM
 
 ## Logging and Debugging
 

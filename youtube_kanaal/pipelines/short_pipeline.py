@@ -231,6 +231,7 @@ class ShortPipeline:
         with self._stage(runtime, "narration_generation", {"topic": content.topic, "title": content.title}):
             raw_path = runtime.artifacts.audio_dir / "narration_raw.wav"
             normalized_path = runtime.artifacts.audio_dir / "narration.wav"
+            narration_engine = self.narration.resolve_engine()
             self.narration.synthesize(text=content.narration, output_path=raw_path)
             self.ffmpeg.normalize_audio(input_path=raw_path, output_path=normalized_path)
             duration_seconds = self.ffmpeg.audio_duration_seconds(normalized_path)
@@ -239,7 +240,10 @@ class ShortPipeline:
                 normalized_path=normalized_path,
                 duration_seconds=duration_seconds,
             )
-            runtime.stage_summaries["narration_generation"] = asset.model_dump(mode="json")
+            runtime.stage_summaries["narration_generation"] = {
+                "engine": narration_engine,
+                **asset.model_dump(mode="json"),
+            }
             return asset
 
     def generate_subtitles(

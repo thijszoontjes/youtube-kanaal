@@ -18,6 +18,7 @@ from youtube_kanaal.services.doctor import DoctorService
 from youtube_kanaal.services.ffmpeg_service import FFmpegService
 from youtube_kanaal.services.narration_service import NarrationService
 from youtube_kanaal.services.pexels_service import PexelsService
+from youtube_kanaal.services.xtts_service import XTTSService
 from youtube_kanaal.services.youtube_service import YouTubeService
 from youtube_kanaal.utils.process import run_command
 from youtube_kanaal.utils.scheduling import (
@@ -116,6 +117,11 @@ def _pipeline_required_check_names(settings: Settings, *, upload: bool) -> set[s
 
 def _narration_required_check_names(settings: Settings) -> set[str]:
     if settings.narration_engine == "xtts":
+        samples_ready = bool(XTTSService(settings).discover_reference_sources())
+        if samples_ready:
+            return {"XTTS runtime", "XTTS speaker samples"}
+        if settings.xtts_fallback_to_piper:
+            return {"Piper", "Piper voice model"}
         return {"XTTS runtime", "XTTS speaker samples"}
     return {"Piper", "Piper voice model"}
 
@@ -337,15 +343,17 @@ def preview_voice(
 
     settings = load_settings(app_debug=debug, mock_mode=mock_mode)
     _preflight_narration_requirements(settings)
+    narration = NarrationService(settings)
+    active_engine = narration.resolve_engine()
 
     preview_dir = settings.output_dir / "voice-preview"
     raw_path = preview_dir / "preview_raw.wav"
     final_path = output.expanduser().resolve() if output else preview_dir / "preview.wav"
     final_path.parent.mkdir(parents=True, exist_ok=True)
 
-    NarrationService(settings).synthesize(text=text, output_path=raw_path)
+    narration.synthesize(text=text, output_path=raw_path)
     FFmpegService(settings).normalize_audio(input_path=raw_path, output_path=final_path)
-    console.print(f"Voice preview written to {final_path}")
+    console.print(f"Voice preview written to {final_path} using {active_engine}.")
 
 
 @app.command()

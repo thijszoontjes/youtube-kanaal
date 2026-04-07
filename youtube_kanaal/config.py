@@ -98,6 +98,10 @@ class Settings(BaseSettings):
         le=12,
         validation_alias=AliasChoices("XTTS_MAX_REFERENCE_CLIPS"),
     )
+    xtts_fallback_to_piper: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("XTTS_FALLBACK_TO_PIPER"),
+    )
     whisper_cpp_binary: str = Field(
         default="whisper-cli",
         validation_alias=AliasChoices("WHISPER_CPP_BINARY"),
