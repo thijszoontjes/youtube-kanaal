@@ -7,6 +7,7 @@ from youtube_kanaal.config import Settings
 from youtube_kanaal.models.run import DoctorCheck, DoctorReport
 from youtube_kanaal.services.ollama_service import OllamaService
 from youtube_kanaal.services.pexels_service import PexelsService
+from youtube_kanaal.services.xtts_service import XTTSService
 from youtube_kanaal.utils.files import is_writable_directory
 from youtube_kanaal.utils.process import command_exists
 
@@ -25,8 +26,13 @@ class DoctorService:
             self._binary_check("FFmpeg", self.settings.ffmpeg_binary),
             self._ollama_check(),
             self._ollama_model_check(),
-            self._binary_check("Piper", self.settings.piper_binary),
-            self._piper_voice_check(),
+            DoctorCheck(
+                name="Narration engine",
+                status="ok",
+                details=self.settings.narration_engine,
+                action=None,
+            ),
+            *self._narration_checks(),
             self._binary_check("whisper.cpp", self.settings.whisper_cpp_binary),
             self._whisper_model_check(),
             self._pexels_key_check(),
@@ -43,6 +49,14 @@ class DoctorService:
             details=f"{platform.python_version()}",
             action=None if ok else "Install Python 3.11 or newer.",
         )
+
+    def _narration_checks(self) -> list[DoctorCheck]:
+        if self.settings.narration_engine == "xtts":
+            return self._xtts_checks()
+        return [
+            self._binary_check("Piper", self.settings.piper_binary),
+            self._piper_voice_check(),
+        ]
 
     def _binary_check(self, label: str, command: str) -> DoctorCheck:
         ok = command_exists(command)
@@ -71,6 +85,39 @@ class DoctorService:
             details=self.settings.ollama_model,
             action=None if ok else f"Run: ollama pull {self.settings.ollama_model}",
         )
+
+    def _xtts_checks(self) -> list[DoctorCheck]:
+        runtime_ok = command_exists("docker") if self.settings.xtts_runtime == "docker" else command_exists(self.settings.xtts_binary)
+        runtime_details = (
+            f"docker -> {self.settings.xtts_docker_image}"
+            if self.settings.xtts_runtime == "docker"
+            else f"binary -> {self.settings.xtts_binary}"
+        )
+        samples = XTTSService(self.settings).discover_reference_sources()
+        sample_dir = self.settings.xtts_speaker_wav_dir
+        sample_details = (
+            f"{len(samples)} sample(s) ready"
+            if samples
+            else str(sample_dir) if sample_dir else "not configured"
+        )
+        return [
+            DoctorCheck(
+                name="XTTS runtime",
+                status="ok" if runtime_ok else "fail",
+                details=runtime_details,
+                action=None
+                if runtime_ok
+                else "Install Docker Desktop or set XTTS_RUNTIME=binary with a working tts command.",
+            ),
+            DoctorCheck(
+                name="XTTS speaker samples",
+                status="ok" if samples else "fail",
+                details=sample_details,
+                action=None
+                if samples
+                else "Add 1-5 English voice memos to XTTS_SPEAKER_WAV_DIR or set XTTS_SPEAKER_WAV_PATH.",
+            ),
+        ]
 
     def _piper_voice_check(self) -> DoctorCheck:
         inferred = self.settings.piper_voice_model_path or (

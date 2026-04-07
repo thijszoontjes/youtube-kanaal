@@ -4,34 +4,42 @@ Local, terminal-first YouTube Shorts automation for English Shorts in the format
 
 ## Quick Start
 
+Activate the virtual environment first on macOS/Linux:
+
+```bash
+source .venv/bin/activate
+```
+
+If your shell does not provide a `python` command, use `.venv/bin/python` instead.
+
 Run one Short:
 
 ```bash
-python -m youtube_kanaal make-short
-python -m youtube_kanaal make-short --upload
-python -m youtube_kanaal scheduled-run
+.venv/bin/python -m youtube_kanaal make-short
+.venv/bin/python -m youtube_kanaal make-short --upload
+.venv/bin/python -m youtube_kanaal scheduled-run
 ```
 
 Run a batch:
 
 ```bash
-python -m youtube_kanaal make-batch --count 3
-python -m youtube_kanaal make-batch --count 3 --upload
+.venv/bin/python -m youtube_kanaal make-batch --count 3
+.venv/bin/python -m youtube_kanaal make-batch --count 3 --upload
 ```
 
 Run tests:
 
 ```bash
-python -m pytest
-python -m pytest tests/feature
-python -m pytest tests/e2e
-python -m youtube_kanaal test-pipeline
+.venv/bin/python -m pytest
+.venv/bin/python -m pytest tests/feature
+.venv/bin/python -m pytest tests/e2e
+.venv/bin/python -m youtube_kanaal test-pipeline
 ```
 
 Install the future Windows auto-upload schedule for `13:00`, `18:00`, and `22:00` local time:
 
 ```bash
-python -m youtube_kanaal install-windows-schedule
+.venv/bin/python -m youtube_kanaal install-windows-schedule
 ```
 
 `test-pipeline` is a smoke test. For a playable preview MP4 it still needs FFmpeg installed.
@@ -39,7 +47,7 @@ python -m youtube_kanaal install-windows-schedule
 The pipeline is built around a local-first stack:
 
 - Ollama for topic and script generation
-- Piper TTS for local voice-over
+- Piper TTS or free XTTS voice cloning for local voice-over
 - whisper.cpp for subtitle timing
 - FFmpeg for assembly and subtitle burn-in
 - Pexels API for copyright-friendly stock footage
@@ -63,6 +71,8 @@ The default behavior is safe and conservative:
 - SQLite-backed history, dedupe, and retry support
 - Rich CLI output and a `doctor` command for setup diagnostics
 - OAuth browser flow for YouTube uploads with local token reuse
+- Free English voice cloning with XTTS from your own voice memos
+- Quick voice testing with `python -m youtube_kanaal preview-voice`
 - Mock-mode smoke pipeline for local testing without live APIs
 
 ## Architecture
@@ -140,7 +150,13 @@ sh scripts/setup_project.sh
 5. Run diagnostics:
 
 ```bash
-python -m youtube_kanaal doctor
+.venv/bin/python -m youtube_kanaal doctor
+```
+
+Optional for free voice cloning with your own English voice:
+
+```bash
+sh scripts/install_xtts_docker.sh
 ```
 
 ## Required External Tools
@@ -150,6 +166,7 @@ python -m youtube_kanaal doctor
 - Ollama
 - Piper
 - whisper.cpp
+- Docker Desktop (optional, only for the free XTTS voice-cloning path)
 
 You also need local model assets for:
 
@@ -169,7 +186,11 @@ PEXELS_API_KEY=
 YOUTUBE_CLIENT_SECRET_PATH=./data/credentials/client_secret.json
 YOUTUBE_TOKEN_PATH=./data/credentials/youtube_token.json
 DEFAULT_PRIVACY_STATUS=public
+NARRATION_ENGINE=piper
 PIPER_VOICE_MODEL_PATH=./cache/piper/en_US-john-medium.onnx
+XTTS_RUNTIME=docker
+XTTS_SPEAKER_WAV_DIR=./data/voice_samples/en
+XTTS_LANGUAGE=en
 WHISPER_MODEL_PATH=./cache/whisper/ggml-base.en.bin
 DOWNLOADS_DIR=~/Downloads
 SCHEDULED_RUN_TIMES=13:00,18:00,22:00
@@ -179,8 +200,43 @@ SCHEDULED_TASK_PREFIX=youtube-kanaal-auto-upload
 Run this once if `.env` does not exist:
 
 ```bash
-python -m youtube_kanaal init-config
+.venv/bin/python -m youtube_kanaal init-config
 ```
+
+## Free AI Voice From Your Own English Samples
+
+This repo now supports a free local XTTS flow for English voice cloning. It is designed for the workflow where you drop your own voice memos into the repo and let the generated Short script be read in your own voice.
+
+1. Put `1-5` clean English voice memos in `data/voice_samples/en`.
+2. iPhone Voice Memos exports such as `.m4a` work fine. The pipeline converts them to WAV automatically with FFmpeg.
+3. Set these values in `.env`:
+
+```dotenv
+NARRATION_ENGINE=xtts
+XTTS_RUNTIME=docker
+XTTS_LANGUAGE=en
+XTTS_SPEAKER_WAV_DIR=./data/voice_samples/en
+```
+
+4. Pull the free XTTS image once:
+
+```bash
+sh scripts/install_xtts_docker.sh
+```
+
+5. Preview your cloned voice before rendering a full Short:
+
+```bash
+.venv/bin/python -m youtube_kanaal preview-voice "This is a test of my YouTube Shorts voice."
+```
+
+6. Generate a Short with your own cloned voice:
+
+```bash
+.venv/bin/python -m youtube_kanaal make-short
+```
+
+If you want to switch back to the original local voice, set `NARRATION_ENGINE=piper`.
 
 ## What You Still Need
 
@@ -195,7 +251,8 @@ You will also still need local tool/model setup for actual production runs:
 
 - FFmpeg installed
 - Ollama installed with the configured model pulled
-- a local Piper voice model
+- a local Piper voice model if you keep `NARRATION_ENGINE=piper`
+- Docker Desktop plus the XTTS CPU image if you switch to `NARRATION_ENGINE=xtts`
 - a local whisper.cpp model
 
 Those are local dependencies, not secrets.

@@ -15,6 +15,11 @@ venv/
 data/credentials/client_secret.json
 data/credentials/youtube_token.json
 data/credentials/youtube_token*.json
+data/voice_samples/*
+!data/voice_samples/en/
+!data/voice_samples/en/.gitkeep
+data/voice_samples/en/*
+!data/voice_samples/en/.gitkeep
 
 # Local runtime artifacts
 logs/

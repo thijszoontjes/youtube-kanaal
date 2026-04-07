@@ -15,6 +15,8 @@ from youtube_kanaal.exceptions import PipelineStageError, YoutubeKanaalError
 from youtube_kanaal.models import BatchRequest, ShortRunRequest
 from youtube_kanaal.pipelines import ShortPipeline, validate_artifact_directory
 from youtube_kanaal.services.doctor import DoctorService
+from youtube_kanaal.services.ffmpeg_service import FFmpegService
+from youtube_kanaal.services.narration_service import NarrationService
 from youtube_kanaal.services.pexels_service import PexelsService
 from youtube_kanaal.services.youtube_service import YouTubeService
 from youtube_kanaal.utils.process import run_command
@@ -78,21 +80,7 @@ def _preflight_pipeline_requirements(request: ShortRunRequest, settings: Setting
         return
 
     report = DoctorService(settings).run()
-    required_names = {
-        "Python version",
-        "FFmpeg",
-        "Ollama reachable",
-        "Ollama model",
-        "Piper",
-        "Piper voice model",
-        "whisper.cpp",
-        "whisper model path",
-        "Pexels API key",
-        "Downloads folder",
-    }
-    if request.upload:
-        required_names.add("YouTube OAuth client JSON")
-
+    required_names = _pipeline_required_check_names(settings, upload=request.upload)
     blocking = [
         check
         for check in report.checks
@@ -102,6 +90,51 @@ def _preflight_pipeline_requirements(request: ShortRunRequest, settings: Setting
         return
 
     console.print("[red]Pipeline prerequisites are not ready.[/red]")
+    for check in blocking:
+        console.print(f"- {check.name}: {check.status} | {check.action or check.details}")
+    console.print("Run `python -m youtube_kanaal doctor` after fixing the items above.")
+    raise typer.Exit(code=1)
+
+
+def _pipeline_required_check_names(settings: Settings, *, upload: bool) -> set[str]:
+    required_names = {
+        "Python version",
+        "FFmpeg",
+        "Ollama reachable",
+        "Ollama model",
+        "Narration engine",
+        "whisper.cpp",
+        "whisper model path",
+        "Pexels API key",
+        "Downloads folder",
+    }
+    required_names.update(_narration_required_check_names(settings))
+    if upload:
+        required_names.add("YouTube OAuth client JSON")
+    return required_names
+
+
+def _narration_required_check_names(settings: Settings) -> set[str]:
+    if settings.narration_engine == "xtts":
+        return {"XTTS runtime", "XTTS speaker samples"}
+    return {"Piper", "Piper voice model"}
+
+
+def _preflight_narration_requirements(settings: Settings) -> None:
+    if settings.mock_mode:
+        return
+
+    report = DoctorService(settings).run()
+    required_names = {"FFmpeg", "Narration engine", *_narration_required_check_names(settings)}
+    blocking = [
+        check
+        for check in report.checks
+        if check.name in required_names and check.status in {"fail", "warn"}
+    ]
+    if not blocking:
+        return
+
+    console.print("[red]Narration prerequisites are not ready.[/red]")
     for check in blocking:
         console.print(f"- {check.name}: {check.status} | {check.action or check.details}")
     console.print("Run `python -m youtube_kanaal doctor` after fixing the items above.")
@@ -291,6 +324,28 @@ def doctor(debug: bool = typer.Option(False, help="Enable verbose logging.")) ->
     console.print(table)
     if not report.all_ok():
         raise typer.Exit(code=1)
+
+
+@app.command()
+def preview_voice(
+    text: str = typer.Argument(..., help="Text to speak with the active narration engine."),
+    output: Optional[Path] = typer.Option(None, help="Optional output WAV path."),
+    debug: bool = typer.Option(False, help="Enable verbose logging."),
+    mock_mode: bool = typer.Option(False, help="Use deterministic mock audio."),
+) -> None:
+    """Render a quick WAV preview of the active voice setup."""
+
+    settings = load_settings(app_debug=debug, mock_mode=mock_mode)
+    _preflight_narration_requirements(settings)
+
+    preview_dir = settings.output_dir / "voice-preview"
+    raw_path = preview_dir / "preview_raw.wav"
+    final_path = output.expanduser().resolve() if output else preview_dir / "preview.wav"
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+
+    NarrationService(settings).synthesize(text=text, output_path=raw_path)
+    FFmpegService(settings).normalize_audio(input_path=raw_path, output_path=final_path)
+    console.print(f"Voice preview written to {final_path}")
 
 
 @app.command()

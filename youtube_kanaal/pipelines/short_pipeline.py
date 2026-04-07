@@ -26,10 +26,12 @@ from youtube_kanaal.models import (
     VideoClipAsset,
 )
 from youtube_kanaal.services.ffmpeg_service import FFmpegService
+from youtube_kanaal.services.narration_service import NarrationService
 from youtube_kanaal.services.ollama_service import OllamaService
 from youtube_kanaal.services.pexels_service import PexelsService
 from youtube_kanaal.services.piper_service import PiperService
 from youtube_kanaal.services.whisper_service import WhisperService
+from youtube_kanaal.services.xtts_service import XTTSService
 from youtube_kanaal.services.youtube_service import YouTubeService
 from youtube_kanaal.utils.files import copy_collision_safe, ensure_directory, safe_slug, write_json
 from youtube_kanaal.utils.similarity import is_near_duplicate, normalize_for_similarity
@@ -92,7 +94,9 @@ class ShortPipeline:
         database: Database,
         *,
         ollama_service: OllamaService | None = None,
+        narration_service: NarrationService | None = None,
         piper_service: PiperService | None = None,
+        xtts_service: XTTSService | None = None,
         whisper_service: WhisperService | None = None,
         pexels_service: PexelsService | None = None,
         ffmpeg_service: FFmpegService | None = None,
@@ -101,7 +105,11 @@ class ShortPipeline:
         self.settings = settings
         self.database = database
         self.ollama = ollama_service or OllamaService(settings)
-        self.piper = piper_service or PiperService(settings)
+        self.narration = narration_service or NarrationService(
+            settings,
+            piper_service=piper_service,
+            xtts_service=xtts_service,
+        )
         self.whisper = whisper_service or WhisperService(settings)
         self.pexels = pexels_service or PexelsService(settings)
         self.ffmpeg = ffmpeg_service or FFmpegService(settings)
@@ -223,7 +231,7 @@ class ShortPipeline:
         with self._stage(runtime, "narration_generation", {"topic": content.topic, "title": content.title}):
             raw_path = runtime.artifacts.audio_dir / "narration_raw.wav"
             normalized_path = runtime.artifacts.audio_dir / "narration.wav"
-            self.piper.synthesize(text=content.narration, output_path=raw_path)
+            self.narration.synthesize(text=content.narration, output_path=raw_path)
             self.ffmpeg.normalize_audio(input_path=raw_path, output_path=normalized_path)
             duration_seconds = self.ffmpeg.audio_duration_seconds(normalized_path)
             asset = NarrationAsset(

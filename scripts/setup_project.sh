@@ -11,7 +11,7 @@ if [ ! -f .env ]; then
   echo "Created .env from .env.example"
 fi
 
-mkdir -p cache data data/credentials logs output
+mkdir -p cache cache/xtts data data/credentials data/voice_samples/en logs output
 
 sh "$SCRIPT_DIR/install_python_deps.sh"
 

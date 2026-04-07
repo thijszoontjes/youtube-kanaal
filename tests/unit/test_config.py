@@ -22,3 +22,8 @@ def test_settings_expand_downloads_path(tmp_path) -> None:
 def test_settings_reject_invalid_schedule_times() -> None:
     with pytest.raises(ValidationError):
         Settings(scheduled_run_times="13:00,99:00")
+
+
+def test_settings_reject_invalid_narration_engine() -> None:
+    with pytest.raises(ValidationError):
+        Settings(narration_engine="clone")

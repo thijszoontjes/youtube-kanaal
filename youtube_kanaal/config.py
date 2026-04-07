@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     )
 
     ffmpeg_binary: str = Field(default="ffmpeg", validation_alias=AliasChoices("FFMPEG_BINARY"))
+    narration_engine: str = Field(default="piper", validation_alias=AliasChoices("NARRATION_ENGINE"))
     piper_binary: str = Field(default="piper", validation_alias=AliasChoices("PIPER_BINARY"))
     piper_voice_model_path: Path | None = Field(
         default=None,
@@ -71,6 +72,32 @@ class Settings(BaseSettings):
     piper_noise_scale: float = Field(default=0.667, validation_alias=AliasChoices("PIPER_NOISE_SCALE"))
     piper_noise_w_scale: float = Field(default=0.8, validation_alias=AliasChoices("PIPER_NOISE_W_SCALE"))
     piper_sentence_silence: float = Field(default=0.12, validation_alias=AliasChoices("PIPER_SENTENCE_SILENCE"))
+    xtts_runtime: str = Field(default="docker", validation_alias=AliasChoices("XTTS_RUNTIME"))
+    xtts_binary: str = Field(default="tts", validation_alias=AliasChoices("XTTS_BINARY"))
+    xtts_docker_image: str = Field(
+        default="ghcr.io/coqui-ai/tts-cpu",
+        validation_alias=AliasChoices("XTTS_DOCKER_IMAGE"),
+    )
+    xtts_model_name: str = Field(
+        default="tts_models/multilingual/multi-dataset/xtts_v2",
+        validation_alias=AliasChoices("XTTS_MODEL_NAME"),
+    )
+    xtts_language: str = Field(default="en", validation_alias=AliasChoices("XTTS_LANGUAGE"))
+    xtts_use_cuda: bool = Field(default=False, validation_alias=AliasChoices("XTTS_USE_CUDA"))
+    xtts_speaker_wav_path: Path | None = Field(
+        default=None,
+        validation_alias=AliasChoices("XTTS_SPEAKER_WAV_PATH"),
+    )
+    xtts_speaker_wav_dir: Path | None = Field(
+        default=None,
+        validation_alias=AliasChoices("XTTS_SPEAKER_WAV_DIR"),
+    )
+    xtts_max_reference_clips: int = Field(
+        default=5,
+        ge=1,
+        le=12,
+        validation_alias=AliasChoices("XTTS_MAX_REFERENCE_CLIPS"),
+    )
     whisper_cpp_binary: str = Field(
         default="whisper-cli",
         validation_alias=AliasChoices("WHISPER_CPP_BINARY"),
@@ -143,6 +170,8 @@ class Settings(BaseSettings):
         "youtube_client_secret_path",
         "youtube_token_path",
         "piper_voice_model_path",
+        "xtts_speaker_wav_path",
+        "xtts_speaker_wav_dir",
         "whisper_model_path",
         "output_dir",
         "cache_dir",
@@ -164,6 +193,30 @@ class Settings(BaseSettings):
             raise ValueError("DEFAULT_PRIVACY_STATUS must be private, unlisted, or public.")
         return normalized
 
+    @field_validator("narration_engine")
+    @classmethod
+    def _validate_narration_engine(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"piper", "xtts"}:
+            raise ValueError("NARRATION_ENGINE must be piper or xtts.")
+        return normalized
+
+    @field_validator("xtts_runtime")
+    @classmethod
+    def _validate_xtts_runtime(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"binary", "docker"}:
+            raise ValueError("XTTS_RUNTIME must be binary or docker.")
+        return normalized
+
+    @field_validator("xtts_language")
+    @classmethod
+    def _validate_xtts_language(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not normalized:
+            raise ValueError("XTTS_LANGUAGE cannot be empty.")
+        return normalized
+
     @field_validator("scheduled_run_times")
     @classmethod
     def _validate_scheduled_run_times(cls, value: str) -> str:
@@ -182,6 +235,8 @@ class Settings(BaseSettings):
     def _validate_duration_window(self) -> "Settings":
         if self.min_short_duration_seconds >= self.max_short_duration_seconds:
             raise ValueError("MIN_SHORT_DURATION_SECONDS must be lower than MAX_SHORT_DURATION_SECONDS.")
+        if self.xtts_speaker_wav_dir is None:
+            self.xtts_speaker_wav_dir = self.data_dir / "voice_samples" / self.xtts_language
         return self
 
     def ensure_directories(self) -> None:
@@ -191,6 +246,8 @@ class Settings(BaseSettings):
         self.youtube_token_path.parent.mkdir(parents=True, exist_ok=True)
         self.downloads_dir.mkdir(parents=True, exist_ok=True)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        if self.xtts_speaker_wav_dir:
+            self.xtts_speaker_wav_dir.mkdir(parents=True, exist_ok=True)
 
     def require(self, field_name: str, reason: str) -> None:
         value = getattr(self, field_name)
