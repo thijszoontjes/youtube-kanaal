@@ -10,6 +10,7 @@ from youtube_kanaal.config import Settings
 from youtube_kanaal.exceptions import ConfigurationError, PipelineStageError
 from youtube_kanaal.models.assets import VideoClipAsset
 from youtube_kanaal.utils.files import write_json
+from youtube_kanaal.utils.process import command_exists, run_command
 from youtube_kanaal.utils.subtitles import ideal_clip_count
 
 
@@ -280,10 +281,65 @@ class PexelsService:
     def _download_clip(self, clip: VideoClipAsset) -> None:
         clip.local_path.parent.mkdir(parents=True, exist_ok=True)
         if clip.local_path.exists():
-            return
-        response = self.client.get(clip.download_url)
-        response.raise_for_status()
-        clip.local_path.write_bytes(response.content)
+            if self._clip_file_is_usable(clip.local_path):
+                return
+            clip.local_path.unlink(missing_ok=True)
+
+        temporary_path = clip.local_path.with_name(f"{clip.local_path.name}.part")
+        for _ in range(2):
+            temporary_path.unlink(missing_ok=True)
+            response = self.client.get(clip.download_url)
+            response.raise_for_status()
+            temporary_path.write_bytes(response.content)
+            if self._clip_file_is_usable(temporary_path):
+                temporary_path.replace(clip.local_path)
+                return
+        temporary_path.unlink(missing_ok=True)
+        raise PipelineStageError(
+            stage="stock_video_download",
+            message="Downloaded Pexels clip is invalid or incomplete.",
+            probable_cause="The cached MP4 is empty or unreadable. The source download may have been interrupted.",
+            details_path=clip.local_path,
+        )
+
+    def _clip_file_is_usable(self, path: Path) -> bool:
+        if not path.exists():
+            return False
+        try:
+            if path.stat().st_size <= 0:
+                return False
+        except OSError:
+            return False
+
+        ffprobe_binary = self._ffprobe_binary()
+        if not command_exists(ffprobe_binary):
+            return True
+        try:
+            run_command(
+                [
+                    ffprobe_binary,
+                    "-v",
+                    "error",
+                    "-select_streams",
+                    "v:0",
+                    "-show_entries",
+                    "stream=codec_type,width,height,duration",
+                    "-of",
+                    "json",
+                    str(path),
+                ],
+                timeout_seconds=60,
+                stage="stock_video_download",
+            )
+        except PipelineStageError:
+            return False
+        return True
+
+    def _ffprobe_binary(self) -> str:
+        ffmpeg_path = Path(self.settings.ffmpeg_binary)
+        if ffmpeg_path.exists():
+            return str(ffmpeg_path.with_name("ffprobe"))
+        return "ffprobe"
 
     def _mock_clips(self, target_duration_seconds: float) -> list[VideoClipAsset]:
         clip_count = ideal_clip_count(target_duration_seconds)

@@ -86,3 +86,77 @@ def test_pexels_service_prioritizes_one_clip_per_query_first(configured_env) -> 
     prioritized = service._prioritized_candidates(candidates, ["saturn rings", "saturn moon orbit"])
 
     assert [clip.source_id for clip in prioritized[:2]] == ["a1", "b1"]
+
+
+def test_download_clip_replaces_corrupt_cached_file(configured_env, monkeypatch) -> None:
+    service = PexelsService(load_settings())
+    clip_path = configured_env["cache_dir"] / "pexels" / "cached.mp4"
+    clip_path.parent.mkdir(parents=True, exist_ok=True)
+    clip_path.write_bytes(b"")
+    clip = VideoClipAsset(
+        source_id="cached",
+        query="ocean",
+        source_url="https://example.com/ocean",
+        download_url="https://example.com/cached.mp4",
+        local_path=clip_path,
+        duration_seconds=5,
+        width=1080,
+        height=1920,
+        score=8.0,
+    )
+
+    calls: list[str] = []
+
+    class FakeResponse:
+        content = b"valid-video"
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str) -> FakeResponse:
+        calls.append(url)
+        return FakeResponse()
+
+    monkeypatch.setattr(service.client, "get", fake_get)
+    monkeypatch.setattr(
+        service,
+        "_clip_file_is_usable",
+        lambda path: path.exists() and path.read_bytes() == b"valid-video",
+    )
+
+    service._download_clip(clip)
+
+    assert calls == ["https://example.com/cached.mp4"]
+    assert clip_path.read_bytes() == b"valid-video"
+
+
+def test_download_clip_skips_valid_cached_file(configured_env, monkeypatch) -> None:
+    service = PexelsService(load_settings())
+    clip_path = configured_env["cache_dir"] / "pexels" / "cached-valid.mp4"
+    clip_path.parent.mkdir(parents=True, exist_ok=True)
+    clip_path.write_bytes(b"valid-video")
+    clip = VideoClipAsset(
+        source_id="cached-valid",
+        query="ocean",
+        source_url="https://example.com/ocean",
+        download_url="https://example.com/cached-valid.mp4",
+        local_path=clip_path,
+        duration_seconds=5,
+        width=1080,
+        height=1920,
+        score=8.0,
+    )
+
+    def fail_get(_url: str):
+        raise AssertionError("download should not run for a valid cached clip")
+
+    monkeypatch.setattr(service.client, "get", fail_get)
+    monkeypatch.setattr(
+        service,
+        "_clip_file_is_usable",
+        lambda path: path.exists() and path.read_bytes() == b"valid-video",
+    )
+
+    service._download_clip(clip)
+
+    assert clip_path.read_bytes() == b"valid-video"
