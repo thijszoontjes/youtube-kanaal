@@ -44,7 +44,7 @@ class XTTSService:
         try:
             run_command(
                 command,
-                timeout_seconds=900,
+                timeout_seconds=self.settings.xtts_timeout_seconds,
                 stage="narration_generation",
             )
         except Exception as exc:
@@ -104,6 +104,8 @@ class XTTSService:
                     "-y",
                     "-i",
                     str(source_path),
+                    "-t",
+                    str(self.settings.xtts_reference_max_seconds),
                     "-vn",
                     "-ar",
                     "24000",

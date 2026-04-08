@@ -232,6 +232,11 @@ class ShortPipeline:
             raw_path = runtime.artifacts.audio_dir / "narration_raw.wav"
             normalized_path = runtime.artifacts.audio_dir / "narration.wav"
             narration_engine = self.narration.resolve_engine()
+            reference_sources = (
+                [str(path) for path in self.narration.xtts.discover_reference_sources()]
+                if narration_engine == "xtts"
+                else []
+            )
             self.narration.synthesize(text=content.narration, output_path=raw_path)
             self.ffmpeg.normalize_audio(input_path=raw_path, output_path=normalized_path)
             duration_seconds = self.ffmpeg.audio_duration_seconds(normalized_path)
@@ -242,6 +247,7 @@ class ShortPipeline:
             )
             runtime.stage_summaries["narration_generation"] = {
                 "engine": narration_engine,
+                "reference_sources": reference_sources,
                 **asset.model_dump(mode="json"),
             }
             return asset

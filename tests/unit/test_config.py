@@ -27,3 +27,8 @@ def test_settings_reject_invalid_schedule_times() -> None:
 def test_settings_reject_invalid_narration_engine() -> None:
     with pytest.raises(ValidationError):
         Settings(narration_engine="clone")
+
+
+def test_settings_reject_invalid_xtts_reference_max_seconds() -> None:
+    with pytest.raises(ValidationError):
+        Settings(xtts_reference_max_seconds=2)

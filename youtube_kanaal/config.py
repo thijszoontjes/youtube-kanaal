@@ -98,6 +98,18 @@ class Settings(BaseSettings):
         le=12,
         validation_alias=AliasChoices("XTTS_MAX_REFERENCE_CLIPS"),
     )
+    xtts_reference_max_seconds: int = Field(
+        default=30,
+        ge=5,
+        le=180,
+        validation_alias=AliasChoices("XTTS_REFERENCE_MAX_SECONDS"),
+    )
+    xtts_timeout_seconds: int = Field(
+        default=3600,
+        ge=300,
+        le=14400,
+        validation_alias=AliasChoices("XTTS_TIMEOUT_SECONDS"),
+    )
     xtts_fallback_to_piper: bool = Field(
         default=True,
         validation_alias=AliasChoices("XTTS_FALLBACK_TO_PIPER"),

@@ -4,12 +4,13 @@ import platform
 import sys
 
 from youtube_kanaal.config import Settings
+from youtube_kanaal.exceptions import PipelineStageError
 from youtube_kanaal.models.run import DoctorCheck, DoctorReport
 from youtube_kanaal.services.ollama_service import OllamaService
 from youtube_kanaal.services.pexels_service import PexelsService
 from youtube_kanaal.services.xtts_service import XTTSService
 from youtube_kanaal.utils.files import is_writable_directory
-from youtube_kanaal.utils.process import command_exists
+from youtube_kanaal.utils.process import command_exists, run_command
 
 
 class DoctorService:
@@ -93,7 +94,7 @@ class DoctorService:
         samples = XTTSService(self.settings).discover_reference_sources()
         samples_ready = bool(samples)
         fallback_enabled = self.settings.xtts_fallback_to_piper
-        runtime_ok = command_exists("docker") if self.settings.xtts_runtime == "docker" else command_exists(self.settings.xtts_binary)
+        runtime_ok = self._xtts_runtime_ok()
         runtime_details = (
             f"docker -> {self.settings.xtts_docker_image}"
             if self.settings.xtts_runtime == "docker"
@@ -112,11 +113,7 @@ class DoctorService:
                 details=runtime_details,
                 action=None
                 if runtime_ok
-                else (
-                    "Install Docker Desktop or set XTTS_RUNTIME=binary with a working tts command."
-                    if not (fallback_enabled and not samples_ready)
-                    else "XTTS is not ready yet, but the pipeline can still fall back to Piper until you add voice memos."
-                ),
+                else self._xtts_runtime_action(samples_ready=samples_ready, fallback_enabled=fallback_enabled),
             ),
             DoctorCheck(
                 name="XTTS speaker samples",
@@ -139,6 +136,38 @@ class DoctorService:
                 else []
             ),
         ]
+
+    def _xtts_runtime_ok(self) -> bool:
+        if self.settings.xtts_runtime == "docker":
+            return command_exists("docker") and self._xtts_docker_image_ready()
+        return command_exists(self.settings.xtts_binary)
+
+    def _xtts_runtime_action(self, *, samples_ready: bool, fallback_enabled: bool) -> str:
+        if self.settings.xtts_runtime == "docker":
+            if not command_exists("docker"):
+                return "Install Docker Desktop or switch to XTTS_RUNTIME=binary with a working tts command."
+            if fallback_enabled and not samples_ready:
+                return "XTTS Docker image is not ready yet, but the pipeline can still fall back to Piper until you add voice memos."
+            return f"Run: docker pull {self.settings.xtts_docker_image}"
+        if fallback_enabled and not samples_ready:
+            return "XTTS is not ready yet, but the pipeline can still fall back to Piper until you add voice memos."
+        return "Install Coqui TTS or set XTTS_RUNTIME=docker."
+
+    def _xtts_docker_image_ready(self) -> bool:
+        try:
+            run_command(
+                [
+                    "docker",
+                    "image",
+                    "inspect",
+                    self.settings.xtts_docker_image,
+                ],
+                timeout_seconds=20,
+                stage="doctor",
+            )
+        except PipelineStageError:
+            return False
+        return True
 
     def _piper_voice_check(self) -> DoctorCheck:
         inferred = self.settings.piper_voice_model_path or (
