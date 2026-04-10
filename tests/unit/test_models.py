@@ -18,6 +18,19 @@ def test_topic_choice_requires_catalog_topic() -> None:
         )
 
 
+def test_topic_choice_accepts_new_gaming_catalog_topic() -> None:
+    topic = TopicChoice(
+        bucket="gaming",
+        topic="Fortnite",
+        visual_queries=["Fortnite gaming setup", "Fortnite esports"],
+        search_terms=["Fortnite", "gaming"],
+    )
+
+    assert topic.bucket == "gaming"
+    assert topic.topic == "Fortnite"
+    assert topic.search_terms[0] == "Fortnite"
+
+
 def test_generated_short_requires_three_distinct_facts() -> None:
     with pytest.raises(ValidationError):
         GeneratedShort(

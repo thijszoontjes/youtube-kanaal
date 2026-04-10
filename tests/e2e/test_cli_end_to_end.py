@@ -84,3 +84,23 @@ def test_cli_diagnose_voice_lists_reference_audio(cli_runner, configured_env, mo
     assert "Voice Diagnostics" in diagnose_result.stdout
     assert "Reference Audio" in diagnose_result.stdout
     assert "memo.m4a" in diagnose_result.stdout
+
+
+def test_cli_list_topics_shows_gaming_catalog(cli_runner, configured_env) -> None:
+    result = cli_runner.invoke(app, ["list-topics", "--bucket", "gaming"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Topic Catalog" in result.stdout
+    assert "gaming" in result.stdout
+    assert "Fortnite" in result.stdout
+
+
+def test_cli_make_short_accepts_fortnite_topic_in_mock_mode(cli_runner, configured_env) -> None:
+    result = cli_runner.invoke(
+        app,
+        ["make-short", "--topic", "fortnite", "--mock-mode", "--no-downloads"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "Short Completed" in result.stdout
+    assert "Fortnite" in result.stdout

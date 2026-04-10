@@ -13,6 +13,7 @@ from youtube_kanaal.config import Settings, load_settings, project_root
 from youtube_kanaal.db import Database
 from youtube_kanaal.exceptions import PipelineStageError, YoutubeKanaalError
 from youtube_kanaal.models import BatchRequest, ShortRunRequest
+from youtube_kanaal.models.content import TOPIC_CATALOG
 from youtube_kanaal.pipelines import ShortPipeline, validate_artifact_directory
 from youtube_kanaal.services.doctor import DoctorService
 from youtube_kanaal.services.ffmpeg_service import FFmpegService
@@ -229,6 +230,29 @@ def make_batch(
             failures += 1
     if failures:
         raise typer.Exit(code=1)
+
+
+@app.command()
+def list_topics(
+    bucket: Optional[str] = typer.Option(None, help="Filter the output to one bucket."),
+) -> None:
+    """List the curated topic catalog used by topic selection and forced topics."""
+
+    rows = list(TOPIC_CATALOG.items())
+    if bucket:
+        normalized_bucket = bucket.strip().lower()
+        rows = [(name, topics) for name, topics in rows if name == normalized_bucket]
+        if not rows:
+            available = ", ".join(TOPIC_CATALOG)
+            raise typer.BadParameter(f"Unknown bucket '{bucket}'. Available buckets: {available}")
+
+    table = Table(title="Topic Catalog")
+    table.add_column("Bucket")
+    table.add_column("Count", justify="right")
+    table.add_column("Topics")
+    for bucket_name, topics in rows:
+        table.add_row(bucket_name, str(len(topics)), ", ".join(topics))
+    console.print(table)
 
 
 @app.command()

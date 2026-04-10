@@ -680,6 +680,50 @@ class ShortPipeline:
                     f"{topic_text} technology",
                 ]
             )
+        elif topic.bucket == "gaming":
+            queries.extend(
+                [
+                    f"{topic_text} gaming setup",
+                    f"{topic_text} esports",
+                    "gamer rgb keyboard",
+                    "game controller neon",
+                ]
+            )
+        elif topic.bucket == "sports":
+            queries.extend(
+                [
+                    f"{topic_text} sport action",
+                    f"{topic_text} athlete training",
+                    f"{topic_text} slow motion",
+                    "stadium crowd action",
+                ]
+            )
+        elif topic.bucket == "vehicles":
+            queries.extend(
+                [
+                    f"{topic_text} cinematic motion",
+                    f"{topic_text} close up",
+                    f"{topic_text} driving",
+                    "transport action",
+                ]
+            )
+        elif topic.bucket == "technology":
+            queries.extend(
+                [
+                    f"{topic_text} technology close up",
+                    f"{topic_text} futuristic",
+                    f"{topic_text} lab",
+                    "innovation technology b-roll",
+                ]
+            )
+        else:
+            queries.extend(
+                [
+                    f"{topic_text} cinematic",
+                    f"{topic_text} close up",
+                    f"{topic_text} documentary",
+                ]
+            )
 
         queries.extend(self._fact_visual_queries(topic, content))
         queries.extend(topic.visual_queries)
@@ -745,6 +789,20 @@ class ShortPipeline:
             "bird": f"{topic_text} bird close up",
             "planet": f"{topic_text} in space",
             "space": f"{topic_text} astronomy animation",
+            "keyboard": f"{topic_text} keyboard close up",
+            "controller": f"{topic_text} game controller close up",
+            "gamer": "esports gamer setup",
+            "stadium": f"{topic_text} stadium action",
+            "surf": f"{topic_text} surfing slow motion",
+            "bike": f"{topic_text} biking action",
+            "snow": f"{topic_text} snow action",
+            "racing": f"{topic_text} racing action",
+            "car": f"{topic_text} driving close up",
+            "train": f"{topic_text} train motion",
+            "jet": f"{topic_text} jet takeoff",
+            "drone": f"{topic_text} drone flight",
+            "robot": f"{topic_text} robot close up",
+            "screen": f"{topic_text} screen close up",
         }
 
         for keyword, query in keyword_map.items():
