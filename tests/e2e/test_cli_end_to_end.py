@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from youtube_kanaal.cli import app
@@ -9,6 +10,10 @@ def test_cli_test_pipeline_and_validate_assets(cli_runner, configured_env) -> No
     run_result = cli_runner.invoke(app, ["test-pipeline"])
     assert run_result.exit_code == 0, run_result.stdout
     assert "Short Completed" in run_result.stdout
+    output_dir = Path(configured_env["output_dir"])
+    latest_run_dir = max(output_dir.iterdir(), key=lambda path: path.stat().st_mtime)
+    metadata = json.loads((latest_run_dir / "metadata" / "run_metadata.json").read_text(encoding="utf-8"))
+    assert "sound_design" in metadata["stages"]
 
     validate_result = cli_runner.invoke(app, ["validate-assets"])
     assert validate_result.exit_code == 0, validate_result.stdout

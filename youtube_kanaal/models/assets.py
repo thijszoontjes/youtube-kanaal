@@ -17,6 +17,15 @@ class SubtitleAsset(BaseModel):
     ass_path: Path | None = None
 
 
+class SoundDesignAsset(BaseModel):
+    mixed_path: Path
+    applied: bool = False
+    duration_seconds: float = Field(ge=0)
+    effect_count: int = Field(default=0, ge=0)
+    stem_paths: list[Path] = Field(default_factory=list)
+    fallback_reason: str | None = None
+
+
 class VideoClipAsset(BaseModel):
     source_id: str
     query: str

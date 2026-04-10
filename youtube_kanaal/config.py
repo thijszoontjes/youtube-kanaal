@@ -126,6 +126,10 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("WHISPER_MODEL_PATH"),
     )
+    sound_design_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("SOUND_DESIGN_ENABLED"),
+    )
 
     output_dir: Path = Field(
         default_factory=lambda: project_root() / "output",

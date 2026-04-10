@@ -19,6 +19,7 @@ from youtube_kanaal.models import (
     NarrationAsset,
     ShortRunRequest,
     ShortRunResult,
+    SoundDesignAsset,
     SubtitleAsset,
     TopicChoice,
     UploadMetadata,
@@ -30,6 +31,7 @@ from youtube_kanaal.services.narration_service import NarrationService
 from youtube_kanaal.services.ollama_service import OllamaService
 from youtube_kanaal.services.pexels_service import PexelsService
 from youtube_kanaal.services.piper_service import PiperService
+from youtube_kanaal.services.sound_design_service import SoundDesignService
 from youtube_kanaal.services.whisper_service import WhisperService
 from youtube_kanaal.services.xtts_service import XTTSService
 from youtube_kanaal.services.youtube_service import YouTubeService
@@ -100,6 +102,7 @@ class ShortPipeline:
         whisper_service: WhisperService | None = None,
         pexels_service: PexelsService | None = None,
         ffmpeg_service: FFmpegService | None = None,
+        sound_design_service: SoundDesignService | None = None,
         youtube_service: YouTubeService | None = None,
     ) -> None:
         self.settings = settings
@@ -113,6 +116,7 @@ class ShortPipeline:
         self.whisper = whisper_service or WhisperService(settings)
         self.pexels = pexels_service or PexelsService(settings)
         self.ffmpeg = ffmpeg_service or FFmpegService(settings)
+        self.sound_design = sound_design_service or SoundDesignService(settings)
         self.youtube = youtube_service or YouTubeService(settings)
 
     def run(self, request: ShortRunRequest) -> ShortRunResult:
@@ -144,9 +148,10 @@ class ShortPipeline:
             content = self.generate_content(runtime, topic)
             narration = self.generate_narration(runtime, content)
             subtitles = self.generate_subtitles(runtime, content, narration)
+            sound_design = self.apply_sound_design(runtime, narration)
             clips = self.download_stock_video(runtime, topic, content, narration)
             plan = self.plan_assets(runtime, clips, narration)
-            final_video_path = self.render_video(runtime, plan, narration, subtitles, content)
+            final_video_path = self.render_video(runtime, plan, sound_design.mixed_path, subtitles, content)
             validation_payload = self.validate_output(runtime, final_video_path)
             downloads_copy = self.export_to_downloads(runtime, final_video_path, content)
             upload_metadata = self.upload_if_requested(runtime, final_video_path, content)
@@ -155,6 +160,7 @@ class ShortPipeline:
                 topic=topic,
                 content=content,
                 narration=narration,
+                sound_design=sound_design,
                 subtitles=subtitles,
                 clips=clips,
                 final_video_path=final_video_path,
@@ -268,6 +274,41 @@ class ShortPipeline:
             runtime.stage_summaries["subtitle_generation"] = subtitles.model_dump(mode="json")
             return subtitles
 
+    def apply_sound_design(
+        self,
+        runtime: PipelineRuntime,
+        narration: NarrationAsset,
+    ) -> SoundDesignAsset:
+        with self._stage(
+            runtime,
+            "sound_design",
+            {"source_audio": str(narration.normalized_path), "duration_seconds": narration.duration_seconds},
+        ):
+            try:
+                asset = self.sound_design.build_mix(
+                    narration_path=narration.normalized_path,
+                    duration_seconds=narration.duration_seconds,
+                    working_dir=runtime.artifacts.audio_dir,
+                    logger=runtime.logger,
+                )
+            except Exception as exc:
+                runtime.logger.warning(
+                    "sound_design: using dry narration",
+                    extra={
+                        "run_id": runtime.run_id,
+                        "stage": "sound_design",
+                        "reason": str(exc),
+                    },
+                )
+                asset = SoundDesignAsset(
+                    mixed_path=narration.normalized_path,
+                    applied=False,
+                    duration_seconds=narration.duration_seconds,
+                    fallback_reason=str(exc),
+                )
+            runtime.stage_summaries["sound_design"] = asset.model_dump(mode="json")
+            return asset
+
     def download_stock_video(
         self,
         runtime: PipelineRuntime,
@@ -314,7 +355,7 @@ class ShortPipeline:
         self,
         runtime: PipelineRuntime,
         plan: AssetPlan,
-        narration: NarrationAsset,
+        audio_path: Path,
         subtitles: SubtitleAsset,
         content: GeneratedShort,
     ) -> Path:
@@ -322,12 +363,15 @@ class ShortPipeline:
             final_video_path = runtime.artifacts.video_dir / f"{safe_slug(content.title)}.mp4"
             output_path = self.ffmpeg.render_short(
                 plan=plan,
-                audio_path=narration.normalized_path,
+                audio_path=audio_path,
                 subtitle_path=subtitles.ass_path or subtitles.srt_path,
                 working_dir=runtime.artifacts.video_dir,
                 output_path=final_video_path,
             )
-            runtime.stage_summaries["video_rendering"] = {"output_path": str(output_path)}
+            runtime.stage_summaries["video_rendering"] = {
+                "output_path": str(output_path),
+                "audio_path": str(audio_path),
+            }
             return output_path
 
     def validate_output(self, runtime: PipelineRuntime, final_video_path: Path) -> dict[str, object]:
@@ -387,6 +431,7 @@ class ShortPipeline:
         topic: TopicChoice,
         content: GeneratedShort,
         narration: NarrationAsset,
+        sound_design: SoundDesignAsset,
         subtitles: SubtitleAsset,
         clips: list[VideoClipAsset],
         final_video_path: Path,
@@ -403,6 +448,7 @@ class ShortPipeline:
                 "topic": topic.model_dump(mode="json"),
                 "content": content.model_dump(mode="json"),
                 "narration": narration.model_dump(mode="json"),
+                "sound_design": sound_design.model_dump(mode="json"),
                 "subtitles": subtitles.model_dump(mode="json"),
                 "clips": [clip.model_dump(mode="json") for clip in clips],
                 "validation": validation_payload,
@@ -428,6 +474,16 @@ class ShortPipeline:
                 metadata=narration.model_dump(mode="json"),
                 created_at=completed_at,
             )
+            if sound_design.mixed_path.exists() and sound_design.mixed_path != narration.normalized_path:
+                self.database.record_asset(
+                    run_id=runtime.run_id,
+                    asset_type="sound_design_mix",
+                    source_id=None,
+                    source_url=None,
+                    local_path=str(sound_design.mixed_path),
+                    metadata=sound_design.model_dump(mode="json"),
+                    created_at=completed_at,
+                )
             self.database.record_asset(
                 run_id=runtime.run_id,
                 asset_type="subtitles",
