@@ -237,7 +237,7 @@ class FFmpegService:
     def _ffprobe_binary(self) -> str:
         ffmpeg_path = Path(self.settings.ffmpeg_binary)
         if ffmpeg_path.exists():
-            return str(ffmpeg_path.with_name("ffprobe"))
+            return str(ffmpeg_path.with_name("ffprobe.exe" if ffmpeg_path.suffix.lower() == ".exe" else "ffprobe"))
         return "ffprobe"
 
     def _escape_filter_path(self, path: Path) -> str:

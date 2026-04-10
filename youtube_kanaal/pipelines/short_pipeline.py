@@ -231,13 +231,11 @@ class ShortPipeline:
         with self._stage(runtime, "narration_generation", {"topic": content.topic, "title": content.title}):
             raw_path = runtime.artifacts.audio_dir / "narration_raw.wav"
             normalized_path = runtime.artifacts.audio_dir / "narration.wav"
-            narration_engine = self.narration.resolve_engine()
-            reference_sources = (
-                [str(path) for path in self.narration.xtts.discover_reference_sources()]
-                if narration_engine == "xtts"
-                else []
+            synthesis = self.narration.synthesize(
+                text=content.narration,
+                output_path=raw_path,
+                logger=runtime.logger,
             )
-            self.narration.synthesize(text=content.narration, output_path=raw_path)
             self.ffmpeg.normalize_audio(input_path=raw_path, output_path=normalized_path)
             duration_seconds = self.ffmpeg.audio_duration_seconds(normalized_path)
             asset = NarrationAsset(
@@ -246,8 +244,10 @@ class ShortPipeline:
                 duration_seconds=duration_seconds,
             )
             runtime.stage_summaries["narration_generation"] = {
-                "engine": narration_engine,
-                "reference_sources": reference_sources,
+                "requested_engine": synthesis.requested_engine,
+                "engine": synthesis.engine_used,
+                "fallback_reason": synthesis.fallback_reason,
+                "reference_sources": [str(path) for path in synthesis.reference_sources],
                 **asset.model_dump(mode="json"),
             }
             return asset

@@ -110,6 +110,10 @@ class Settings(BaseSettings):
         le=14400,
         validation_alias=AliasChoices("XTTS_TIMEOUT_SECONDS"),
     )
+    coqui_tos_agreed: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("COQUI_TOS_AGREED"),
+    )
     xtts_fallback_to_piper: bool = Field(
         default=True,
         validation_alias=AliasChoices("XTTS_FALLBACK_TO_PIPER"),

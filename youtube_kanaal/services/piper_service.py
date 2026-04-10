@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 import struct
 import wave
@@ -7,7 +8,7 @@ from pathlib import Path
 
 from youtube_kanaal.config import Settings
 from youtube_kanaal.exceptions import ConfigurationError, PipelineStageError
-from youtube_kanaal.utils.process import run_command
+from youtube_kanaal.utils.process import command_exists, run_command
 from youtube_kanaal.utils.subtitles import estimate_runtime_from_text
 
 
@@ -17,13 +18,43 @@ class PiperService:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
-    def synthesize(self, *, text: str, output_path: Path) -> Path:
+    def runtime_ready(self) -> tuple[bool, str | None]:
+        if self.settings.mock_mode:
+            return True, None
+        if not command_exists(self.settings.piper_binary):
+            return False, f"Piper binary not found: {self.settings.piper_binary}"
+        try:
+            voice_model_path = self._resolve_voice_model_path()
+        except ConfigurationError as exc:
+            return False, str(exc)
+        if not voice_model_path.exists():
+            return False, f"Piper voice model not found: {voice_model_path}"
+        return True, None
+
+    def synthesize(
+        self,
+        *,
+        text: str,
+        output_path: Path,
+        logger: logging.Logger | None = None,
+    ) -> Path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         if self.settings.mock_mode:
             self._write_mock_wave(output_path, estimate_runtime_from_text(text))
+            self._validate_output(output_path)
             return output_path
 
         voice_model_path = self._resolve_voice_model_path()
+        if logger:
+            logger.info(
+                "piper_synthesis: start",
+                extra={
+                    "stage": "narration_generation",
+                    "engine": "piper",
+                    "output_path": str(output_path),
+                    "voice_model_path": str(voice_model_path),
+                },
+            )
         try:
             run_command(
                 [
@@ -53,6 +84,17 @@ class PiperService:
                 message="Piper synthesis failed.",
                 probable_cause=str(exc),
             ) from exc
+        self._validate_output(output_path)
+        if logger:
+            logger.info(
+                "piper_synthesis: finish",
+                extra={
+                    "stage": "narration_generation",
+                    "engine": "piper",
+                    "output_path": str(output_path),
+                    "size_bytes": output_path.stat().st_size,
+                },
+            )
         return output_path
 
     def _resolve_voice_model_path(self) -> Path:
@@ -64,6 +106,20 @@ class PiperService:
         raise ConfigurationError(
             "PIPER_VOICE_MODEL_PATH is required unless the inferred cache voice file exists."
         )
+
+    def _validate_output(self, output_path: Path) -> None:
+        if not output_path.exists():
+            raise PipelineStageError(
+                stage="narration_generation",
+                message="Piper did not create the expected narration WAV.",
+                probable_cause=f"Expected output file is missing: {output_path}",
+            )
+        if output_path.stat().st_size == 0:
+            raise PipelineStageError(
+                stage="narration_generation",
+                message="Piper created an empty narration WAV.",
+                probable_cause=f"Output file is empty: {output_path}",
+            )
 
     def _write_mock_wave(self, output_path: Path, duration_seconds: float) -> None:
         sample_rate = 16_000

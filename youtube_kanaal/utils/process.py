@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Sequence
 
@@ -17,6 +18,7 @@ def run_command(
     *,
     timeout_seconds: int = 300,
     cwd: Path | None = None,
+    env: Mapping[str, str] | None = None,
     input_text: str | None = None,
     stage: str,
 ) -> subprocess.CompletedProcess[str]:
@@ -28,6 +30,7 @@ def run_command(
         return subprocess.run(
             list(command),
             cwd=cwd,
+            env=dict(env) if env is not None else None,
             input=input_text,
             timeout=timeout_seconds,
             check=True,

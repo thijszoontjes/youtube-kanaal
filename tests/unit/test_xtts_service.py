@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from youtube_kanaal.config import Settings
+from youtube_kanaal.exceptions import PipelineStageError
 from youtube_kanaal.services.xtts_service import XTTSService
 
 
@@ -52,3 +53,30 @@ def test_xtts_prepare_reference_audio_trims_long_samples(monkeypatch, tmp_path) 
     assert commands
     assert "-t" in commands[0]
     assert "30" in commands[0]
+
+
+def test_xtts_runtime_ready_checks_binary_health(monkeypatch, tmp_path) -> None:
+    binary_path = tmp_path / "tts.exe"
+    binary_path.write_bytes(b"")
+    settings = Settings(
+        narration_engine="xtts",
+        xtts_runtime="binary",
+        xtts_binary=str(binary_path),
+    )
+
+    monkeypatch.setattr("youtube_kanaal.services.xtts_service.command_exists", lambda command: True)
+    
+    def fake_run_command(command, **kwargs):
+        raise PipelineStageError(
+            stage="narration_generation",
+            message="Command failed",
+            probable_cause="transformers import failed",
+        )
+
+    monkeypatch.setattr("youtube_kanaal.services.xtts_service.run_command", fake_run_command)
+
+    ready, reason = XTTSService(settings).runtime_ready()
+
+    assert not ready
+    assert reason is not None
+    assert "health check" in reason.lower()

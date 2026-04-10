@@ -44,3 +44,43 @@ def test_cli_preview_voice_with_xtts_missing_samples_falls_back_to_piper(cli_run
     assert preview_result.exit_code == 0, preview_result.stdout
     normalized_output = " ".join(preview_result.stdout.lower().split())
     assert "using piper" in normalized_output
+
+
+def test_cli_preview_voice_reports_fallback_reason_when_xtts_runtime_is_missing(
+    cli_runner,
+    configured_env,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("NARRATION_ENGINE", "xtts")
+    sample_dir = configured_env["data_dir"] / "voice_samples" / "en"
+    sample_dir.mkdir(parents=True, exist_ok=True)
+    (sample_dir / "memo.m4a").write_bytes(b"voice")
+    monkeypatch.setattr(
+        "youtube_kanaal.services.xtts_service.XTTSService.runtime_ready",
+        lambda self: (False, "XTTS Docker image is not ready locally."),
+    )
+
+    preview_result = cli_runner.invoke(
+        app,
+        ["preview-voice", "Fallback to the default voice.", "--mock-mode"],
+    )
+
+    assert preview_result.exit_code == 0, preview_result.stdout
+    normalized_output = " ".join(preview_result.stdout.lower().split())
+    assert "using piper" in normalized_output
+    assert "fallback reason" in normalized_output
+    assert "docker image is not ready locally" in normalized_output
+
+
+def test_cli_diagnose_voice_lists_reference_audio(cli_runner, configured_env, monkeypatch) -> None:
+    monkeypatch.setenv("NARRATION_ENGINE", "xtts")
+    sample_dir = configured_env["data_dir"] / "voice_samples" / "en"
+    sample_dir.mkdir(parents=True, exist_ok=True)
+    (sample_dir / "memo.m4a").write_bytes(b"voice")
+
+    diagnose_result = cli_runner.invoke(app, ["diagnose-voice", "--mock-mode"])
+
+    assert diagnose_result.exit_code == 0, diagnose_result.stdout
+    assert "Voice Diagnostics" in diagnose_result.stdout
+    assert "Reference Audio" in diagnose_result.stdout
+    assert "memo.m4a" in diagnose_result.stdout

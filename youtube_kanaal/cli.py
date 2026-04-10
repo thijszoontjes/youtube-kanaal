@@ -88,6 +88,7 @@ def _preflight_pipeline_requirements(request: ShortRunRequest, settings: Setting
         if check.name in required_names and check.status in {"fail", "warn"}
     ]
     if not blocking:
+        _print_narration_fallback_note(settings)
         return
 
     console.print("[red]Pipeline prerequisites are not ready.[/red]")
@@ -116,14 +117,16 @@ def _pipeline_required_check_names(settings: Settings, *, upload: bool) -> set[s
 
 
 def _narration_required_check_names(settings: Settings) -> set[str]:
-    if settings.narration_engine == "xtts":
-        samples_ready = bool(XTTSService(settings).discover_reference_sources())
-        if samples_ready:
-            return {"XTTS runtime", "XTTS speaker samples"}
-        if settings.xtts_fallback_to_piper:
-            return {"Piper", "Piper voice model"}
+    inspection = NarrationService(settings).inspect()
+    if inspection.resolved_engine == "xtts":
         return {"XTTS runtime", "XTTS speaker samples"}
     return {"Piper", "Piper voice model"}
+
+
+def _print_narration_fallback_note(settings: Settings) -> None:
+    inspection = NarrationService(settings).inspect()
+    if inspection.requested_engine == "xtts" and inspection.resolved_engine == "piper" and inspection.fallback_reason:
+        console.print(f"[yellow]Using Piper fallback:[/yellow] {inspection.fallback_reason}")
 
 
 def _preflight_narration_requirements(settings: Settings) -> None:
@@ -138,6 +141,7 @@ def _preflight_narration_requirements(settings: Settings) -> None:
         if check.name in required_names and check.status in {"fail", "warn"}
     ]
     if not blocking:
+        _print_narration_fallback_note(settings)
         return
 
     console.print("[red]Narration prerequisites are not ready.[/red]")
@@ -333,6 +337,54 @@ def doctor(debug: bool = typer.Option(False, help="Enable verbose logging.")) ->
 
 
 @app.command()
+def diagnose_voice(
+    debug: bool = typer.Option(False, help="Enable verbose logging."),
+    mock_mode: bool = typer.Option(False, help="Use deterministic mock audio."),
+) -> None:
+    """Inspect the terminal voice setup without rendering a full Short."""
+
+    settings = load_settings(app_debug=debug, mock_mode=mock_mode)
+    narration = NarrationService(settings)
+    inspection = narration.inspect()
+    xtts = XTTSService(settings)
+
+    table = Table(title="Voice Diagnostics")
+    table.add_column("Field")
+    table.add_column("Value")
+    table.add_row("Requested engine", inspection.requested_engine)
+    table.add_row("Resolved engine", inspection.resolved_engine)
+    table.add_row("Fallback reason", inspection.fallback_reason or "none")
+    table.add_row("XTTS runtime ready", "yes" if inspection.xtts_runtime_ready else "no")
+    table.add_row("XTTS runtime details", inspection.xtts_runtime_reason or "ready")
+    table.add_row("Piper ready", "yes" if inspection.piper_ready else "no")
+    table.add_row("Piper details", inspection.piper_reason or "ready")
+    table.add_row("Reference clips", str(len(inspection.reference_sources)))
+    console.print(table)
+
+    source_details = xtts.describe_reference_sources()
+    if source_details:
+        source_table = Table(title="Reference Audio")
+        source_table.add_column("Name")
+        source_table.add_column("Path")
+        source_table.add_column("Ext")
+        source_table.add_column("Codec")
+        source_table.add_column("Hz")
+        source_table.add_column("Ch")
+        source_table.add_column("Duration")
+        for source in source_details:
+            source_table.add_row(
+                Path(str(source.get("source_path") or "")).name,
+                str(source.get("source_path") or ""),
+                str(source.get("source_extension") or ""),
+                str(source.get("codec_name") or source.get("probe_status") or ""),
+                str(source.get("sample_rate") or ""),
+                str(source.get("channels") or ""),
+                str(source.get("duration_seconds") or ""),
+            )
+        console.print(source_table)
+
+
+@app.command()
 def preview_voice(
     text: str = typer.Argument(..., help="Text to speak with the active narration engine."),
     output: Optional[Path] = typer.Option(None, help="Optional output WAV path."),
@@ -351,8 +403,14 @@ def preview_voice(
     final_path = output.expanduser().resolve() if output else preview_dir / "preview.wav"
     final_path.parent.mkdir(parents=True, exist_ok=True)
 
-    narration.synthesize(text=text, output_path=raw_path)
+    synthesis = narration.synthesize(text=text, output_path=raw_path)
     FFmpegService(settings).normalize_audio(input_path=raw_path, output_path=final_path)
+    if synthesis.fallback_reason:
+        console.print(
+            f"Voice preview written to {final_path} using {synthesis.engine_used}. "
+            f"Fallback reason: {synthesis.fallback_reason}"
+        )
+        return
     console.print(f"Voice preview written to {final_path} using {active_engine}.")
 
 

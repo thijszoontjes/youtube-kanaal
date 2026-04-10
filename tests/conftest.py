@@ -38,6 +38,8 @@ def configured_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str,
         "PEXELS_API_KEY": "mock-key",
         "ALLOW_PLACEHOLDER_VIDEO": "true",
         "PIPER_VOICE_MODEL_PATH": str(cache_dir / "piper" / "mock.onnx"),
+        "XTTS_SPEAKER_WAV_PATH": "",
+        "XTTS_SPEAKER_WAV_DIR": str(data_dir / "voice_samples" / "en"),
         "WHISPER_MODEL_PATH": str(cache_dir / "whisper" / "ggml-base.en.bin"),
     }
     for key, value in env.items():
