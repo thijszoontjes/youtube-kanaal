@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from youtube_kanaal.exceptions import ConfigurationError
+
+
+_IANA_TIMEZONE_RE = re.compile(r"^[A-Za-z_]+(?:/[A-Za-z0-9_\-+]+)+$")
 
 
 def project_root() -> Path:
@@ -156,8 +161,12 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("DATABASE_PATH"),
     )
     scheduled_run_times: str = Field(
-        default="13:00,18:00,22:00",
+        default="13:00,15:00,19:00",
         validation_alias=AliasChoices("SCHEDULED_RUN_TIMES"),
+    )
+    scheduled_timezone: str = Field(
+        default="Europe/Amsterdam",
+        validation_alias=AliasChoices("SCHEDULED_TIMEZONE"),
     )
     scheduled_task_prefix: str = Field(
         default="youtube-kanaal-auto-upload",
@@ -239,6 +248,19 @@ class Settings(BaseSettings):
         normalized = value.strip().lower()
         if not normalized:
             raise ValueError("XTTS_LANGUAGE cannot be empty.")
+        return normalized
+
+    @field_validator("scheduled_timezone")
+    @classmethod
+    def _validate_scheduled_timezone(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("SCHEDULED_TIMEZONE cannot be empty.")
+        try:
+            ZoneInfo(normalized)
+        except ZoneInfoNotFoundError as exc:
+            if not _IANA_TIMEZONE_RE.fullmatch(normalized):
+                raise ValueError("SCHEDULED_TIMEZONE must be a valid IANA timezone.") from exc
         return normalized
 
     @field_validator("scheduled_run_times")

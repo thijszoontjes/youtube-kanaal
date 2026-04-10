@@ -28,6 +28,13 @@ dev = [
   "pytest>=8.3.5",
   "pytest-cov>=6.1.1",
 ]
+runtime = [
+  "coqui-tts==0.27.5",
+  "torch==2.11.0",
+  "torchaudio==2.11.0",
+  "torchcodec",
+  "transformers==4.57.6",
+]
 
 [project.scripts]
 youtube-kanaal = "youtube_kanaal.cli:main"

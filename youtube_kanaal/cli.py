@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import subprocess
 import shutil
 import sys
 from pathlib import Path
@@ -18,6 +20,7 @@ from youtube_kanaal.pipelines import ShortPipeline, validate_artifact_directory
 from youtube_kanaal.services.doctor import DoctorService
 from youtube_kanaal.services.ffmpeg_service import FFmpegService
 from youtube_kanaal.services.narration_service import NarrationService
+from youtube_kanaal.services.online_runtime_service import OnlineRuntimeService
 from youtube_kanaal.services.pexels_service import PexelsService
 from youtube_kanaal.services.xtts_service import XTTSService
 from youtube_kanaal.services.youtube_service import YouTubeService
@@ -25,6 +28,7 @@ from youtube_kanaal.utils.process import run_command
 from youtube_kanaal.utils.scheduling import (
     build_windows_task_action,
     build_windows_task_name,
+    build_linux_cron_block,
     parse_schedule_times,
 )
 
@@ -174,9 +178,14 @@ def _resolve_scheduled_python(python_executable: Path | None) -> Path:
             raise typer.BadParameter(f"Python executable not found: {resolved}")
         return resolved
 
-    repo_python = project_root() / ".venv" / "Scripts" / "python.exe"
-    if repo_python.exists():
-        return repo_python.resolve()
+    repo_root = project_root()
+    candidates = [
+        repo_root / ".venv" / "Scripts" / "python.exe",
+        repo_root / ".venv" / "bin" / "python",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
     return Path(sys.executable).resolve()
 
 
@@ -342,6 +351,69 @@ def install_windows_schedule(
 
 
 @app.command()
+def install_linux_schedule(
+    times: Optional[str] = typer.Option(
+        None,
+        help="Comma-separated local times in HH:MM format. Defaults to SCHEDULED_RUN_TIMES.",
+    ),
+    timezone: Optional[str] = typer.Option(
+        None,
+        help="IANA timezone such as Europe/Amsterdam. Defaults to SCHEDULED_TIMEZONE.",
+    ),
+    upload: bool = typer.Option(True, help="Upload automatically after each scheduled render."),
+    debug: bool = typer.Option(False, help="Enable verbose logging for scheduled runs."),
+    privacy_status: Optional[str] = typer.Option(None, help="Optional privacy override for scheduled uploads."),
+    python_executable: Optional[Path] = typer.Option(None, help="Python executable to use for the scheduled jobs."),
+) -> None:
+    """Install Linux cron jobs for automated Shorts."""
+
+    if os.name == "nt":
+        raise typer.BadParameter("install-linux-schedule is only supported on Linux/macOS shells.")
+
+    settings = load_settings()
+    schedule_times = parse_schedule_times(times or settings.scheduled_run_times)
+    schedule_timezone = timezone or settings.scheduled_timezone
+    repo_root = project_root().resolve()
+    script_path = (repo_root / "scripts" / "run_scheduled_short.sh").resolve()
+    if not script_path.exists():
+        raise typer.BadParameter(f"Missing scheduler script: {script_path}")
+    python_path = _resolve_scheduled_python(python_executable)
+    log_path = (settings.logs_dir / "scheduled-cron.log").resolve()
+    marker = settings.scheduled_task_prefix
+    block = build_linux_cron_block(
+        marker=marker,
+        script_path=script_path,
+        repo_root=repo_root,
+        python_executable=python_path,
+        times=schedule_times,
+        timezone=schedule_timezone,
+        upload=upload,
+        debug=debug,
+        privacy_status=privacy_status,
+        log_path=log_path,
+    )
+
+    current_crontab = _read_current_crontab()
+    updated_crontab = _replace_managed_cron_block(current_crontab, marker=marker, replacement=block)
+    run_command(
+        ["crontab", "-"],
+        input_text=updated_crontab,
+        timeout_seconds=120,
+        stage="schedule_install",
+    )
+
+    table = Table(title="Linux Schedule Installed")
+    table.add_column("Time")
+    table.add_column("Timezone")
+    table.add_column("Upload")
+    table.add_column("Command")
+    for time_value in schedule_times:
+        table.add_row(time_value, schedule_timezone, "yes" if upload else "no", "scheduled-run")
+    console.print(table)
+    console.print(f"Cron logs are appended to {log_path}.")
+
+
+@app.command()
 def doctor(debug: bool = typer.Option(False, help="Enable verbose logging.")) -> None:
     """Run environment checks."""
 
@@ -358,6 +430,26 @@ def doctor(debug: bool = typer.Option(False, help="Enable verbose logging.")) ->
     console.print(table)
     if not report.all_ok():
         raise typer.Exit(code=1)
+
+
+@app.command()
+def prepare_online_runtime(debug: bool = typer.Option(False, help="Enable verbose logging.")) -> None:
+    """Write online secrets and voice sample files from environment variables."""
+
+    settings = load_settings(app_debug=debug)
+    service = OnlineRuntimeService(settings)
+    results = service.materialize_from_environment()
+    if not results:
+        console.print("No ONLINE_* environment variables were found. Nothing was written.")
+        return
+
+    table = Table(title="Online Runtime Prepared")
+    table.add_column("Kind")
+    table.add_column("Path")
+    table.add_column("Source")
+    for item in results:
+        table.add_row(item["kind"], item["path"], item["source_env"])
+    console.print(table)
 
 
 @app.command()
@@ -589,6 +681,35 @@ def main() -> None:
     except YoutubeKanaalError as exc:
         _print_failure(exc)
         raise SystemExit(1) from exc
+
+
+def _read_current_crontab() -> str:
+    result = subprocess.run(
+        ["crontab", "-l"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    if result.returncode == 0:
+        return result.stdout
+    stderr = (result.stderr or "").lower()
+    if "no crontab" in stderr:
+        return ""
+    raise typer.BadParameter(f"Could not read the current crontab: {(result.stderr or result.stdout).strip()}")
+
+
+def _replace_managed_cron_block(current_crontab: str, *, marker: str, replacement: str) -> str:
+    start_marker = f"# >>> {marker} >>>"
+    end_marker = f"# <<< {marker} <<<"
+    if start_marker in current_crontab and end_marker in current_crontab:
+        before, remainder = current_crontab.split(start_marker, 1)
+        _, after = remainder.split(end_marker, 1)
+        current_crontab = before.rstrip() + "\n" + after.lstrip("\n")
+    base = current_crontab.rstrip()
+    if base:
+        return base + "\n\n" + replacement
+    return replacement
 
 
 if __name__ == "__main__":

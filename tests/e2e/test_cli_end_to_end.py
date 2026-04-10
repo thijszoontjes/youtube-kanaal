@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 
@@ -89,6 +90,23 @@ def test_cli_diagnose_voice_lists_reference_audio(cli_runner, configured_env, mo
     assert "Voice Diagnostics" in diagnose_result.stdout
     assert "Reference Audio" in diagnose_result.stdout
     assert "memo.m4a" in diagnose_result.stdout
+
+
+def test_cli_prepare_online_runtime_writes_files(cli_runner, configured_env, monkeypatch) -> None:
+    monkeypatch.setenv("ONLINE_YOUTUBE_CLIENT_SECRET_JSON", '{"installed":{"client_id":"mock"}}')
+    monkeypatch.setenv(
+        "ONLINE_YOUTUBE_TOKEN_JSON_B64",
+        base64.b64encode(b'{"refresh_token":"mock"}').decode("ascii"),
+    )
+    monkeypatch.setenv("ONLINE_XTTS_REFERENCE_AUDIO_B64", base64.b64encode(b"voice").decode("ascii"))
+    monkeypatch.setenv("ONLINE_XTTS_REFERENCE_AUDIO_FILENAME", "memo.m4a")
+
+    result = cli_runner.invoke(app, ["prepare-online-runtime"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "Online Runtime Prepared" in result.stdout
+    assert configured_env["client_secret_path"].exists()
+    assert (configured_env["data_dir"] / "voice_samples" / "en" / "memo.m4a").exists()
 
 
 def test_cli_list_topics_shows_gaming_catalog(cli_runner, configured_env) -> None:
