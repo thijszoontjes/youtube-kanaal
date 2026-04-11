@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -57,5 +58,6 @@ class AssetPlan(BaseModel):
 class UploadMetadata(BaseModel):
     youtube_video_id: str | None = None
     privacy_status: str
+    scheduled_publish_at: datetime | None = None
     response_path: Path | None = None
     uploaded: bool = False

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -73,18 +74,27 @@ class YouTubeService:
         description: str,
         hashtags: list[str],
         privacy_status: str,
+        scheduled_publish_at: datetime | None,
         response_path: Path,
     ) -> UploadMetadata:
+        resolved_privacy_status, publish_at_payload, normalized_publish_at = self._resolve_upload_schedule(
+            privacy_status=privacy_status,
+            scheduled_publish_at=scheduled_publish_at,
+        )
         if self.settings.mock_mode:
             payload = {
                 "id": "mock-video-id",
-                "status": {"privacyStatus": privacy_status},
+                "status": {
+                    "privacyStatus": resolved_privacy_status,
+                    **({"publishAt": publish_at_payload} if publish_at_payload else {}),
+                },
                 "snippet": {"title": title},
             }
             write_json(response_path, payload)
             return UploadMetadata(
                 youtube_video_id="mock-video-id",
-                privacy_status=privacy_status,
+                privacy_status=resolved_privacy_status,
+                scheduled_publish_at=normalized_publish_at,
                 response_path=response_path,
                 uploaded=True,
             )
@@ -112,7 +122,8 @@ class YouTubeService:
                     "categoryId": "27",
                 },
                 "status": {
-                    "privacyStatus": privacy_status,
+                    "privacyStatus": resolved_privacy_status,
+                    **({"publishAt": publish_at_payload} if publish_at_payload else {}),
                     "selfDeclaredMadeForKids": False,
                 },
             },
@@ -131,10 +142,43 @@ class YouTubeService:
         write_json(response_path, payload)
         return UploadMetadata(
             youtube_video_id=payload.get("id"),
-            privacy_status=privacy_status,
+            privacy_status=resolved_privacy_status,
+            scheduled_publish_at=normalized_publish_at,
             response_path=response_path,
             uploaded=True,
         )
+
+    def _resolve_upload_schedule(
+        self,
+        *,
+        privacy_status: str,
+        scheduled_publish_at: datetime | None,
+    ) -> tuple[str, str | None, datetime | None]:
+        normalized_privacy = privacy_status.strip().lower()
+        if scheduled_publish_at is None:
+            return normalized_privacy, None, None
+        if scheduled_publish_at.tzinfo is None or scheduled_publish_at.utcoffset() is None:
+            raise PipelineStageError(
+                stage="youtube_upload",
+                message="Scheduled publish time must be timezone-aware.",
+                probable_cause="Pass an ISO datetime with timezone or let the CLI build the schedule.",
+            )
+        now_utc = datetime.now(timezone.utc)
+        publish_at_utc = scheduled_publish_at.astimezone(timezone.utc)
+        if publish_at_utc <= now_utc:
+            raise PipelineStageError(
+                stage="youtube_upload",
+                message="Scheduled publish time must be in the future.",
+                probable_cause="Choose a later date or time for the planned upload.",
+            )
+        if normalized_privacy != "private":
+            raise PipelineStageError(
+                stage="youtube_upload",
+                message="Scheduled YouTube uploads must use privacy status 'private'.",
+                probable_cause="YouTube only accepts publishAt on private videos.",
+            )
+        publish_at_payload = publish_at_utc.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        return normalized_privacy, publish_at_payload, scheduled_publish_at
 
     def _load_credentials(self) -> Any:
         self.authenticate(force=False)

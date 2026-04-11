@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from datetime import date, datetime, time as dt_time, timedelta, timezone
 import os
 import subprocess
 import shutil
 import sys
 from pathlib import Path
 from typing import Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import typer
 from rich.console import Console
@@ -54,6 +56,10 @@ def _render_result(result) -> None:
     table.add_row("Output", str(result.output_path))
     table.add_row("Downloads copy", str(result.downloads_copy_path or "not copied"))
     table.add_row("Uploaded", "yes" if result.uploaded else "no")
+    if result.privacy_status:
+        table.add_row("Privacy", result.privacy_status)
+    if result.scheduled_publish_at:
+        table.add_row("Scheduled publish", result.scheduled_publish_at.isoformat())
     table.add_row("Run ID", result.run_id)
     table.add_row("Log file", str(result.log_path))
     console.print(table)
@@ -70,15 +76,73 @@ def _print_failure(error: Exception) -> None:
         console.print(f"[red]Pipeline failed:[/red] {error}")
 
 
-def _run_pipeline(request: ShortRunRequest) -> None:
+def _run_pipeline_result(request: ShortRunRequest):
     _, pipeline = _bootstrap(debug=request.debug, mock_mode=request.mock_mode)
     _preflight_pipeline_requirements(request, pipeline.settings)
     try:
-        result = pipeline.run(request)
+        return pipeline.run(request)
     except Exception as exc:
         _print_failure(exc)
         raise typer.Exit(code=1) from exc
+
+
+def _run_pipeline(request: ShortRunRequest) -> None:
+    result = _run_pipeline_result(request)
     _render_result(result)
+
+
+def _resolve_schedule_date(
+    *,
+    date_text: str | None,
+    timezone_name: str,
+) -> date:
+    schedule_timezone = _load_schedule_timezone(timezone_name)
+    if date_text:
+        try:
+            return date.fromisoformat(date_text)
+        except ValueError as exc:
+            raise typer.BadParameter("Date must use YYYY-MM-DD format.") from exc
+    return datetime.now(schedule_timezone).date() + timedelta(days=1)
+
+
+def _build_publish_schedule(
+    *,
+    times: list[str],
+    target_date: date,
+    timezone_name: str,
+) -> list[datetime]:
+    schedule_timezone = _load_schedule_timezone(timezone_name)
+    publish_slots: list[datetime] = []
+    now_utc = datetime.now(timezone.utc)
+    for time_value in times:
+        hours, minutes = [int(part) for part in time_value.split(":", maxsplit=1)]
+        publish_at = datetime.combine(target_date, dt_time(hour=hours, minute=minutes), tzinfo=schedule_timezone)
+        if publish_at.astimezone(timezone.utc) <= now_utc:
+            raise typer.BadParameter(
+                f"Scheduled slot {publish_at.isoformat()} is not in the future."
+            )
+        publish_slots.append(publish_at)
+    return publish_slots
+
+
+def _load_schedule_timezone(timezone_name: str):
+    try:
+        return ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        if timezone_name.strip().upper() in {"UTC", "ETC/UTC"}:
+            return timezone.utc
+        local_timezone = datetime.now().astimezone().tzinfo
+        if local_timezone is not None:
+            return local_timezone
+        raise typer.BadParameter(
+            f"Timezone '{timezone_name}' is not available on this machine."
+        )
+
+
+def _resolve_download_copy_behavior(*, upload: bool, no_downloads: bool) -> bool:
+    if upload:
+        return False
+    return not no_downloads
 
 
 def _preflight_pipeline_requirements(request: ShortRunRequest, settings: Settings) -> None:
@@ -208,7 +272,7 @@ def make_short(
             preferred_topic=topic,
             preferred_bucket=bucket,
             privacy_status=privacy_status,
-            save_to_downloads=not no_downloads,
+            save_to_downloads=_resolve_download_copy_behavior(upload=upload, no_downloads=no_downloads),
             mock_mode=mock_mode,
         )
     )
@@ -232,11 +296,79 @@ def make_batch(
                 ShortRunRequest(
                     upload=batch.upload,
                     debug=batch.debug,
+                    save_to_downloads=not batch.upload,
                     mock_mode=batch.mock_mode,
                 )
             )
         except typer.Exit:
             failures += 1
+    if failures:
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def make_short_schedule(
+    times: str = typer.Option(
+        "10:00,13:00,15:00,19:00",
+        help="Comma-separated local publish times in HH:MM format.",
+    ),
+    date_text: Optional[str] = typer.Option(
+        None,
+        "--date",
+        help="Target local date in YYYY-MM-DD. Defaults to tomorrow in SCHEDULED_TIMEZONE.",
+    ),
+    debug: bool = typer.Option(False, help="Enable verbose logging."),
+    no_downloads: bool = typer.Option(False, help="Skip copying the final MP4s to Downloads."),
+    mock_mode: bool = typer.Option(False, help="Use deterministic mock services."),
+) -> None:
+    """Generate multiple Shorts and upload them as scheduled YouTube videos."""
+
+    settings = load_settings(app_debug=debug, mock_mode=mock_mode)
+    schedule_times = parse_schedule_times(times)
+    target_date = _resolve_schedule_date(
+        date_text=date_text,
+        timezone_name=settings.scheduled_timezone,
+    )
+    publish_slots = _build_publish_schedule(
+        times=schedule_times,
+        target_date=target_date,
+        timezone_name=settings.scheduled_timezone,
+    )
+
+    console.print(
+        f"Planning {len(publish_slots)} Shorts for {target_date.isoformat()} in {settings.scheduled_timezone}."
+    )
+    failures = 0
+    scheduled_results: list[tuple[str, datetime, str | None]] = []
+    for index, publish_at in enumerate(publish_slots, start=1):
+        console.print(
+            f"[cyan]Running scheduled Short {index}/{len(publish_slots)} for {publish_at.isoformat()}[/cyan]"
+        )
+        try:
+            result = _run_pipeline_result(
+                ShortRunRequest(
+                    upload=True,
+                    debug=debug,
+                    privacy_status="private",
+                    scheduled_publish_at=publish_at,
+                    save_to_downloads=False,
+                    mock_mode=mock_mode,
+                )
+            )
+        except typer.Exit:
+            failures += 1
+            continue
+        _render_result(result)
+        scheduled_results.append((result.run_id, publish_at, result.youtube_video_id))
+
+    if scheduled_results:
+        table = Table(title="Scheduled Uploads")
+        table.add_column("Run ID")
+        table.add_column("Local publish time")
+        table.add_column("YouTube video ID")
+        for run_id, publish_at, youtube_video_id in scheduled_results:
+            table.add_row(run_id, publish_at.isoformat(), youtube_video_id or "")
+        console.print(table)
     if failures:
         raise typer.Exit(code=1)
 
@@ -278,7 +410,7 @@ def scheduled_run(
             upload=upload,
             debug=debug,
             privacy_status=privacy_status,
-            save_to_downloads=not no_downloads,
+            save_to_downloads=_resolve_download_copy_behavior(upload=upload, no_downloads=no_downloads),
             mock_mode=False,
         )
     )
@@ -625,6 +757,7 @@ def retry_run(
             debug=debug,
             preferred_topic=existing.get("topic"),
             preferred_bucket=existing.get("bucket"),
+            save_to_downloads=not upload,
         )
     )
 

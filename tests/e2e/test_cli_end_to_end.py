@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+from datetime import datetime
 from pathlib import Path
 
 from youtube_kanaal.cli import app
@@ -127,3 +128,57 @@ def test_cli_make_short_accepts_fortnite_topic_in_mock_mode(cli_runner, configur
     assert result.exit_code == 0, result.stdout
     assert "Short Completed" in result.stdout
     assert "Fortnite" in result.stdout
+
+
+def test_cli_make_short_upload_skips_downloads_copy(cli_runner, configured_env) -> None:
+    result = cli_runner.invoke(
+        app,
+        ["make-short", "--upload", "--mock-mode"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "Short Completed" in result.stdout
+    assert "not copied" in result.stdout
+
+    output_dir = Path(configured_env["output_dir"])
+    latest_run_dir = max(output_dir.iterdir(), key=lambda path: path.stat().st_mtime)
+    metadata = json.loads((latest_run_dir / "metadata" / "run_metadata.json").read_text(encoding="utf-8"))
+    assert metadata["upload"]["uploaded"] is True
+    assert metadata["validation"]
+    assert metadata["stages"]["downloads_export"]["copied"] is False
+
+
+def test_cli_make_short_schedule_creates_four_scheduled_uploads(cli_runner, configured_env) -> None:
+    result = cli_runner.invoke(
+        app,
+        [
+            "make-short-schedule",
+            "--date",
+            "2026-04-12",
+            "--times",
+            "10:00,13:00,15:00,19:00",
+            "--mock-mode",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "Scheduled Uploads" in result.stdout
+
+    output_dir = Path(configured_env["output_dir"])
+    run_dirs = sorted(
+        [path for path in output_dir.iterdir() if path.is_dir()],
+        key=lambda path: path.stat().st_mtime,
+    )
+    assert len(run_dirs) == 4
+
+    scheduled_hours: list[int] = []
+    for run_dir in run_dirs:
+        metadata = json.loads((run_dir / "metadata" / "run_metadata.json").read_text(encoding="utf-8"))
+        assert metadata["upload"]["uploaded"] is True
+        assert metadata["upload"]["privacy_status"] == "private"
+        assert metadata["stages"]["downloads_export"]["copied"] is False
+        scheduled_publish_at = metadata["upload"]["scheduled_publish_at"]
+        assert scheduled_publish_at is not None
+        scheduled_hours.append(datetime.fromisoformat(scheduled_publish_at).hour)
+
+    assert scheduled_hours == [10, 13, 15, 19]

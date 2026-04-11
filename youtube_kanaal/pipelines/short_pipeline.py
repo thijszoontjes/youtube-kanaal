@@ -407,6 +407,7 @@ class ShortPipeline:
                 metadata = UploadMetadata(
                     youtube_video_id=None,
                     privacy_status=runtime.request.privacy_status or self.settings.default_privacy_status,
+                    scheduled_publish_at=runtime.request.scheduled_publish_at,
                     uploaded=False,
                 )
                 runtime.stage_summaries["youtube_upload"] = metadata.model_dump(mode="json")
@@ -419,6 +420,7 @@ class ShortPipeline:
                 description=content.upload_description(minimum_hashtags=10),
                 hashtags=upload_hashtags,
                 privacy_status=runtime.request.privacy_status or self.settings.default_privacy_status,
+                scheduled_publish_at=runtime.request.scheduled_publish_at,
                 response_path=runtime.artifacts.responses_dir / "youtube_upload.json",
             )
             runtime.stage_summaries["youtube_upload"] = metadata.model_dump(mode="json")
@@ -545,6 +547,8 @@ class ShortPipeline:
                 downloads_copy_path=downloads_copy_path,
                 uploaded=upload_metadata.uploaded,
                 youtube_video_id=upload_metadata.youtube_video_id,
+                privacy_status=upload_metadata.privacy_status,
+                scheduled_publish_at=upload_metadata.scheduled_publish_at,
                 log_path=runtime.logging_bundle.human_log_path,
                 metadata_path=metadata_path,
             )
