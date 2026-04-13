@@ -21,16 +21,7 @@ def configured_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str,
     credentials_dir = data_dir / "credentials"
     credentials_dir.mkdir(parents=True, exist_ok=True)
     client_secret_path = credentials_dir / "client_secret.json"
-    client_secret_path.write_text(
-        (
-            '{"installed":{"client_id":"mock-client","project_id":"mock-project",'
-            '"auth_uri":"https://accounts.google.com/o/oauth2/auth",'
-            '"token_uri":"https://oauth2.googleapis.com/token",'
-            '"auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs",'
-            '"client_secret":"mock-secret","redirect_uris":["http://localhost"]}}'
-        ),
-        encoding="utf-8",
-    )
+    client_secret_path.write_text('{"installed": {"client_id": "mock"}}', encoding="utf-8")
 
     env = {
         "YOUTUBE_KANAAL_ENV": "test",
