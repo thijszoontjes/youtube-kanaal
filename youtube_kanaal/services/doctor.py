@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import platform
 import sys
 
@@ -231,12 +232,37 @@ class DoctorService:
         )
 
     def _youtube_oauth_check(self) -> DoctorCheck:
-        ok = self.settings.youtube_client_secret_path.exists()
+        path = self.settings.youtube_client_secret_path
+        if not path.exists():
+            return DoctorCheck(
+                name="YouTube OAuth client JSON",
+                status="fail",
+                details=str(path),
+                action="Place the Google Cloud desktop client JSON at the configured path.",
+            )
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return DoctorCheck(
+                name="YouTube OAuth client JSON",
+                status="fail",
+                details=str(path),
+                action="Replace the file with the original JSON downloaded from Google Cloud.",
+            )
+        client_config = payload.get("installed") if isinstance(payload, dict) else None
+        if client_config is None and isinstance(payload, dict):
+            client_config = payload.get("web")
+        required_fields = {"client_id", "client_secret", "auth_uri", "token_uri", "redirect_uris"}
+        ok = isinstance(client_config, dict) and required_fields.issubset(client_config)
         return DoctorCheck(
             name="YouTube OAuth client JSON",
             status="ok" if ok else "fail",
-            details=str(self.settings.youtube_client_secret_path),
-            action=None if ok else "Place the Google Cloud desktop client JSON at the configured path.",
+            details=str(path),
+            action=(
+                None
+                if ok
+                else "Replace client_secret.json with a Google OAuth Desktop app JSON that includes client_id, client_secret, auth_uri, token_uri, and redirect_uris."
+            ),
         )
 
     def _downloads_check(self) -> DoctorCheck:

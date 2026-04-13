@@ -43,6 +43,7 @@ class YouTubeService:
                 probable_cause="Place your Google Cloud desktop OAuth client JSON at the configured path.",
                 details_path=client_secret_path,
             )
+        self._validate_client_secret_file(client_secret_path)
 
         credentials = None
         token_path = self.settings.youtube_token_path
@@ -56,10 +57,22 @@ class YouTubeService:
         if credentials and credentials.expired and credentials.refresh_token:
             credentials.refresh(Request())
         elif not credentials or not credentials.valid:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                str(client_secret_path),
-                YOUTUBE_UPLOAD_SCOPE,
-            )
+            try:
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    str(client_secret_path),
+                    YOUTUBE_UPLOAD_SCOPE,
+                )
+            except ValueError as exc:
+                raise PipelineStageError(
+                    stage="youtube_auth",
+                    message="YouTube OAuth client JSON is not in the correct Google format.",
+                    probable_cause=(
+                        "Download the Desktop app OAuth client JSON from Google Cloud and replace "
+                        f"{client_secret_path.name}. The file must include installed/client_id, "
+                        "client_secret, auth_uri, token_uri, and redirect_uris."
+                    ),
+                    details_path=client_secret_path,
+                ) from exc
             credentials = flow.run_local_server(port=0)
 
         token_path.parent.mkdir(parents=True, exist_ok=True)
@@ -216,3 +229,36 @@ class YouTubeService:
             f"{token_path.stem}.invalid-{time.strftime('%Y%m%d-%H%M%S')}{token_path.suffix}"
         )
         token_path.replace(backup_path)
+
+    def _validate_client_secret_file(self, client_secret_path: Path) -> None:
+        try:
+            payload = json.loads(client_secret_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise PipelineStageError(
+                stage="youtube_auth",
+                message="YouTube OAuth client JSON could not be parsed.",
+                probable_cause="Replace the file with the original JSON downloaded from Google Cloud.",
+                details_path=client_secret_path,
+            ) from exc
+
+        if not isinstance(payload, dict):
+            raise PipelineStageError(
+                stage="youtube_auth",
+                message="YouTube OAuth client JSON has an invalid top-level structure.",
+                probable_cause="Replace the file with the original Google OAuth client JSON.",
+                details_path=client_secret_path,
+            )
+
+        client_config = payload.get("installed") or payload.get("web")
+        required_fields = {"client_id", "client_secret", "auth_uri", "token_uri", "redirect_uris"}
+        if not isinstance(client_config, dict) or not required_fields.issubset(client_config):
+            raise PipelineStageError(
+                stage="youtube_auth",
+                message="YouTube OAuth client JSON is incomplete.",
+                probable_cause=(
+                    "The file must contain an installed or web client with client_id, client_secret, "
+                    "auth_uri, token_uri, and redirect_uris. Download a fresh OAuth Desktop app JSON "
+                    "from Google Cloud."
+                ),
+                details_path=client_secret_path,
+            )
