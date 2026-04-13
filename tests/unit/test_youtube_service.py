@@ -38,7 +38,7 @@ def test_mock_upload_video_supports_scheduled_publish_at(
     settings = load_settings()
     service = YouTubeService(settings)
     response_path = configured_env["output_dir"] / "youtube_upload.json"
-    publish_at = datetime.fromisoformat("2026-04-12T10:00:00+02:00")
+    publish_at = datetime.fromisoformat("2026-04-13T10:00:00+02:00")
 
     metadata = service.upload_video(
         video_path=configured_env["output_dir"] / "short.mp4",
@@ -55,7 +55,7 @@ def test_mock_upload_video_supports_scheduled_publish_at(
     assert metadata.scheduled_publish_at == publish_at
     assert metadata.privacy_status == "private"
     assert payload["status"]["privacyStatus"] == "private"
-    assert payload["status"]["publishAt"] == "2026-04-12T08:00:00Z"
+    assert payload["status"]["publishAt"] == "2026-04-13T08:00:00Z"
 
 
 def test_mock_upload_video_rejects_scheduled_publish_when_not_private(
@@ -73,6 +73,6 @@ def test_mock_upload_video_rejects_scheduled_publish_when_not_private(
             description="desc",
             hashtags=["#Shorts"],
             privacy_status="public",
-            scheduled_publish_at=datetime.fromisoformat("2026-04-12T10:00:00+02:00"),
+            scheduled_publish_at=datetime.fromisoformat("2026-04-13T10:00:00+02:00"),
             response_path=configured_env["output_dir"] / "youtube_upload.json",
         )

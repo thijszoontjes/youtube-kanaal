@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from youtube_kanaal.config import Settings
 from youtube_kanaal.exceptions import ConfigurationError, PipelineStageError
 from youtube_kanaal.models.assets import VideoClipAsset
 from youtube_kanaal.utils.files import write_json
+from youtube_kanaal.utils.process import command_exists, run_command
 from youtube_kanaal.utils.subtitles import ideal_clip_count
 
 
@@ -236,7 +238,8 @@ class PexelsService:
         for clip in self._prioritized_candidates(candidates, queries):
             if clip.source_id in used_ids:
                 continue
-            self._download_clip(clip)
+            if not self._prepare_clip_for_use(clip):
+                continue
             chosen.append(clip)
             used_ids.add(clip.source_id)
             cumulative += min(clip.duration_seconds, max(target_duration_seconds / desired_count, 4.0))
@@ -279,11 +282,71 @@ class PexelsService:
     )
     def _download_clip(self, clip: VideoClipAsset) -> None:
         clip.local_path.parent.mkdir(parents=True, exist_ok=True)
-        if clip.local_path.exists():
-            return
         response = self.client.get(clip.download_url)
         response.raise_for_status()
-        clip.local_path.write_bytes(response.content)
+        temp_path = clip.local_path.with_suffix(f"{clip.local_path.suffix}.part")
+        temp_path.write_bytes(response.content)
+        temp_path.replace(clip.local_path)
+
+    def _prepare_clip_for_use(self, clip: VideoClipAsset) -> bool:
+        clip.local_path.parent.mkdir(parents=True, exist_ok=True)
+        if clip.local_path.exists() and self._is_valid_clip_file(clip.local_path):
+            return True
+        if clip.local_path.exists():
+            clip.local_path.unlink(missing_ok=True)
+
+        try:
+            self._download_clip(clip)
+        except httpx.HTTPError:
+            return False
+
+        if self._is_valid_clip_file(clip.local_path):
+            return True
+
+        clip.local_path.unlink(missing_ok=True)
+        return False
+
+    def _is_valid_clip_file(self, path: Path) -> bool:
+        if not path.exists() or path.stat().st_size < 1024:
+            return False
+
+        ffprobe_binary = self._ffprobe_binary()
+        if not command_exists(ffprobe_binary):
+            return True
+
+        try:
+            result = run_command(
+                [
+                    ffprobe_binary,
+                    "-v",
+                    "error",
+                    "-select_streams",
+                    "v:0",
+                    "-show_entries",
+                    "stream=width,height,codec_name",
+                    "-of",
+                    "json",
+                    str(path),
+                ],
+                timeout_seconds=30,
+                stage="stock_video_download",
+            )
+        except PipelineStageError:
+            return False
+
+        payload = json.loads(result.stdout or "{}")
+        streams = payload.get("streams", [])
+        if not streams:
+            return False
+        stream = streams[0]
+        return bool(int(stream.get("width") or 0) > 0 and int(stream.get("height") or 0) > 0)
+
+    def _ffprobe_binary(self) -> str:
+        ffmpeg_path = Path(self.settings.ffmpeg_binary)
+        if ffmpeg_path.exists():
+            suffix = "ffprobe.exe" if ffmpeg_path.suffix.lower() == ".exe" else "ffprobe"
+            return str(ffmpeg_path.with_name(suffix))
+        return "ffprobe"
 
     def _mock_clips(self, target_duration_seconds: float) -> list[VideoClipAsset]:
         clip_count = ideal_clip_count(target_duration_seconds)

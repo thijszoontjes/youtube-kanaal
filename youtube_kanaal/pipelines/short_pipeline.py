@@ -144,8 +144,7 @@ class ShortPipeline:
         runtime.logger.info("Run started", extra={"run_id": run_id, "started_at": started_at})
 
         try:
-            topic = self.select_topic(runtime)
-            content = self.generate_content(runtime, topic)
+            topic, content = self.select_topic_and_content(runtime)
             narration = self.generate_narration(runtime, content)
             subtitles = self.generate_subtitles(runtime, content, narration)
             sound_design = self.apply_sound_design(runtime, narration)
@@ -187,21 +186,71 @@ class ShortPipeline:
             )
             raise
 
-    def select_topic(self, runtime: PipelineRuntime) -> TopicChoice:
+    def select_topic(
+        self,
+        runtime: PipelineRuntime,
+        *,
+        additional_excluded_topics: list[str] | None = None,
+    ) -> TopicChoice:
         recent_topics = self.database.recent_topics(limit=100)
-        with self._stage(runtime, "topic_selection", {"recent_topics": len(recent_topics)}):
+        excluded_topics = list(dict.fromkeys([*recent_topics, *(additional_excluded_topics or [])]))
+        with self._stage(
+            runtime,
+            "topic_selection",
+            {"recent_topics": len(recent_topics), "attempted_topics": len(additional_excluded_topics or [])},
+        ):
             if runtime.request.preferred_topic:
                 topic = self._preferred_topic(runtime.request.preferred_topic, runtime.request.preferred_bucket)
             else:
                 topic = self.ollama.choose_topic(
-                    excluded_topics=recent_topics,
+                    excluded_topics=excluded_topics,
                     prompt_path=runtime.artifacts.prompts_dir / "topic_selection.txt",
                     response_path=runtime.artifacts.responses_dir / "topic_selection.json",
                 )
-                if is_near_duplicate(topic.topic, recent_topics, self.settings.similarity_threshold):
-                    topic = self._fallback_topic_excluding(recent_topics)
+                if is_near_duplicate(topic.topic, excluded_topics, self.settings.similarity_threshold):
+                    topic = self._fallback_topic_excluding(excluded_topics)
             runtime.stage_summaries["topic_selection"] = topic.model_dump(mode="json")
             return topic
+
+    def select_topic_and_content(self, runtime: PipelineRuntime) -> tuple[TopicChoice, GeneratedShort]:
+        attempted_topics: list[str] = []
+        recent_topics = self.database.recent_topics(limit=100)
+        max_topic_attempts = max(
+            1,
+            sum(len(topics) for _, topics in self._topic_catalog_items()) - len({topic.lower() for topic in recent_topics}),
+        )
+        last_error: PipelineStageError | None = None
+
+        for attempt in range(1, max_topic_attempts + 1):
+            topic = self.select_topic(runtime, additional_excluded_topics=attempted_topics)
+            attempted_topics.append(topic.topic)
+            try:
+                content = self.generate_content(runtime, topic)
+            except PipelineStageError as exc:
+                if runtime.request.preferred_topic or not self._is_duplicate_title_generation_error(exc):
+                    raise
+                last_error = exc
+                runtime.logger.warning(
+                    "content_generation: duplicate_retry_with_new_topic",
+                    extra={
+                        "run_id": runtime.run_id,
+                        "stage": "content_generation",
+                        "attempt": attempt,
+                        "max_attempts": max_topic_attempts,
+                        "topic": topic.topic,
+                        "reason": exc.probable_cause or exc.message,
+                    },
+                )
+                continue
+
+            runtime.stage_summaries["content_generation"]["topic_retry_count"] = max(len(attempted_topics) - 1, 0)
+            return topic, content
+
+        raise last_error or PipelineStageError(
+            stage="content_generation",
+            message="Failed to generate a unique-enough video after exhausting fallback topics.",
+            probable_cause="Ollama kept producing titles that were too similar to recent history.",
+        )
 
     def generate_content(self, runtime: PipelineRuntime, topic: TopicChoice) -> GeneratedShort:
         recent_titles = self.database.recent_titles(limit=100)
@@ -637,6 +686,16 @@ class ShortPipeline:
             payload["title"] = candidate
             return GeneratedShort.model_validate(payload)
         return None
+
+    def _is_duplicate_title_generation_error(self, exc: PipelineStageError) -> bool:
+        if exc.stage != "content_generation":
+            return False
+        details = " ".join(
+            item.lower()
+            for item in (exc.message, exc.probable_cause or "")
+            if item
+        )
+        return "too similar to recent history" in details or "near-duplicate title" in details
 
     def _build_video_queries(self, topic: TopicChoice, content: GeneratedShort) -> list[str]:
         topic_text = topic.topic

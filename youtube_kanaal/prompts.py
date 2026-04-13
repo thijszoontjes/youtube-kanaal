@@ -38,7 +38,7 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
     excluded = ", ".join(excluded_titles[-20:]) if excluded_titles else "None"
     return dedent(
         f"""
-        Write a YouTube Shorts package for the format "3 facts about X".
+        Write a YouTube Shorts package for a spoken "3 facts about X" video that sounds human, natural, and unscripted.
 
         Topic:
         - Bucket: {topic.bucket}
@@ -48,9 +48,15 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
         - English only
         - Exactly 3 concise, accurate-sounding facts
         - Strong clear title, no emoji
-        - The narration must open with: "Here are 3 facts about {topic.topic}."
-        - Then present Fact 1, Fact 2, and Fact 3 clearly
-        - Narration length roughly 20-35 seconds
+        - The narration should feel like natural spoken English, not a rigid script
+        - Mention {topic.topic} early, but do not force a fixed opener
+        - Work the three facts into the narration naturally instead of mechanically listing "Fact 1, Fact 2, Fact 3"
+        - Vary sentence length and rhythm
+        - Slightly informal phrasing is good, but keep it clean and easy to follow
+        - Avoid stock endings or recap lines
+        - Do not end with phrases like "That is why..." or "People remember..." or "it looks unusual on screen"
+        - No bullet points, stage directions, or narrator-style labels inside the narration
+        - Narration length roughly 20-35 seconds (about 45-90 words)
         - No uncertainty phrases
         - No politics, religion, celebrity gossip, explicit content, dangerous advice, or medical claims
         - Avoid title similarity to these recent titles: {excluded}

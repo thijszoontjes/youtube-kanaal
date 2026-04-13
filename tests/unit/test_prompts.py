@@ -22,3 +22,6 @@ def test_content_prompt_contains_recent_titles() -> None:
     assert "3 Facts About Penguins" in prompt
     assert '"topic": "axolotls"' in prompt
     assert "Generate at least 10 relevant hashtags" in prompt
+    assert "natural spoken English" in prompt
+    assert 'Do not end with phrases like "That is why..." or "People remember..."' in prompt
+    assert "must open with" not in prompt

@@ -86,3 +86,75 @@ def test_pexels_service_prioritizes_one_clip_per_query_first(configured_env) -> 
     prioritized = service._prioritized_candidates(candidates, ["saturn rings", "saturn moon orbit"])
 
     assert [clip.source_id for clip in prioritized[:2]] == ["a1", "b1"]
+
+
+def test_pexels_service_redownloads_invalid_cached_clip(monkeypatch, configured_env) -> None:
+    service = PexelsService(load_settings())
+    clip_path = service.settings.cache_dir / "pexels" / "broken.mp4"
+    clip_path.parent.mkdir(parents=True, exist_ok=True)
+    clip_path.write_bytes(b"")
+    clip = VideoClipAsset(
+        source_id="broken",
+        query="saturn rings",
+        source_url="https://example.com/saturn-rings",
+        download_url="https://example.com/broken.mp4",
+        local_path=clip_path,
+        duration_seconds=5,
+        width=1080,
+        height=1920,
+        score=9.5,
+    )
+
+    calls: list[str] = []
+
+    class DummyResponse:
+        def __init__(self, content: bytes) -> None:
+            self.content = content
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str):
+        calls.append(url)
+        return DummyResponse(b"0" * 4096)
+
+    validations = iter([False, True])
+    monkeypatch.setattr(service.client, "get", fake_get)
+    monkeypatch.setattr(service, "_is_valid_clip_file", lambda path: next(validations))
+
+    prepared = service._prepare_clip_for_use(clip)
+
+    assert prepared is True
+    assert calls == ["https://example.com/broken.mp4"]
+    assert clip.local_path.exists()
+    assert clip.local_path.stat().st_size == 4096
+
+
+def test_pexels_service_skips_clip_when_downloaded_file_is_invalid(monkeypatch, configured_env) -> None:
+    service = PexelsService(load_settings())
+    clip_path = service.settings.cache_dir / "pexels" / "still-broken.mp4"
+    clip = VideoClipAsset(
+        source_id="still-broken",
+        query="saturn rings",
+        source_url="https://example.com/saturn-rings",
+        download_url="https://example.com/still-broken.mp4",
+        local_path=clip_path,
+        duration_seconds=5,
+        width=1080,
+        height=1920,
+        score=9.5,
+    )
+
+    class DummyResponse:
+        content = b"not-a-real-video"
+
+        def raise_for_status(self) -> None:
+            return None
+
+    monkeypatch.setattr(service.client, "get", lambda url: DummyResponse())
+    monkeypatch.setattr(service, "_is_valid_clip_file", lambda path: False)
+
+    prepared = service._prepare_clip_for_use(clip)
+
+    assert prepared is False
+    assert not clip.local_path.exists()

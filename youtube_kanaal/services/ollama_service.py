@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from itertools import chain
 from pathlib import Path
 from typing import TypeVar
@@ -16,6 +17,17 @@ from youtube_kanaal.prompts import build_content_generation_prompt, build_topic_
 from youtube_kanaal.utils.files import write_json, write_text
 
 TModel = TypeVar("TModel", bound=BaseModel)
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+_STOCK_OUTRO_PREFIXES: tuple[str, ...] = (
+    "that is why ",
+    "that's why ",
+    "people remember ",
+)
+_STOCK_OUTRO_FRAGMENTS: tuple[str, ...] = (
+    "looks so unusual on screen",
+    "works so well in a fast visual short",
+    "keeps showing up in science videos and documentaries",
+)
 
 
 class OllamaService:
@@ -239,13 +251,11 @@ class OllamaService:
             cleaned_facts = [self._normalize_sentence(str(fact)) for fact in facts if str(fact).strip()]
         repaired["facts"] = cleaned_facts[:3]
 
-        narration = str(repaired.get("narration", "")).strip()
+        narration = self._clean_narration(str(repaired.get("narration", "")))
         if not narration and cleaned_facts:
-            narration = " ".join(cleaned_facts)
-        if cleaned_facts and len(narration.split()) < 45:
             narration = self._build_narration(topic_value, cleaned_facts)
-        if len(narration.split()) < 45:
-            narration = f"{narration} People remember {topic_value} because it looks so unusual on screen."
+        elif cleaned_facts and len(narration.split()) < 45:
+            narration = self._build_narration(topic_value, cleaned_facts)
         repaired["narration"] = narration
 
         subtitle_text = str(repaired.get("subtitle_text", "")).strip()
@@ -254,12 +264,11 @@ class OllamaService:
 
     def _normalize_generated_short(self, content: GeneratedShort, topic: TopicChoice) -> GeneratedShort:
         facts = [self._normalize_sentence(fact) for fact in content.facts]
-        narration_base = self._build_narration(topic.topic, facts)
-        narration_candidates = [
-            f"{narration_base} People remember {topic.topic} because it looks so unusual on screen.",
-            narration_base,
-            content.narration,
-        ]
+        narration_candidates: list[str] = []
+        cleaned_narration = self._clean_narration(content.narration)
+        if topic.topic.lower() in cleaned_narration.lower():
+            narration_candidates.append(cleaned_narration)
+        narration_candidates.append(self._build_narration(topic.topic, facts))
 
         title = content.title.strip()
         if "3 facts" not in title.lower():
@@ -295,18 +304,78 @@ class OllamaService:
             cleaned = f"{cleaned}."
         return cleaned
 
+    def _clean_narration(self, narration: str) -> str:
+        cleaned = " ".join(narration.split()).strip()
+        if not cleaned:
+            return cleaned
+        sentences = _SENTENCE_SPLIT_RE.split(cleaned)
+        filtered_sentences = []
+        for sentence in sentences:
+            stripped = sentence.strip()
+            lowered = stripped.lower()
+            if any(lowered.startswith(prefix) for prefix in _STOCK_OUTRO_PREFIXES):
+                continue
+            if any(fragment in lowered for fragment in _STOCK_OUTRO_FRAGMENTS):
+                continue
+            filtered_sentences.append(stripped)
+        return " ".join(filtered_sentences).strip()
+
+    def _variation_seed(self, topic: str, facts: list[str]) -> int:
+        return sum(ord(char) for char in topic.lower()) + sum(len(fact) for fact in facts)
+
     def _build_narration(self, topic: str, facts: list[str]) -> str:
-        connectors = ["First", "Second", "Third"]
-        segments = [
-            f"{connector}, {self._normalize_sentence(fact)}"
-            for connector, fact in zip(connectors, facts)
+        normalized_facts = [self._normalize_sentence(fact) for fact in facts[:3]]
+        if len(normalized_facts) < 3:
+            return f"{topic} has a few details that are worth a closer look."
+
+        seed = self._variation_seed(topic, normalized_facts)
+        intros = [
+            f"{topic} is a lot stranger than it looks at first.",
+            f"{topic} seems pretty straightforward, and then you look a little closer.",
+            f"Okay, there are some genuinely wild details hiding in {topic}.",
+            f"If {topic} already sounds familiar, the interesting part starts here.",
         ]
-        body = " ".join(segments)
-        return (
-            f"Here are 3 facts about {topic}. "
-            f"{body} "
-            f"That is why {topic} stands out, and why it works so well in a fast visual Short."
+        first_leads = [
+            f"For one thing, {normalized_facts[0]}",
+            f"To start, {normalized_facts[0]}",
+            f"First up, {normalized_facts[0]}",
+            f"Right away, {normalized_facts[0]}",
+        ]
+        second_leads = [
+            f"Then there's this: {normalized_facts[1]}",
+            f"Also, {normalized_facts[1]}",
+            f"And it gets better, because {normalized_facts[1]}",
+            f"Another thing, {normalized_facts[1]}",
+        ]
+        third_leads = [
+            f"And honestly, {normalized_facts[2]}",
+            f"And maybe the weirdest part, {normalized_facts[2]}",
+            f"Oh, and {normalized_facts[2]}",
+            f"And somehow, {normalized_facts[2]}",
+        ]
+        closers = [
+            "Kind of a ridiculous combo, really.",
+            "Not exactly what most people expect.",
+            "Which is a lot to pack into one topic, honestly.",
+            "Yeah, that's a weird little stack of facts.",
+        ]
+        narration = " ".join(
+            [
+                intros[seed % len(intros)],
+                first_leads[(seed + 1) % len(first_leads)],
+                second_leads[(seed + 2) % len(second_leads)],
+                third_leads[(seed + 3) % len(third_leads)],
+                closers[(seed + 4) % len(closers)],
+            ]
         ).strip()
+        if len(narration.split()) < 45:
+            extra_beats = [
+                "Even on its own, that would already be enough to make somebody stop scrolling for a second.",
+                "And honestly, once those details stack up, the whole thing feels a lot less ordinary.",
+                "Which is kind of wild, because each part sounds made up until you remember it's real.",
+            ]
+            narration = f"{narration} {extra_beats[(seed + 5) % len(extra_beats)]}".strip()
+        return narration
 
     def _fallback_topic(self, excluded_topics: list[str]) -> TopicChoice:
         excluded = {item.lower() for item in excluded_topics}
@@ -335,13 +404,7 @@ class OllamaService:
             f"Scientists study {topic.topic.lower()} because it reveals useful patterns in nature.",
             f"{topic.topic.title()} is visually striking, which makes it perfect for a short explainer.",
         ]
-        narration = (
-            f"Here are 3 facts about {topic.topic}. "
-            f"First, {facts[0]} "
-            f"Second, {facts[1]} "
-            f"Third, {facts[2]} "
-            f"That is why {topic.topic} keeps showing up in science videos and documentaries."
-        )
+        narration = self._build_narration(topic.topic, facts)
         return GeneratedShort(
             bucket=topic.bucket,
             topic=topic.topic,

@@ -140,7 +140,7 @@ def test_ollama_service_repairs_bucket_only_response(configured_env) -> None:
     assert repaired.topic == "Saturn"
 
 
-def test_ollama_service_normalizes_short_into_three_facts_intro(configured_env) -> None:
+def test_ollama_service_normalizes_short_preserves_human_sounding_narration(configured_env) -> None:
     service = OllamaService(load_settings())
     topic = TopicChoice(
         bucket="space",
@@ -170,10 +170,8 @@ def test_ollama_service_normalizes_short_into_three_facts_intro(configured_env) 
     normalized = service._normalize_generated_short(content, topic)
 
     assert normalized.title == "3 Facts About Saturn"
-    assert normalized.narration.startswith("Here are 3 facts about Saturn.")
-    assert "First," in normalized.narration
-    assert "Second," in normalized.narration
-    assert "Third," in normalized.narration
+    assert normalized.narration == content.narration
+    assert not normalized.narration.startswith("Here are 3 facts about Saturn.")
     assert normalized.subtitle_text == normalized.narration
     assert len(normalized.hashtags) >= 10
 
@@ -195,3 +193,43 @@ def test_ollama_service_repairs_generated_short_with_missing_description(configu
     assert repaired is not None
     assert repaired.description.startswith("Three fast facts about mantis shrimp")
     assert len(repaired.hashtags) >= 10
+    assert "that is why" not in repaired.narration.lower()
+    assert "people remember" not in repaired.narration.lower()
+    assert "looks so unusual on screen" not in repaired.narration.lower()
+    assert repaired.subtitle_text == repaired.narration
+
+
+def test_ollama_service_normalization_strips_stock_outro_phrases(configured_env) -> None:
+    service = OllamaService(load_settings())
+    topic = TopicChoice(
+        bucket="space",
+        topic="Saturn",
+        visual_queries=["Saturn", "Saturn rings"],
+        search_terms=["Saturn", "space"],
+    )
+    narration = (
+        "Saturn has rings and a moon called Titan. The planet is light for its size, which surprises a lot of people. "
+        "Its storms can be dramatic and long lasting in the upper atmosphere, and scientists keep studying them closely. "
+        "That mix of scale, motion, and mystery makes Saturn one of the most visually striking planets in short videos. "
+        "People remember Saturn because it looks so unusual on screen."
+    )
+    content = GeneratedShort(
+        bucket="space",
+        topic="Saturn",
+        title="Saturn Ring Wonders",
+        description="A short description that is comfortably long enough for validation and metadata.",
+        hashtags=["#shorts", "#space", "#saturn"],
+        narration=narration,
+        facts=[
+            "Saturn's rings are made mostly of ice.",
+            "Titan is larger than the planet Mercury.",
+            "Saturn is so low in density that it would float in water.",
+        ],
+        subtitle_text=narration,
+    )
+
+    normalized = service._normalize_generated_short(content, topic)
+
+    assert "people remember saturn because it looks so unusual on screen" not in normalized.narration.lower()
+    assert normalized.narration.endswith("short videos.")
+    assert normalized.subtitle_text == normalized.narration

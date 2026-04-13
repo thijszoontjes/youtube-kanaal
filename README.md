@@ -5,6 +5,7 @@ Local, terminal-first YouTube Shorts automation for English Shorts in the format
 ## Quick Start
 
 Activate the virtual environment first on macOS/Linux:
+.\.venv\Scripts\python -m youtube_kanaal make-short-schedule --date 2026-04-13 --times "13:00,15:00,19:00"
 
 ```bash
 source .venv/bin/activate
