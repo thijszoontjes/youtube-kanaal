@@ -199,6 +199,37 @@ def test_ollama_service_repairs_generated_short_with_missing_description(configu
     assert repaired.subtitle_text == repaired.narration
 
 
+def test_ollama_service_generate_model_repairs_core_validation_errors(configured_env, tmp_path) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "response": (
+                    '{"bucket":"geography","topic":"Patagonia","title":"What Makes Patagonia Unique?",'
+                    '"description":"","hashtags":["#PatagoniaGeography"],'
+                    '"narration":"Patagonia is a windswept region with dramatic mountains, glaciers, and wildlife.",'
+                    '"facts":["The Andes run through Patagonia.","It spans Argentina and Chile.","It includes glaciers and fjords."],'
+                    '"subtitle_text":"Patagonia"}'
+                )
+            }
+
+    service = OllamaService(load_settings())
+    service.client = type("FakeClient", (), {"post": lambda self, *args, **kwargs: FakeResponse()})()
+
+    repaired = service._generate_model(
+        prompt="irrelevant",
+        stage="content_generation",
+        prompt_output_path=tmp_path / "content_generation.json",
+        model_cls=GeneratedShort,
+    )
+
+    assert repaired.description.startswith("Three fast facts about Patagonia")
+    assert repaired.topic == "Patagonia"
+    assert repaired.bucket == "geography"
+
+
 def test_ollama_service_normalization_strips_stock_outro_phrases(configured_env) -> None:
     service = OllamaService(load_settings())
     topic = TopicChoice(

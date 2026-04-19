@@ -10,7 +10,7 @@ Activate the virtual environment first on macOS/Linux:
 ```bash
 source .venv/bin/activate
 ```
-
+ollama pull llama3.2:3b
 If your shell does not provide a `python` command, use `.venv/bin/python` instead.
 
 Run one Short:

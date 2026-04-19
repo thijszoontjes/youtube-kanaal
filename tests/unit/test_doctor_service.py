@@ -61,9 +61,13 @@ def test_xtts_runtime_warns_when_image_missing_but_piper_fallback_is_still_activ
     assert settings.piper_voice_model_path is not None
     piper_model_path = settings.piper_voice_model_path
     piper_model_path.parent.mkdir(parents=True, exist_ok=True)
-    piper_model_path.write_bytes(b"mock")
+    piper_model_path.write_bytes(b"0" * 1_200_000)
     monkeypatch.setattr("youtube_kanaal.services.doctor.command_exists", lambda command: True)
     monkeypatch.setattr("youtube_kanaal.services.piper_service.command_exists", lambda command: True)
+    monkeypatch.setattr(
+        "youtube_kanaal.services.piper_service.PiperService._probe_onnx_model",
+        lambda self, path: None,
+    )
     monkeypatch.setattr(
         "youtube_kanaal.services.xtts_service.XTTSService.discover_reference_sources",
         lambda self, logger=None: [],
@@ -80,3 +84,25 @@ def test_xtts_runtime_warns_when_image_missing_but_piper_fallback_is_still_activ
     assert runtime_check.status == "warn"
     assert "fall back to Piper" in (runtime_check.action or "")
     assert sample_check.status == "warn"
+
+
+def test_piper_voice_check_warns_when_configured_model_is_corrupt_but_fallback_exists(tmp_path, monkeypatch) -> None:
+    settings = _base_settings(tmp_path)
+    assert settings.piper_voice_model_path is not None
+    configured_model_path = settings.piper_voice_model_path
+    configured_model_path.parent.mkdir(parents=True, exist_ok=True)
+    configured_model_path.write_bytes(b"bad!")
+    fallback_model_path = configured_model_path.parent / "en_US-lessac-medium.onnx"
+    fallback_model_path.write_bytes(b"0" * 1_200_000)
+
+    monkeypatch.setattr(
+        "youtube_kanaal.services.piper_service.PiperService._probe_onnx_model",
+        lambda self, path: None,
+    )
+
+    check = DoctorService(settings)._piper_voice_check()
+
+    assert check.status == "warn"
+    assert str(fallback_model_path) in check.details
+    assert "Configured Piper voice model is unusable" in check.details
+    assert "fallback voice" in (check.action or "")

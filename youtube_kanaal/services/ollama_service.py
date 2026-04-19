@@ -8,6 +8,7 @@ from typing import TypeVar
 
 import httpx
 from pydantic import BaseModel, ValidationError
+from pydantic_core import ValidationError as CoreValidationError
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from youtube_kanaal.config import Settings
@@ -17,6 +18,7 @@ from youtube_kanaal.prompts import build_content_generation_prompt, build_topic_
 from youtube_kanaal.utils.files import write_json, write_text
 
 TModel = TypeVar("TModel", bound=BaseModel)
+_VALIDATION_ERROR_TYPES = (ValidationError, CoreValidationError)
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 _STOCK_OUTRO_PREFIXES: tuple[str, ...] = (
     "that is why ",
@@ -109,7 +111,7 @@ class OllamaService:
         @retry(
             stop=stop_after_attempt(self.settings.retry_attempts),
             wait=wait_exponential(multiplier=1, min=1, max=8),
-            retry=retry_if_exception_type((httpx.HTTPError, ValidationError, ValueError)),
+            retry=retry_if_exception_type((httpx.HTTPError, ValueError, *_VALIDATION_ERROR_TYPES)),
             reraise=True,
         )
         def _request() -> TModel:
@@ -130,7 +132,7 @@ class OllamaService:
                 raise ValueError("Ollama returned an empty response.")
             try:
                 return model_cls.model_validate_json(response_text)
-            except ValidationError:
+            except _VALIDATION_ERROR_TYPES:
                 repaired = self._repair_model_response(response_text=response_text, model_cls=model_cls)
                 if repaired is not None:
                     return repaired
@@ -138,7 +140,7 @@ class OllamaService:
 
         try:
             return _request()
-        except (httpx.HTTPError, ValidationError, ValueError) as exc:
+        except (httpx.HTTPError, ValueError, *_VALIDATION_ERROR_TYPES) as exc:
             raise PipelineStageError(
                 stage=stage,
                 message="Failed to generate valid JSON from Ollama.",
@@ -192,7 +194,7 @@ class OllamaService:
 
         try:
             return model_cls.model_validate(repaired_payload)
-        except ValidationError:
+        except _VALIDATION_ERROR_TYPES:
             return None
 
     def _resolve_catalog_topic(self, topic: str) -> tuple[str, str] | None:
@@ -290,7 +292,7 @@ class OllamaService:
             candidate_payload["subtitle_text"] = narration
             try:
                 return GeneratedShort.model_validate(candidate_payload)
-            except ValidationError:
+            except _VALIDATION_ERROR_TYPES:
                 continue
 
         base_payload["subtitle_text"] = content.narration

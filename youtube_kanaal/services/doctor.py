@@ -193,15 +193,22 @@ class DoctorService:
         return True
 
     def _piper_voice_check(self) -> DoctorCheck:
-        inferred = self.settings.piper_voice_model_path or (
+        piper = PiperService(self.settings)
+        ok, resolved_path, details_reason = piper.describe_voice_model()
+        inferred = resolved_path or self.settings.piper_voice_model_path or (
             self.settings.cache_dir / "piper" / f"{self.settings.default_piper_voice}.onnx"
         )
-        ok = inferred.exists()
+        status = "ok" if ok and details_reason is None else ("warn" if ok else "fail")
+        action = None
+        if not ok:
+            action = "Download a Piper voice model and point PIPER_VOICE_MODEL_PATH at it."
+        elif details_reason:
+            action = "Re-download or replace the configured Piper voice model to stop using the fallback voice."
         return DoctorCheck(
             name="Piper voice model",
-            status="ok" if ok else "warn",
-            details=str(inferred),
-            action=None if ok else "Download a Piper voice model and point PIPER_VOICE_MODEL_PATH at it.",
+            status=status,
+            details=f"{inferred}" if details_reason is None else f"{inferred} | {details_reason}",
+            action=action,
         )
 
     def _whisper_model_check(self) -> DoctorCheck:
