@@ -103,6 +103,8 @@ def test_generated_short_builds_upload_metadata_with_hashtags() -> None:
     assert len(short.upload_hashtags()) >= 10
     assert upload_title.count("#") >= 3
     assert "#Saturn" in upload_title
+    assert "Download my app SecureSets (Android only):" in upload_description
+    assert "https://play.google.com/store/apps/details?id=com.securesets.app&pli=1" in upload_description
     assert "#Space" in upload_description
 
 

@@ -324,6 +324,8 @@ _GENERIC_TITLE_HASHTAGS: tuple[str, ...] = (
     "#LearnOnYouTube",
     "#InterestingFacts",
 )
+_APP_PROMO_LINE = "Download my app SecureSets (Android only):"
+_APP_PROMO_URL = "https://play.google.com/store/apps/details?id=com.securesets.app&pli=1"
 _BUCKET_HASHTAGS: dict[str, tuple[str, ...]] = {
     "animals": ("#Wildlife", "#AnimalFacts", "#Nature"),
     "space": ("#Space", "#Astronomy", "#SolarSystem"),
@@ -484,7 +486,7 @@ class GeneratedShort(BaseModel):
 
     def upload_description(self, minimum_hashtags: int = 10) -> str:
         hashtags = " ".join(self.upload_hashtags(minimum=minimum_hashtags))
-        return f"{self.description}\n\n{hashtags}".strip()
+        return f"{self.description}\n\n{_APP_PROMO_LINE}\n{_APP_PROMO_URL}\n\n{hashtags}".strip()
 
     def _expand_hashtags(self, base_hashtags: list[str]) -> list[str]:
         candidates: list[str] = []
