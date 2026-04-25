@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import random
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,10 +16,11 @@ class _PlacedStem:
     path: Path
     label: str
     offset_seconds: float
+    audio_filter: str | None = None
 
 
 class SoundDesignService:
-    """Build subtle, copyright-free procedural sound design under narration."""
+    """Build subtle procedural or single-file sound design under narration."""
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -47,6 +49,15 @@ class SoundDesignService:
                 applied=False,
                 duration_seconds=duration_seconds,
                 fallback_reason="Sound design skipped in mock mode.",
+            )
+        custom_audio_path = self._resolve_custom_audio_path()
+        if custom_audio_path is not None:
+            return self._build_custom_mix(
+                narration_path=narration_path,
+                duration_seconds=duration_seconds,
+                working_dir=working_dir,
+                custom_audio_path=custom_audio_path,
+                logger=logger,
             )
 
         sound_dir = working_dir / "sound_design"
@@ -112,6 +123,63 @@ class SoundDesignService:
             stem_paths=stem_paths,
         )
 
+    def _resolve_custom_audio_path(self) -> Path | None:
+        if not self.settings.sound_design_custom_audio_filename:
+            return None
+        filename = Path(self.settings.sound_design_custom_audio_filename).name
+        return self.settings.sound_design_custom_audio_dir / filename
+
+    def _build_custom_mix(
+        self,
+        *,
+        narration_path: Path,
+        duration_seconds: float,
+        working_dir: Path,
+        custom_audio_path: Path,
+        logger: logging.Logger | None = None,
+    ) -> SoundDesignAsset:
+        if not custom_audio_path.exists():
+            return SoundDesignAsset(
+                mixed_path=narration_path,
+                applied=False,
+                duration_seconds=duration_seconds,
+                fallback_reason=f"Custom sound design file was not found: {custom_audio_path}",
+            )
+
+        sound_dir = working_dir / "sound_design"
+        sound_dir.mkdir(parents=True, exist_ok=True)
+        offset_seconds = self._random_offset(duration_seconds)
+        remaining_seconds = max(duration_seconds - offset_seconds, 0.1)
+        placed_stem = _PlacedStem(
+            path=custom_audio_path,
+            label=custom_audio_path.name,
+            offset_seconds=offset_seconds,
+            audio_filter=f"atrim=0:{remaining_seconds:.2f},volume=-7dB",
+        )
+        mix_path = working_dir / "narration_soundscape.wav"
+        self._mix_stems(
+            narration_path=narration_path,
+            output_path=mix_path,
+            stems=[placed_stem],
+        )
+        if logger:
+            logger.info(
+                "sound_design_plan: custom_single_random",
+                extra={
+                    "duration_seconds": duration_seconds,
+                    "custom_audio_path": str(custom_audio_path),
+                    "offset_seconds": offset_seconds,
+                    "mix_path": str(mix_path),
+                },
+            )
+        return SoundDesignAsset(
+            mixed_path=mix_path,
+            applied=True,
+            duration_seconds=duration_seconds,
+            effect_count=1,
+            stem_paths=[custom_audio_path],
+        )
+
     def _transition_offsets(self, duration_seconds: float) -> list[float]:
         anchors = [0.16]
         anchors.extend(
@@ -127,6 +195,11 @@ class SoundDesignService:
             if offset not in deduped:
                 deduped.append(offset)
         return deduped
+
+    def _random_offset(self, duration_seconds: float) -> float:
+        if duration_seconds <= 0.15:
+            return 0.0
+        return round(random.uniform(0.0, max(duration_seconds - 0.15, 0.0)), 2)
 
     def _render_room_tone(self, output_path: Path, duration_seconds: float) -> None:
         self._render_effect(
@@ -219,10 +292,11 @@ class SoundDesignService:
             command.extend(["-i", str(stem.path)])
             label = f"fx{index}"
             delay_ms = max(int(round(stem.offset_seconds * 1000)), 0)
-            filter_parts.append(
-                f"[{index}:a]aformat=sample_rates=48000:channel_layouts=mono,"
-                f"adelay={delay_ms}:all=1[{label}]"
-            )
+            stem_filters = [f"[{index}:a]aformat=sample_rates=48000:channel_layouts=mono"]
+            if stem.audio_filter:
+                stem_filters.append(stem.audio_filter)
+            stem_filters.append(f"adelay={delay_ms}:all=1[{label}]")
+            filter_parts.append(",".join(stem_filters))
             mix_labels.append(f"[{label}]")
 
         filter_parts.append(

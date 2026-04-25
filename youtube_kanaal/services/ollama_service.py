@@ -122,6 +122,7 @@ class OllamaService:
                     "prompt": prompt,
                     "stream": False,
                     "format": "json",
+                    "keep_alive": 0,
                 },
             )
             response.raise_for_status()

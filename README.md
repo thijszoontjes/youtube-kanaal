@@ -5,7 +5,7 @@ Local, terminal-first YouTube Shorts automation for English Shorts in the format
 ## Quick Start
 
 Activate the virtual environment first on macOS/Linux:
-.\.venv\Scripts\python -m youtube_kanaal make-short-schedule --date 2026-04-13 --times "13:00,15:00,19:00"
+.\.venv\Scripts\python -m youtube_kanaal make-short-schedule --date 2026-04-25 --times "14:45,15:00,19:00"
 
 ```bash
 source .venv/bin/activate
@@ -200,6 +200,8 @@ DOWNLOADS_DIR=~/Downloads
 SCHEDULED_RUN_TIMES=13:00,15:00,19:00
 SCHEDULED_TIMEZONE=Europe/Amsterdam
 SCHEDULED_TASK_PREFIX=youtube-kanaal-auto-upload
+SOUND_DESIGN_CUSTOM_AUDIO_DIR=./data/sound_design/custom
+SOUND_DESIGN_CUSTOM_AUDIO_FILENAME=
 ```
 
 Run this once if `.env` does not exist:
@@ -207,6 +209,17 @@ Run this once if `.env` does not exist:
 ```bash
 .venv/bin/python -m youtube_kanaal init-config
 ```
+
+## One Custom Sound File
+
+If you want the video to use only one specific sound effect file, place that file in `data/sound_design/custom` and set this in `.env`:
+
+```dotenv
+SOUND_DESIGN_CUSTOM_AUDIO_DIR=./data/sound_design/custom
+SOUND_DESIGN_CUSTOM_AUDIO_FILENAME=your-file.mp3
+```
+
+When `SOUND_DESIGN_CUSTOM_AUDIO_FILENAME` is set, the pipeline skips the procedural whooshes and riser sounds and places only that one file once at a random point in the narration mix.
 
 ## Free AI Voice From Your Own English Samples
 

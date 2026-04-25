@@ -135,6 +135,14 @@ class Settings(BaseSettings):
         default=True,
         validation_alias=AliasChoices("SOUND_DESIGN_ENABLED"),
     )
+    sound_design_custom_audio_dir: Path = Field(
+        default_factory=lambda: project_root() / "data" / "sound_design" / "custom",
+        validation_alias=AliasChoices("SOUND_DESIGN_CUSTOM_AUDIO_DIR"),
+    )
+    sound_design_custom_audio_filename: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("SOUND_DESIGN_CUSTOM_AUDIO_FILENAME"),
+    )
 
     output_dir: Path = Field(
         default_factory=lambda: project_root() / "output",
@@ -212,11 +220,20 @@ class Settings(BaseSettings):
         "logs_dir",
         "downloads_dir",
         "database_path",
+        "sound_design_custom_audio_dir",
         mode="before",
     )
     @classmethod
     def _normalize_paths(cls, value: str | Path | None) -> Path | None:
         return _expand_path(value)
+
+    @field_validator("sound_design_custom_audio_filename", mode="before")
+    @classmethod
+    def _normalize_optional_string(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
 
     @field_validator("default_privacy_status")
     @classmethod
@@ -292,6 +309,7 @@ class Settings(BaseSettings):
         self.youtube_token_path.parent.mkdir(parents=True, exist_ok=True)
         self.downloads_dir.mkdir(parents=True, exist_ok=True)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self.sound_design_custom_audio_dir.mkdir(parents=True, exist_ok=True)
         if self.xtts_speaker_wav_dir:
             self.xtts_speaker_wav_dir.mkdir(parents=True, exist_ok=True)
 
