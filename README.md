@@ -12,7 +12,7 @@ source .venv/bin/activate
 ```
 ollama pull llama3.2:3b
 If your shell does not provide a `python` command, use `.venv/bin/python` instead.
-
+(Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned) ; (& c:\Users\thijs\OneDrive\Bureaublad\School\youtube-kanaal\.venv\Scripts\Activate.ps1)
 Run one Short:
 
 ```bash
