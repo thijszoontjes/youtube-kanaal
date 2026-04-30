@@ -201,6 +201,32 @@ def test_ollama_service_repairs_generated_short_with_missing_description(configu
     assert repaired.subtitle_text == repaired.narration
 
 
+def test_ollama_service_repairs_generated_short_with_missing_facts_from_narration(configured_env) -> None:
+    service = OllamaService(load_settings())
+
+    repaired = service._repair_model_response(
+        response_text=(
+            '{"bucket":"history","topic":"the Bronze Age",'
+            '"title":"The Dawn of Metalworking: 3 Facts About the Bronze Age",'
+            '"description":"","hashtags":["#BronzeAge","#AncientHistory","#Metalworking"],'
+            '"narration":"The Bronze Age, spanning from around 3000 to 1200 BCE, marked a significant turning point '
+            "in human history. It was during this period that humans first discovered how to extract tin and copper "
+            "from their ores, leading to the development of bronze, an alloy that provided a substantial increase "
+            "in strength over copper. This innovation had far-reaching consequences, enabling early civilizations "
+            "like the Egyptians, Mycenaeans, and Sumerians to create more durable tools and weapons. The widespread "
+            "adoption of bronze technology also facilitated trade networks across vast distances, helping to "
+            'solidify the foundations of complex societies.","facts":[],"subtitle_text":""}'
+        ),
+        model_cls=GeneratedShort,
+    )
+
+    assert repaired is not None
+    assert repaired.description.startswith("Three fast facts about the Bronze Age")
+    assert len(repaired.facts) == 3
+    assert repaired.facts[0].startswith("The Bronze Age")
+    assert repaired.subtitle_text == repaired.narration
+
+
 def test_ollama_service_generate_model_repairs_core_validation_errors(configured_env, tmp_path) -> None:
     class FakeResponse:
         def raise_for_status(self) -> None:

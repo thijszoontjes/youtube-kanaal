@@ -60,6 +60,8 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
         - No uncertainty phrases
         - No politics, religion, celebrity gossip, explicit content, dangerous advice, or medical claims
         - Avoid title similarity to these recent titles: {excluded}
+        - Every JSON field must be filled; never use "" or [] for required fields
+        - The facts array must contain exactly 3 complete sentences copied or summarized from the narration
         - Subtitle text must exactly match the spoken narration
         - Generate at least 10 relevant hashtags
         - Hashtags should start with #

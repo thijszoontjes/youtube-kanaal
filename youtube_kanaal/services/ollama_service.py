@@ -248,22 +248,85 @@ class OllamaService:
         cleaned_hashtags.extend(["#shorts", "#facts", f"#{topic_value.title().replace(' ', '')}"])
         repaired["hashtags"] = list(dict.fromkeys(cleaned_hashtags))[:8]
 
+        raw_narration = self._clean_narration(str(repaired.get("narration", "")))
+
         facts = repaired.get("facts")
         cleaned_facts = []
         if isinstance(facts, list):
             cleaned_facts = [self._normalize_sentence(str(fact)) for fact in facts if str(fact).strip()]
-        repaired["facts"] = cleaned_facts[:3]
+        if len(cleaned_facts) < 3:
+            cleaned_facts.extend(self._facts_from_narration(raw_narration, topic_value))
+        if len(cleaned_facts) < 3:
+            cleaned_facts.extend(self._fallback_facts(topic_value, bucket_value))
+        repaired["facts"] = self._dedupe_preserving_order(cleaned_facts)[:3]
 
-        narration = self._clean_narration(str(repaired.get("narration", "")))
-        if not narration and cleaned_facts:
-            narration = self._build_narration(topic_value, cleaned_facts)
-        elif cleaned_facts and len(narration.split()) < 45:
-            narration = self._build_narration(topic_value, cleaned_facts)
+        narration = raw_narration
+        repaired_facts = list(repaired["facts"]) if isinstance(repaired["facts"], list) else []
+        if not narration and repaired_facts:
+            narration = self._build_narration(topic_value, repaired_facts)
+        elif repaired_facts and not 45 <= len(narration.split()) <= 90:
+            narration = self._fit_narration_to_duration(narration, repaired_facts, topic_value)
         repaired["narration"] = narration
 
         subtitle_text = str(repaired.get("subtitle_text", "")).strip()
         repaired["subtitle_text"] = narration if len(subtitle_text.split()) < 10 else subtitle_text
         return repaired
+
+    def _dedupe_preserving_order(self, values: list[str]) -> list[str]:
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            normalized = self._normalize_sentence(value)
+            if not normalized:
+                continue
+            key = normalized.lower()
+            if key in seen:
+                continue
+            deduped.append(normalized)
+            seen.add(key)
+        return deduped
+
+    def _facts_from_narration(self, narration: str, topic: str) -> list[str]:
+        sentences = [self._normalize_sentence(sentence) for sentence in _SENTENCE_SPLIT_RE.split(narration) if sentence.strip()]
+        facts: list[str] = []
+        for sentence in sentences:
+            lowered = sentence.lower()
+            if len(sentence.split()) < 5:
+                continue
+            if lowered.startswith(("here are ", "these are ")):
+                continue
+            facts.append(sentence)
+        if len(facts) >= 3:
+            return facts[:3]
+        topic_lower = topic.lower()
+        for sentence in sentences:
+            if topic_lower in sentence.lower() and sentence not in facts:
+                facts.append(sentence)
+            if len(facts) >= 3:
+                break
+        return facts[:3]
+
+    def _fallback_facts(self, topic: str, bucket: str) -> list[str]:
+        bucket_label = bucket or "science and culture"
+        return [
+            f"{topic} has details that make it useful for a fast visual explainer.",
+            f"{topic} connects to {bucket_label} in ways that can be shown clearly on screen.",
+            f"{topic} includes enough real-world context to support a short three-point story.",
+        ]
+
+    def _fit_narration_to_duration(self, narration: str, facts: list[str], topic: str) -> str:
+        sentences = [sentence.strip() for sentence in _SENTENCE_SPLIT_RE.split(narration) if sentence.strip()]
+        if sentences:
+            kept: list[str] = []
+            for sentence in sentences:
+                candidate = " ".join([*kept, sentence]).strip()
+                if len(candidate.split()) > 90:
+                    break
+                kept.append(sentence)
+            candidate = " ".join(kept).strip()
+            if len(candidate.split()) >= 45:
+                return candidate
+        return self._build_narration(topic, facts)
 
     def _normalize_generated_short(self, content: GeneratedShort, topic: TopicChoice) -> GeneratedShort:
         facts = [self._normalize_sentence(fact) for fact in content.facts]
