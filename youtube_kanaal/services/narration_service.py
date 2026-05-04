@@ -6,6 +6,7 @@ from pathlib import Path
 
 from youtube_kanaal.config import Settings
 from youtube_kanaal.exceptions import PipelineStageError
+from youtube_kanaal.services.kokoro_service import KokoroService
 from youtube_kanaal.services.piper_service import PiperService
 from youtube_kanaal.services.xtts_service import XTTSService
 
@@ -16,6 +17,8 @@ class NarrationInspection:
     resolved_engine: str
     reference_sources: list[Path] = field(default_factory=list)
     fallback_reason: str | None = None
+    kokoro_ready: bool = False
+    kokoro_reason: str | None = None
     xtts_runtime_ready: bool = False
     xtts_runtime_reason: str | None = None
     piper_ready: bool = False
@@ -51,20 +54,39 @@ class NarrationService:
         self,
         settings: Settings,
         *,
+        kokoro_service: KokoroService | None = None,
         piper_service: PiperService | None = None,
         xtts_service: XTTSService | None = None,
     ) -> None:
         self.settings = settings
+        self.kokoro = kokoro_service or KokoroService(settings)
         self.piper = piper_service or PiperService(settings)
         self.xtts = xtts_service or XTTSService(settings)
 
     def inspect(self, *, logger: logging.Logger | None = None) -> NarrationInspection:
         requested_engine = self.settings.narration_engine
+        kokoro_ready, kokoro_reason = self.kokoro.runtime_ready()
         piper_ready, piper_reason = self.piper.runtime_ready()
-        if requested_engine != "xtts":
+        if requested_engine == "piper":
             return NarrationInspection(
                 requested_engine=requested_engine,
                 resolved_engine="piper",
+                kokoro_ready=kokoro_ready,
+                kokoro_reason=kokoro_reason,
+                piper_ready=piper_ready,
+                piper_reason=piper_reason,
+            )
+        if requested_engine == "kokoro":
+            fallback_reason = None if kokoro_ready else kokoro_reason or "Kokoro runtime is not ready."
+            resolved_engine = "kokoro"
+            if fallback_reason and self.settings.kokoro_fallback_to_piper and piper_ready:
+                resolved_engine = "piper"
+            return NarrationInspection(
+                requested_engine=requested_engine,
+                resolved_engine=resolved_engine,
+                fallback_reason=fallback_reason if resolved_engine == "piper" else None,
+                kokoro_ready=kokoro_ready,
+                kokoro_reason=kokoro_reason,
                 piper_ready=piper_ready,
                 piper_reason=piper_reason,
             )
@@ -90,6 +112,8 @@ class NarrationService:
             resolved_engine=resolved_engine,
             reference_sources=reference_sources,
             fallback_reason=fallback_reason if resolved_engine == "piper" else None,
+            kokoro_ready=kokoro_ready,
+            kokoro_reason=kokoro_reason,
             xtts_runtime_ready=xtts_runtime_ready,
             xtts_runtime_reason=xtts_runtime_reason,
             piper_ready=piper_ready,
@@ -103,6 +127,8 @@ class NarrationService:
                     "requested_engine": inspection.requested_engine,
                     "resolved_engine": inspection.resolved_engine,
                     "fallback_reason": inspection.fallback_reason,
+                    "kokoro_ready": inspection.kokoro_ready,
+                    "kokoro_reason": inspection.kokoro_reason,
                     "reference_sources": [str(path) for path in inspection.reference_sources],
                     "xtts_runtime_ready": inspection.xtts_runtime_ready,
                     "xtts_runtime_reason": inspection.xtts_runtime_reason,
@@ -123,6 +149,34 @@ class NarrationService:
         logger: logging.Logger | None = None,
     ) -> NarrationSynthesisResult:
         inspection = self.inspect(logger=logger)
+        if inspection.resolved_engine == "kokoro":
+            try:
+                self.kokoro.synthesize(text=text, output_path=output_path, logger=logger)
+                return NarrationSynthesisResult(output_path=output_path, inspection=inspection)
+            except Exception as exc:
+                if self.settings.kokoro_fallback_to_piper and inspection.piper_ready:
+                    fallback_reason = self._fallback_reason_from_exception(exc)
+                    if logger:
+                        logger.warning(
+                            "narration_fallback: kokoro_to_piper",
+                            extra={
+                                "stage": "narration_generation",
+                                "requested_engine": "kokoro",
+                                "resolved_engine": "piper",
+                                "fallback_reason": fallback_reason,
+                            },
+                        )
+                    self.piper.synthesize(text=text, output_path=output_path, logger=logger)
+                    return NarrationSynthesisResult(
+                        output_path=output_path,
+                        inspection=replace(
+                            inspection,
+                            resolved_engine="piper",
+                            fallback_reason=fallback_reason,
+                        ),
+                    )
+                raise
+
         if inspection.resolved_engine == "xtts":
             try:
                 self.xtts.synthesize(text=text, output_path=output_path, logger=logger)

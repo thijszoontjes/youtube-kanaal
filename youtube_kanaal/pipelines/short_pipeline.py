@@ -27,6 +27,7 @@ from youtube_kanaal.models import (
     VideoClipAsset,
 )
 from youtube_kanaal.services.ffmpeg_service import FFmpegService
+from youtube_kanaal.services.kokoro_service import KokoroService
 from youtube_kanaal.services.narration_service import NarrationService
 from youtube_kanaal.services.ollama_service import OllamaService
 from youtube_kanaal.services.pexels_service import PexelsService
@@ -97,6 +98,7 @@ class ShortPipeline:
         *,
         ollama_service: OllamaService | None = None,
         narration_service: NarrationService | None = None,
+        kokoro_service: KokoroService | None = None,
         piper_service: PiperService | None = None,
         xtts_service: XTTSService | None = None,
         whisper_service: WhisperService | None = None,
@@ -110,6 +112,7 @@ class ShortPipeline:
         self.ollama = ollama_service or OllamaService(settings)
         self.narration = narration_service or NarrationService(
             settings,
+            kokoro_service=kokoro_service,
             piper_service=piper_service,
             xtts_service=xtts_service,
         )

@@ -6,6 +6,7 @@ import sys
 from youtube_kanaal.config import Settings
 from youtube_kanaal.exceptions import PipelineStageError
 from youtube_kanaal.models.run import DoctorCheck, DoctorReport
+from youtube_kanaal.services.kokoro_service import KokoroService
 from youtube_kanaal.services.ollama_service import OllamaService
 from youtube_kanaal.services.pexels_service import PexelsService
 from youtube_kanaal.services.piper_service import PiperService
@@ -24,6 +25,8 @@ class DoctorService:
 
     def run(self) -> DoctorReport:
         narration_details = self.settings.narration_engine
+        if self.settings.narration_engine == "kokoro" and self.settings.kokoro_fallback_to_piper:
+            narration_details = "kokoro with Piper fallback"
         if self.settings.narration_engine == "xtts" and self.settings.xtts_fallback_to_piper:
             narration_details = "xtts with Piper fallback"
         checks = [
@@ -56,6 +59,8 @@ class DoctorService:
         )
 
     def _narration_checks(self) -> list[DoctorCheck]:
+        if self.settings.narration_engine == "kokoro":
+            return self._kokoro_checks()
         if self.settings.narration_engine == "xtts":
             return self._xtts_checks()
         return [
@@ -71,6 +76,40 @@ class DoctorService:
             details=command,
             action=None if ok else f"Install or configure {label}.",
         )
+
+    def _kokoro_checks(self) -> list[DoctorCheck]:
+        kokoro = KokoroService(self.settings)
+        runtime_ok, runtime_reason = kokoro.runtime_ready()
+        piper_ready, _ = PiperService(self.settings).runtime_ready()
+        fallback_available = self.settings.kokoro_fallback_to_piper and piper_ready
+        checks = [
+            DoctorCheck(
+                name="Kokoro",
+                status="ok" if runtime_ok else ("warn" if fallback_available else "fail"),
+                details=(
+                    f"voice={self.settings.kokoro_voice}, "
+                    f"lang={self.settings.kokoro_lang_code}, "
+                    f"speed={self.settings.kokoro_speed}"
+                    + (f" | {runtime_reason}" if runtime_reason else "")
+                ),
+                action=None
+                if runtime_ok
+                else (
+                    "Install Kokoro with `pip install 'kokoro>=0.9.4'` and install espeak-ng. "
+                    "Until then the pipeline falls back to Piper."
+                    if fallback_available
+                    else "Install Kokoro with `pip install 'kokoro>=0.9.4'` and install espeak-ng."
+                ),
+            )
+        ]
+        if self.settings.kokoro_fallback_to_piper and not runtime_ok:
+            checks.extend(
+                [
+                    self._binary_check("Piper", self.settings.piper_binary),
+                    self._piper_voice_check(),
+                ]
+            )
+        return checks
 
     def _ollama_check(self) -> DoctorCheck:
         ok = self.ollama.is_available()

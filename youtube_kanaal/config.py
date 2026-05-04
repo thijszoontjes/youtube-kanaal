@@ -63,7 +63,16 @@ class Settings(BaseSettings):
     )
 
     ffmpeg_binary: str = Field(default="ffmpeg", validation_alias=AliasChoices("FFMPEG_BINARY"))
-    narration_engine: str = Field(default="piper", validation_alias=AliasChoices("NARRATION_ENGINE"))
+    narration_engine: str = Field(default="kokoro", validation_alias=AliasChoices("NARRATION_ENGINE"))
+    kokoro_voice: str = Field(default="af_heart", validation_alias=AliasChoices("KOKORO_VOICE"))
+    kokoro_lang_code: str = Field(default="a", validation_alias=AliasChoices("KOKORO_LANG_CODE"))
+    kokoro_speed: float = Field(default=1.05, ge=0.5, le=2.0, validation_alias=AliasChoices("KOKORO_SPEED"))
+    kokoro_device: str = Field(default="auto", validation_alias=AliasChoices("KOKORO_DEVICE"))
+    kokoro_espeak_binary: str = Field(default="espeak-ng", validation_alias=AliasChoices("KOKORO_ESPEAK_BINARY"))
+    kokoro_fallback_to_piper: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("KOKORO_FALLBACK_TO_PIPER"),
+    )
     piper_binary: str = Field(default="piper", validation_alias=AliasChoices("PIPER_BINARY"))
     piper_voice_model_path: Path | None = Field(
         default=None,
@@ -247,8 +256,32 @@ class Settings(BaseSettings):
     @classmethod
     def _validate_narration_engine(cls, value: str) -> str:
         normalized = value.strip().lower()
-        if normalized not in {"piper", "xtts"}:
-            raise ValueError("NARRATION_ENGINE must be piper or xtts.")
+        if normalized not in {"kokoro", "piper", "xtts"}:
+            raise ValueError("NARRATION_ENGINE must be kokoro, piper, or xtts.")
+        return normalized
+
+    @field_validator("kokoro_lang_code", "kokoro_device")
+    @classmethod
+    def _normalize_kokoro_string(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Kokoro settings must not be empty.")
+        return normalized.lower()
+
+    @field_validator("kokoro_espeak_binary")
+    @classmethod
+    def _normalize_kokoro_binary(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("KOKORO_ESPEAK_BINARY must not be empty.")
+        return normalized
+
+    @field_validator("kokoro_voice")
+    @classmethod
+    def _normalize_kokoro_voice(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("KOKORO_VOICE must not be empty.")
         return normalized
 
     @field_validator("xtts_runtime")

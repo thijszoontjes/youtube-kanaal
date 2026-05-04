@@ -189,7 +189,13 @@ PEXELS_API_KEY=
 YOUTUBE_CLIENT_SECRET_PATH=./data/credentials/client_secret.json
 YOUTUBE_TOKEN_PATH=./data/credentials/youtube_token.json
 DEFAULT_PRIVACY_STATUS=public
-NARRATION_ENGINE=piper
+NARRATION_ENGINE=kokoro
+KOKORO_VOICE=af_heart
+KOKORO_LANG_CODE=a
+KOKORO_SPEED=1.05
+KOKORO_DEVICE=auto
+KOKORO_ESPEAK_BINARY=espeak-ng
+KOKORO_FALLBACK_TO_PIPER=true
 PIPER_VOICE_MODEL_PATH=./cache/piper/en_US-john-medium.onnx
 XTTS_RUNTIME=docker
 XTTS_SPEAKER_WAV_DIR=./data/voice_samples/en
@@ -220,6 +226,25 @@ SOUND_DESIGN_CUSTOM_AUDIO_FILENAME=your-file.mp3
 ```
 
 When `SOUND_DESIGN_CUSTOM_AUDIO_FILENAME` is set, the pipeline skips the procedural whooshes and riser sounds and places only that one file once at a random point in the narration mix.
+
+## Default AI Voice: Kokoro
+
+Kokoro is now the default English narration engine for Shorts. Install the Python package and `espeak-ng` once:
+
+```bash
+.venv/bin/pip install "kokoro>=0.9.4"
+brew install espeak-ng
+```
+
+On Linux, install `espeak-ng` with your package manager, for example `sudo apt-get install espeak-ng`.
+
+Preview the active voice:
+
+```bash
+.venv/bin/python -m youtube_kanaal preview-voice "This is the new Shorts voice."
+```
+
+If Kokoro is not installed yet, the pipeline can fall back to Piper when `KOKORO_FALLBACK_TO_PIPER=true`.
 
 ## Free AI Voice From Your Own English Samples
 

@@ -187,6 +187,8 @@ def _pipeline_required_check_names(settings: Settings, *, upload: bool) -> set[s
 
 def _narration_required_check_names(settings: Settings) -> set[str]:
     inspection = NarrationService(settings).inspect()
+    if inspection.resolved_engine == "kokoro":
+        return {"Kokoro"}
     if inspection.resolved_engine == "xtts":
         return {"XTTS runtime", "XTTS speaker samples"}
     return {"Piper", "Piper voice model"}
@@ -194,6 +196,8 @@ def _narration_required_check_names(settings: Settings) -> set[str]:
 
 def _print_narration_fallback_note(settings: Settings) -> None:
     inspection = NarrationService(settings).inspect()
+    if inspection.requested_engine == "kokoro" and inspection.resolved_engine == "piper" and inspection.fallback_reason:
+        console.print(f"[yellow]Using Piper fallback:[/yellow] {inspection.fallback_reason}")
     if inspection.requested_engine == "xtts" and inspection.resolved_engine == "piper" and inspection.fallback_reason:
         console.print(f"[yellow]Using Piper fallback:[/yellow] {inspection.fallback_reason}")
 
@@ -602,6 +606,8 @@ def diagnose_voice(
     table.add_row("Requested engine", inspection.requested_engine)
     table.add_row("Resolved engine", inspection.resolved_engine)
     table.add_row("Fallback reason", inspection.fallback_reason or "none")
+    table.add_row("Kokoro ready", "yes" if inspection.kokoro_ready else "no")
+    table.add_row("Kokoro details", inspection.kokoro_reason or "ready")
     table.add_row("XTTS runtime ready", "yes" if inspection.xtts_runtime_ready else "no")
     table.add_row("XTTS runtime details", inspection.xtts_runtime_reason or "ready")
     table.add_row("Piper ready", "yes" if inspection.piper_ready else "no")
