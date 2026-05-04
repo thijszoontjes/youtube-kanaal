@@ -427,14 +427,12 @@ class ShortPipeline:
                 plan=plan,
                 audio_path=audio_path,
                 subtitle_path=subtitles.ass_path or subtitles.srt_path,
-                hook_text=content.hook_text,
                 working_dir=runtime.artifacts.video_dir,
                 output_path=final_video_path,
             )
             runtime.stage_summaries["video_rendering"] = {
                 "output_path": str(output_path),
                 "audio_path": str(audio_path),
-                "hook_text": content.hook_text,
             }
             return output_path
 

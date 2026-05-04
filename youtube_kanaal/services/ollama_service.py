@@ -297,13 +297,6 @@ class OllamaService:
             topic=topic_value,
             facts=repaired_facts,
         )
-        repaired["hook_text"] = self._select_hook_text(
-            str(repaired.get("hook_text", "")).strip(),
-            topic=topic_value,
-            title=str(repaired["title"]),
-            facts=repaired_facts,
-        )
-
         repaired["subtitle_text"] = narration
         return repaired
 
@@ -383,8 +376,6 @@ class OllamaService:
             topic=topic.topic,
             facts=facts,
         )
-        hook_text = self._select_hook_text(content.hook_text or "", topic=topic.topic, title=title, facts=facts)
-
         base_payload = content.model_dump(mode="json")
         base_payload.update(
             {
@@ -392,7 +383,6 @@ class OllamaService:
                 "topic": topic.topic,
                 "title": title,
                 "title_hook": title_hook,
-                "hook_text": hook_text,
                 "facts": facts,
             }
         )
@@ -482,21 +472,6 @@ class OllamaService:
             if 15 <= len(candidate) <= 70:
                 return candidate
         return f"The Weird Truth About {topic_title}"[:70].rstrip()
-
-    def _select_hook_text(self, hook_text: str, *, topic: str, title: str, facts: list[str]) -> str:
-        cleaned = " ".join(hook_text.split()).strip(" .")
-        if 8 <= len(cleaned) <= 54 and len(cleaned.split()) <= 9:
-            return cleaned
-        title_hook = title.strip(" .")
-        if 8 <= len(title_hook) <= 54 and len(title_hook.split()) <= 9:
-            return title_hook
-        topic_title = topic[:1].upper() + topic[1:]
-        fact_text = " ".join(facts).lower()
-        if "underwater" in fact_text or "ocean" in fact_text:
-            return "This should not exist underwater"
-        if "space" in fact_text or "planet" in fact_text:
-            return "This space detail is unreal"
-        return f"{topic_title} gets weird fast"[:54].rstrip()
 
     def _variation_seed(self, topic: str, facts: list[str]) -> int:
         return sum(ord(char) for char in topic.lower()) + sum(len(fact) for fact in facts)
@@ -589,7 +564,6 @@ class OllamaService:
             topic=topic.topic,
             title=fallback_title,
             title_hook=fallback_title,
-            hook_text=self._select_hook_text("", topic=topic.topic, title=fallback_title, facts=facts),
             description=(
                 f"Three fast facts about {topic.topic} for a visual YouTube Short. "
                 "Generated locally with Ollama, Piper, whisper.cpp, FFmpeg, and Pexels."

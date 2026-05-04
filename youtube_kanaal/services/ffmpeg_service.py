@@ -62,7 +62,6 @@ class FFmpegService:
         plan: AssetPlan,
         audio_path: Path,
         subtitle_path: Path,
-        hook_text: str | None = None,
         working_dir: Path,
         output_path: Path,
     ) -> Path:
@@ -158,8 +157,6 @@ class FFmpegService:
         )
 
         subtitle_filter = self._subtitle_filter(subtitle_path)
-        video_filters = [self._hook_text_filter(hook_text), subtitle_filter]
-        video_filter = ",".join(filter_part for filter_part in video_filters if filter_part)
         run_command(
             [
                 self.settings.ffmpeg_binary,
@@ -167,7 +164,7 @@ class FFmpegService:
                 "-i",
                 str(rough_cut_path),
                 "-vf",
-                video_filter,
+                subtitle_filter,
                 "-c:v",
                 "libx264",
                 "-threads",
@@ -262,41 +259,6 @@ class FFmpegService:
         return (
             f"subtitles=filename='{self._escape_filter_path(subtitle_path)}':original_size=1080x1920:"
             f"force_style='{style}'"
-        )
-
-    def _hook_text_filter(self, hook_text: str | None) -> str | None:
-        if not hook_text:
-            return None
-        text = self._wrap_hook_text(hook_text)
-        escaped = self._escape_drawtext(text)
-        return (
-            "drawtext="
-            f"text='{escaped}':"
-            "fontcolor=white:"
-            "fontsize=72:"
-            "line_spacing=18:"
-            "box=1:"
-            "boxcolor=black@0.68:"
-            "boxborderw=34:"
-            "x=(w-text_w)/2:"
-            "y=h*0.14:"
-            "enable='between(t,0,1.5)'"
-        )
-
-    def _wrap_hook_text(self, text: str) -> str:
-        words = " ".join(text.split()).split()
-        if len(words) <= 4:
-            return " ".join(words)
-        midpoint = (len(words) + 1) // 2
-        return f"{' '.join(words[:midpoint])}\\n{' '.join(words[midpoint:])}"
-
-    def _escape_drawtext(self, text: str) -> str:
-        return (
-            text.replace("\\", "\\\\")
-            .replace(":", "\\:")
-            .replace("'", "\\'")
-            .replace("%", "\\%")
-            .replace(",", "\\,")
         )
 
     def _segment_filter(self, *, duration_seconds: float, variant: int) -> str:

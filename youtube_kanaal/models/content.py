@@ -395,7 +395,6 @@ class GeneratedShort(BaseModel):
     topic: str
     title: str = Field(min_length=15, max_length=80)
     title_hook: str | None = Field(default=None, min_length=15, max_length=80)
-    hook_text: str | None = Field(default=None, min_length=8, max_length=70)
     description: str = Field(min_length=40, max_length=500)
     hashtags: list[str] = Field(min_length=3, max_length=15)
     narration: str = Field(min_length=80, max_length=700)
@@ -423,7 +422,7 @@ class GeneratedShort(BaseModel):
             raise ValueError("Banned uncertainty or unsafe phrase detected.")
         return cleaned
 
-    @field_validator("title_hook", "hook_text")
+    @field_validator("title_hook")
     @classmethod
     def _validate_optional_text_fields(cls, value: str | None) -> str | None:
         if value is None:

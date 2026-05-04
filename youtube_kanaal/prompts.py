@@ -73,7 +73,7 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
         - Every JSON field must be filled; never use "" or [] for required fields
         - The facts array must contain exactly 3 complete sentences copied or summarized from the narration
         - Subtitle text must exactly match the spoken narration
-        - hook_text must be a punchy 2-second on-screen opener, maximum 9 words
+        - Do not write any separate on-screen title card or visual hook text
         - Generate at least 10 relevant hashtags
         - Hashtags should start with #
         - Return strict JSON only
@@ -84,7 +84,6 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
           "topic": "{topic.topic}",
           "title": "<title>",
           "title_hook": "<attention-grabbing alternative title>",
-          "hook_text": "<short visual hook text>",
           "description": "<description>",
           "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5", "#tag6", "#tag7", "#tag8", "#tag9", "#tag10"],
           "narration": "<full narration>",
