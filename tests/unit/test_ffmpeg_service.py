@@ -17,3 +17,14 @@ def test_ffprobe_binary_uses_exe_suffix_when_ffmpeg_path_is_windows_executable(t
 
     assert FFmpegService(settings)._ffprobe_binary().endswith("ffprobe.exe")
     assert XTTSService(settings)._ffprobe_binary().endswith("ffprobe.exe")
+
+
+def test_hook_text_filter_adds_short_intro_overlay() -> None:
+    service = FFmpegService(Settings())
+
+    hook_filter = service._hook_text_filter("This should not exist underwater")
+
+    assert hook_filter is not None
+    assert hook_filter.startswith("drawtext=")
+    assert "between(t,0,1.5)" in hook_filter
+    assert "This should not\\\\nexist underwater" in hook_filter

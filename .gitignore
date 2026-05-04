@@ -36,3 +36,6 @@ client_secret.json.json
 *.egg-info/
 python-installer.exe
 tools/
+Makefile
+.vscode/settings.json
+scripts/install_python_deps.sh

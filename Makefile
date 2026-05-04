@@ -1,4 +1,4 @@
-PYTHON ?= python
+PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python)
 
 .PHONY: install init doctor make-short make-batch auth-youtube auth-pexels history validate-assets test test-unit test-feature test-e2e smoke
 

@@ -394,6 +394,8 @@ class GeneratedShort(BaseModel):
     bucket: str
     topic: str
     title: str = Field(min_length=15, max_length=80)
+    title_hook: str | None = Field(default=None, min_length=15, max_length=80)
+    hook_text: str | None = Field(default=None, min_length=8, max_length=70)
     description: str = Field(min_length=40, max_length=500)
     hashtags: list[str] = Field(min_length=3, max_length=15)
     narration: str = Field(min_length=80, max_length=700)
@@ -413,6 +415,19 @@ class GeneratedShort(BaseModel):
     @field_validator("topic", "title", "description", "narration", "subtitle_text")
     @classmethod
     def _validate_text_fields(cls, value: str) -> str:
+        cleaned = _WHITESPACE_RE.sub(" ", value.strip())
+        lowered = cleaned.lower()
+        if _EMOJI_RE.search(cleaned):
+            raise ValueError("Emoji are not allowed.")
+        if any(phrase in lowered for phrase in _BANNED_PHRASES):
+            raise ValueError("Banned uncertainty or unsafe phrase detected.")
+        return cleaned
+
+    @field_validator("title_hook", "hook_text")
+    @classmethod
+    def _validate_optional_text_fields(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         cleaned = _WHITESPACE_RE.sub(" ", value.strip())
         lowered = cleaned.lower()
         if _EMOJI_RE.search(cleaned):

@@ -171,10 +171,11 @@ def test_ollama_service_normalizes_short_preserves_human_sounding_narration(conf
 
     normalized = service._normalize_generated_short(content, topic)
 
-    assert normalized.title == "3 Facts About Saturn"
+    assert normalized.title == "Saturn Ring Wonders"
     assert normalized.narration == content.narration
     assert not normalized.narration.startswith("Here are 3 facts about Saturn.")
     assert normalized.subtitle_text == normalized.narration
+    assert normalized.hook_text is not None
     assert len(normalized.hashtags) >= 10
 
 
@@ -195,10 +196,13 @@ def test_ollama_service_repairs_generated_short_with_missing_description(configu
     assert repaired is not None
     assert repaired.description.startswith("Three fast facts about mantis shrimp")
     assert len(repaired.hashtags) >= 10
+    assert not repaired.narration.lower().startswith("here are 3 facts")
+    assert "first," not in repaired.narration.lower()
     assert "that is why" not in repaired.narration.lower()
     assert "people remember" not in repaired.narration.lower()
     assert "looks so unusual on screen" not in repaired.narration.lower()
     assert repaired.subtitle_text == repaired.narration
+    assert repaired.hook_text is not None
 
 
 def test_ollama_service_repairs_generated_short_with_missing_facts_from_narration(configured_env) -> None:

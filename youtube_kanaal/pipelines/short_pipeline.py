@@ -145,10 +145,11 @@ class ShortPipeline:
 
         try:
             topic, content = self.select_topic_and_content(runtime)
+            visual_queries = self.generate_visual_queries(runtime, topic, content)
             narration = self.generate_narration(runtime, content)
             subtitles = self.generate_subtitles(runtime, content, narration)
             sound_design = self.apply_sound_design(runtime, narration)
-            clips = self.download_stock_video(runtime, topic, content, narration)
+            clips = self.download_stock_video(runtime, visual_queries, narration)
             plan = self.plan_assets(runtime, clips, narration)
             final_video_path = self.render_video(runtime, plan, sound_design.mixed_path, subtitles, content)
             validation_payload = self.validate_output(runtime, final_video_path)
@@ -323,6 +324,20 @@ class ShortPipeline:
             runtime.stage_summaries["subtitle_generation"] = subtitles.model_dump(mode="json")
             return subtitles
 
+    def generate_visual_queries(
+        self,
+        runtime: PipelineRuntime,
+        topic: TopicChoice,
+        content: GeneratedShort,
+    ) -> list[str]:
+        queries = self._build_video_queries(topic, content)
+        with self._stage(runtime, "visual_query_generation", {"topic": content.topic, "facts": len(content.facts)}):
+            runtime.stage_summaries["visual_query_generation"] = {
+                "queries": queries,
+                "fact_queries": queries[: len(content.facts)],
+            }
+            return queries
+
     def apply_sound_design(
         self,
         runtime: PipelineRuntime,
@@ -361,11 +376,9 @@ class ShortPipeline:
     def download_stock_video(
         self,
         runtime: PipelineRuntime,
-        topic: TopicChoice,
-        content: GeneratedShort,
+        queries: list[str],
         narration: NarrationAsset,
     ) -> list[VideoClipAsset]:
-        queries = self._build_video_queries(topic, content)
         with self._stage(runtime, "stock_video_download", {"queries": queries}):
             clips = self.pexels.fetch_clips(
                 queries=queries,
@@ -414,12 +427,14 @@ class ShortPipeline:
                 plan=plan,
                 audio_path=audio_path,
                 subtitle_path=subtitles.ass_path or subtitles.srt_path,
+                hook_text=content.hook_text,
                 working_dir=runtime.artifacts.video_dir,
                 output_path=final_video_path,
             )
             runtime.stage_summaries["video_rendering"] = {
                 "output_path": str(output_path),
                 "audio_path": str(audio_path),
+                "hook_text": content.hook_text,
             }
             return output_path
 
@@ -673,14 +688,16 @@ class ShortPipeline:
         recent_titles: list[str],
     ) -> GeneratedShort | None:
         candidates = [
-            f"3 Facts About {content.topic}",
-            f"3 Wild Facts About {content.topic}",
-            f"3 Surprising Facts About {content.topic}",
-            f"3 Quick Facts About {content.topic}",
-            f"{content.topic}: 3 Facts You Should Know",
+            content.title_hook or "",
+            f"{content.topic} Is Stranger Than It Looks",
+            f"What {content.topic} Is Hiding",
+            f"Nobody Expects This About {content.topic}",
+            f"The Weird Truth About {content.topic}",
         ]
         payload = content.model_dump(mode="json")
         for candidate in candidates:
+            if not candidate:
+                continue
             if is_near_duplicate(candidate, recent_titles, self.settings.similarity_threshold):
                 continue
             payload["title"] = candidate
@@ -700,7 +717,8 @@ class ShortPipeline:
     def _build_video_queries(self, topic: TopicChoice, content: GeneratedShort) -> list[str]:
         topic_text = topic.topic
         lowered_facts = " ".join(content.facts).lower()
-        queries: list[str] = []
+        fact_queries = self._fact_visual_queries(topic, content)
+        queries: list[str] = list(fact_queries)
 
         if topic.bucket == "space":
             queries.extend(
@@ -844,8 +862,8 @@ class ShortPipeline:
                 ]
             )
 
-        queries.extend(self._fact_visual_queries(topic, content))
-        queries.extend(topic.visual_queries)
+        if len(queries) < 5:
+            queries.extend(topic.visual_queries)
         queries.extend(content.keyword_queries())
         cleaned_queries = []
         for query in queries:
@@ -881,7 +899,6 @@ class ShortPipeline:
         return any(term in combined for term in marine_terms)
 
     def _fact_visual_queries(self, topic: TopicChoice, content: GeneratedShort) -> list[str]:
-        fact_text = " ".join(content.facts).lower()
         topic_text = topic.topic
         queries: list[str] = []
 
@@ -924,10 +941,67 @@ class ShortPipeline:
             "screen": f"{topic_text} screen close up",
         }
 
-        for keyword, query in keyword_map.items():
-            if keyword in fact_text and query not in queries:
-                queries.append(query)
-        return queries[:4]
+        for index, fact in enumerate(content.facts):
+            fact_text = fact.lower()
+            query = ""
+            for keyword, keyword_query in keyword_map.items():
+                if keyword in fact_text:
+                    query = keyword_query
+                    break
+            if not query:
+                query = self._fallback_fact_query(topic, fact, index)
+            if query in queries:
+                query = self._fallback_fact_query(topic, fact, index)
+            if query in queries:
+                query = f"{topic_text} {topic.bucket} documentary b-roll {index + 1}"
+            queries.append(query)
+        return queries[:3]
+
+    def _fallback_fact_query(self, topic: TopicChoice, fact: str, index: int) -> str:
+        topic_text = topic.topic
+        visual_tokens = [
+            token
+            for token in normalize_for_similarity(fact).split()
+            if len(token) > 4
+            and token
+            not in {
+                "about",
+                "because",
+                "their",
+                "there",
+                "these",
+                "those",
+                "which",
+                "while",
+                "would",
+                "could",
+                "should",
+                "people",
+                "scientists",
+                "studying",
+            }
+            and token not in normalize_for_similarity(topic_text).split()
+        ]
+        detail = " ".join(visual_tokens[:2])
+        bucket_modifiers = {
+            "animals": ["wildlife close up", "nature macro", "animal portrait"],
+            "space": ["space animation", "astronomy animation", "planet close up"],
+            "ocean": ["underwater macro", "ocean close up", "marine life"],
+            "geography": ["landscape drone", "nature aerial", "travel landscape"],
+            "architecture": ["architecture detail", "exterior drone", "building close up"],
+            "weather": ["slow motion weather", "sky timelapse", "storm clouds"],
+            "food": ["food macro", "preparation close up", "slow motion food"],
+            "human body": ["anatomy animation", "science animation", "medical animation"],
+            "history": ["historical site", "ancient ruins", "museum artifact"],
+            "inventions": ["machine close up", "technology detail", "invention detail"],
+            "gaming": ["gaming setup", "esports close up", "game controller"],
+            "sports": ["sport action", "athlete training", "slow motion sport"],
+            "vehicles": ["cinematic motion", "driving close up", "transport action"],
+            "technology": ["technology close up", "lab close up", "innovation b-roll"],
+        }
+        modifier_options = bucket_modifiers.get(topic.bucket, ["cinematic close up", "documentary b-roll", "macro detail"])
+        modifier = modifier_options[index % len(modifier_options)]
+        return " ".join(part for part in [topic_text, detail, modifier] if part).strip()
 
 
 def validate_artifact_directory(run_id: str, run_dir: Path) -> ValidationResult:

@@ -30,6 +30,26 @@ _STOCK_OUTRO_FRAGMENTS: tuple[str, ...] = (
     "works so well in a fast visual short",
     "keeps showing up in science videos and documentaries",
 )
+_FORMULAIC_NARRATION_PREFIXES: tuple[str, ...] = (
+    "here are ",
+    "first,",
+    "first:",
+    "first up,",
+    "second,",
+    "second:",
+    "third,",
+    "third:",
+    "fact 1",
+    "fact one",
+    "fact 2",
+    "fact two",
+    "fact 3",
+    "fact three",
+)
+_GENERIC_TITLE_RE = re.compile(
+    r"^\s*(?:3|three)\s+(?:quick\s+|wild\s+|surprising\s+|amazing\s+|interesting\s+)?facts\s+about\b",
+    re.IGNORECASE,
+)
 
 
 class OllamaService:
@@ -231,11 +251,6 @@ class OllamaService:
         repaired["bucket"] = bucket_value
         repaired["topic"] = topic_value
 
-        title = str(repaired.get("title", "")).strip()
-        if not title:
-            title = f"3 Facts About {topic_value}"
-        repaired["title"] = title
-
         description = str(repaired.get("description", "")).strip()
         if len(description) < 40:
             description = f"Three fast facts about {topic_value} for a visual YouTube Short made locally."
@@ -268,8 +283,28 @@ class OllamaService:
             narration = self._fit_narration_to_duration(narration, repaired_facts, topic_value)
         repaired["narration"] = narration
 
-        subtitle_text = str(repaired.get("subtitle_text", "")).strip()
-        repaired["subtitle_text"] = narration if len(subtitle_text.split()) < 10 else subtitle_text
+        title = str(repaired.get("title", "")).strip()
+        title_hook = str(repaired.get("title_hook", "")).strip()
+        repaired["title_hook"] = self._select_title(
+            title=title_hook,
+            title_hook=title,
+            topic=topic_value,
+            facts=repaired_facts,
+        )
+        repaired["title"] = self._select_title(
+            title=title,
+            title_hook=title_hook,
+            topic=topic_value,
+            facts=repaired_facts,
+        )
+        repaired["hook_text"] = self._select_hook_text(
+            str(repaired.get("hook_text", "")).strip(),
+            topic=topic_value,
+            title=str(repaired["title"]),
+            facts=repaired_facts,
+        )
+
+        repaired["subtitle_text"] = narration
         return repaired
 
     def _dedupe_preserving_order(self, values: list[str]) -> list[str]:
@@ -336,9 +371,19 @@ class OllamaService:
             narration_candidates.append(cleaned_narration)
         narration_candidates.append(self._build_narration(topic.topic, facts))
 
-        title = content.title.strip()
-        if "3 facts" not in title.lower():
-            title = f"3 Facts About {topic.topic}"
+        title = self._select_title(
+            title=content.title,
+            title_hook=content.title_hook or "",
+            topic=topic.topic,
+            facts=facts,
+        )
+        title_hook = self._select_title(
+            title=content.title_hook or "",
+            title_hook=content.title,
+            topic=topic.topic,
+            facts=facts,
+        )
+        hook_text = self._select_hook_text(content.hook_text or "", topic=topic.topic, title=title, facts=facts)
 
         base_payload = content.model_dump(mode="json")
         base_payload.update(
@@ -346,6 +391,8 @@ class OllamaService:
                 "bucket": topic.bucket,
                 "topic": topic.topic,
                 "title": title,
+                "title_hook": title_hook,
+                "hook_text": hook_text,
                 "facts": facts,
             }
         )
@@ -379,12 +426,77 @@ class OllamaService:
         for sentence in sentences:
             stripped = sentence.strip()
             lowered = stripped.lower()
+            if any(lowered.startswith(prefix) for prefix in _FORMULAIC_NARRATION_PREFIXES):
+                continue
             if any(lowered.startswith(prefix) for prefix in _STOCK_OUTRO_PREFIXES):
                 continue
             if any(fragment in lowered for fragment in _STOCK_OUTRO_FRAGMENTS):
                 continue
             filtered_sentences.append(stripped)
         return " ".join(filtered_sentences).strip()
+
+    def _select_title(self, *, title: str, title_hook: str, topic: str, facts: list[str]) -> str:
+        cleaned_title = " ".join(title.split()).strip()
+        cleaned_hook = " ".join(title_hook.split()).strip()
+        if cleaned_hook and self._is_better_title(cleaned_hook, cleaned_title):
+            return cleaned_hook
+        if cleaned_title and not self._is_generic_title(cleaned_title):
+            return cleaned_title
+        return self._fallback_title(topic, facts)
+
+    def _is_better_title(self, candidate: str, current: str) -> bool:
+        if not candidate or len(candidate) > 70:
+            return False
+        if self._is_generic_title(candidate):
+            return False
+        if not current:
+            return True
+        return self._is_generic_title(current) or len(candidate) < len(current) + 18
+
+    def _is_generic_title(self, title: str) -> bool:
+        lowered = title.lower()
+        return bool(_GENERIC_TITLE_RE.search(lowered)) or ": 3 facts" in lowered or "3 facts you should know" in lowered
+
+    def _fallback_title(self, topic: str, facts: list[str]) -> str:
+        topic_title = topic[:1].upper() + topic[1:]
+        fact_text = " ".join(facts).lower()
+        if "ocean" in fact_text or "underwater" in fact_text or "sea" in fact_text:
+            candidates = [
+                f"{topic_title} Shouldn't Exist Like This",
+                f"The Ocean Secret Behind {topic_title}",
+                f"What {topic_title} Is Hiding",
+            ]
+        elif "space" in fact_text or "planet" in fact_text or "moon" in fact_text:
+            candidates = [
+                f"{topic_title} Is Stranger Than It Looks",
+                f"The Space Detail Everyone Misses About {topic_title}",
+                f"What {topic_title} Is Hiding",
+            ]
+        else:
+            candidates = [
+                f"{topic_title} Is Stranger Than It Looks",
+                f"What {topic_title} Is Hiding",
+                f"Nobody Expects This About {topic_title}",
+            ]
+        for candidate in candidates:
+            if 15 <= len(candidate) <= 70:
+                return candidate
+        return f"The Weird Truth About {topic_title}"[:70].rstrip()
+
+    def _select_hook_text(self, hook_text: str, *, topic: str, title: str, facts: list[str]) -> str:
+        cleaned = " ".join(hook_text.split()).strip(" .")
+        if 8 <= len(cleaned) <= 54 and len(cleaned.split()) <= 9:
+            return cleaned
+        title_hook = title.strip(" .")
+        if 8 <= len(title_hook) <= 54 and len(title_hook.split()) <= 9:
+            return title_hook
+        topic_title = topic[:1].upper() + topic[1:]
+        fact_text = " ".join(facts).lower()
+        if "underwater" in fact_text or "ocean" in fact_text:
+            return "This should not exist underwater"
+        if "space" in fact_text or "planet" in fact_text:
+            return "This space detail is unreal"
+        return f"{topic_title} gets weird fast"[:54].rstrip()
 
     def _variation_seed(self, topic: str, facts: list[str]) -> int:
         return sum(ord(char) for char in topic.lower()) + sum(len(fact) for fact in facts)
@@ -396,16 +508,16 @@ class OllamaService:
 
         seed = self._variation_seed(topic, normalized_facts)
         intros = [
-            f"{topic} is a lot stranger than it looks at first.",
-            f"{topic} seems pretty straightforward, and then you look a little closer.",
-            f"Okay, there are some genuinely wild details hiding in {topic}.",
-            f"If {topic} already sounds familiar, the interesting part starts here.",
+            f"Why is {topic} so much stranger than it looks?",
+            f"{topic} should be ordinary, but it really is not.",
+            f"Okay, something genuinely weird is hiding in {topic}.",
+            f"What makes {topic} worth stopping for is the part most people miss.",
         ]
         first_leads = [
             f"For one thing, {normalized_facts[0]}",
             f"To start, {normalized_facts[0]}",
-            f"First up, {normalized_facts[0]}",
             f"Right away, {normalized_facts[0]}",
+            f"The opening detail is already odd: {normalized_facts[0]}",
         ]
         second_leads = [
             f"Then there's this: {normalized_facts[1]}",
@@ -471,10 +583,13 @@ class OllamaService:
             f"{topic.topic.title()} is visually striking, which makes it perfect for a short explainer.",
         ]
         narration = self._build_narration(topic.topic, facts)
+        fallback_title = self._fallback_title(topic.topic, facts)
         return GeneratedShort(
             bucket=topic.bucket,
             topic=topic.topic,
-            title=f"3 Facts About {topic.topic.title()}",
+            title=fallback_title,
+            title_hook=fallback_title,
+            hook_text=self._select_hook_text("", topic=topic.topic, title=fallback_title, facts=facts),
             description=(
                 f"Three fast facts about {topic.topic} for a visual YouTube Short. "
                 "Generated locally with Ollama, Piper, whisper.cpp, FFmpeg, and Pexels."

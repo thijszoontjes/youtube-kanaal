@@ -21,6 +21,7 @@ def build_topic_selection_prompt(excluded_topics: list[str]) -> str:
         - Choose from the catalog only.
         - Avoid recent topics: {excluded_line}
         - Pick something visually rich and broad enough for stock footage.
+        - visual_queries are fallback topic searches only; final stock footage queries are generated later from the finished facts.
         - Return strict JSON only.
 
         JSON schema:
@@ -48,11 +49,20 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
         - English only
         - Exactly 3 concise, accurate-sounding facts
         - Strong clear title, no emoji
+        - Also write title_hook: a more clickable SEO title that does not use "3 Facts About"
+        - Prefer title formats like:
+          "Deep Sea Vents Shouldn't Exist (But They Do)"
+          "The Ocean Has a Secret You've Never Seen"
+          "This Is What Lives at 3,000 Meters Down"
+          "Saturn Is Stranger Than It Looks"
         - The narration should feel like natural spoken English, not a rigid script
+        - Open the narration with a surprising statement or a question
         - Mention {topic.topic} early, but do not force a fixed opener
         - Work the three facts into the narration naturally instead of mechanically listing "Fact 1, Fact 2, Fact 3"
+        - Never use "Here are", "First", "Second", "Third", "Fact 1", "Fact 2", or "Fact 3" in the narration
         - Vary sentence length and rhythm
         - Slightly informal phrasing is good, but keep it clean and easy to follow
+        - End with impact, not a summary
         - Avoid stock endings or recap lines
         - Do not end with phrases like "That is why..." or "People remember..." or "it looks unusual on screen"
         - No bullet points, stage directions, or narrator-style labels inside the narration
@@ -63,6 +73,7 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
         - Every JSON field must be filled; never use "" or [] for required fields
         - The facts array must contain exactly 3 complete sentences copied or summarized from the narration
         - Subtitle text must exactly match the spoken narration
+        - hook_text must be a punchy 2-second on-screen opener, maximum 9 words
         - Generate at least 10 relevant hashtags
         - Hashtags should start with #
         - Return strict JSON only
@@ -72,6 +83,8 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
           "bucket": "{topic.bucket}",
           "topic": "{topic.topic}",
           "title": "<title>",
+          "title_hook": "<attention-grabbing alternative title>",
+          "hook_text": "<short visual hook text>",
           "description": "<description>",
           "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5", "#tag6", "#tag7", "#tag8", "#tag9", "#tag10"],
           "narration": "<full narration>",

@@ -102,6 +102,50 @@ def test_pipeline_retries_with_new_topic_when_titles_keep_colliding(configured_e
     assert "penguins" in ollama.content_calls
 
 
+def test_pipeline_builds_fact_first_visual_queries(configured_env) -> None:
+    settings = load_settings(mock_mode=True)
+    database = Database(settings.database_path)
+    database.initialize()
+    pipeline = ShortPipeline(settings, database)
+    topic = TopicChoice(
+        bucket="space",
+        topic="Saturn",
+        visual_queries=["Saturn generic topic search", "Saturn fallback"],
+        search_terms=["Saturn", "space"],
+    )
+    content = GeneratedShort(
+        bucket="space",
+        topic="Saturn",
+        title="Saturn Is Stranger Than It Looks",
+        description="A short description that is comfortably long enough for validation and metadata.",
+        hashtags=["#shorts", "#space", "#saturn"],
+        narration=(
+            "Saturn looks calm from far away, but the details are wild. Its rings are mostly ice and rock. "
+            "Titan is a moon with a thick atmosphere. Saturn has storms that can last for years. "
+            "That is a lot of motion hiding inside one planet, especially when the footage makes it feel so still."
+        ),
+        facts=[
+            "Saturn's rings are made mostly of ice and rock.",
+            "Titan is a moon with a thick atmosphere.",
+            "Saturn has storms that can last for years.",
+        ],
+        subtitle_text=(
+            "Saturn looks calm from far away, but the details are wild. Its rings are mostly ice and rock. "
+            "Titan is a moon with a thick atmosphere. Saturn has storms that can last for years. "
+            "That is a lot of motion hiding inside one planet, especially when the footage makes it feel so still."
+        ),
+    )
+
+    queries = pipeline._build_video_queries(topic, content)
+
+    assert queries[:3] == [
+        "Saturn ringed planet animation",
+        "Saturn moon in space",
+        "Saturn planet storm animation",
+    ]
+    assert "Saturn generic topic search" not in queries
+
+
 def _build_generated_short(*, topic: TopicChoice, title: str) -> GeneratedShort:
     narration = (
         f"Here are 3 facts about {topic.topic}. "
