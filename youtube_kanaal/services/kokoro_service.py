@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import logging
-import math
-import struct
 import wave
 from pathlib import Path
 from typing import Any
@@ -157,13 +155,15 @@ class KokoroService:
             )
 
     def _write_mock_wave(self, output_path: Path, duration_seconds: float) -> None:
-        amplitude = 8_000
-        frequency = 240.0
         total_frames = int(KOKORO_SAMPLE_RATE * duration_seconds)
+        chunk_frames = KOKORO_SAMPLE_RATE
+        silence_chunk = b"\x00\x00" * chunk_frames
         with wave.open(str(output_path), "wb") as wav_file:
             wav_file.setnchannels(1)
             wav_file.setsampwidth(2)
             wav_file.setframerate(KOKORO_SAMPLE_RATE)
-            for index in range(total_frames):
-                value = int(amplitude * math.sin(2 * math.pi * frequency * index / KOKORO_SAMPLE_RATE))
-                wav_file.writeframes(struct.pack("<h", value))
+            remaining = total_frames
+            while remaining > 0:
+                frames = min(remaining, chunk_frames)
+                wav_file.writeframes(silence_chunk[: frames * 2])
+                remaining -= frames

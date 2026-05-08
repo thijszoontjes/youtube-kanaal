@@ -573,3 +573,130 @@ class GeneratedShort(BaseModel):
         if not words:
             return None
         return "#" + "".join(word.capitalize() for word in words)
+
+
+class LongVideoSection(BaseModel):
+    title: str = Field(min_length=8, max_length=64)
+    narration: str = Field(min_length=400, max_length=2500)
+    visual_queries: list[str] = Field(min_length=2, max_length=5)
+
+    @field_validator("title", "narration")
+    @classmethod
+    def _validate_section_text(cls, value: str) -> str:
+        cleaned = _WHITESPACE_RE.sub(" ", value.strip())
+        lowered = cleaned.lower()
+        if _EMOJI_RE.search(cleaned):
+            raise ValueError("Emoji are not allowed.")
+        if any(phrase in lowered for phrase in _BANNED_PHRASES):
+            raise ValueError("Banned uncertainty or unsafe phrase detected.")
+        return cleaned
+
+    @field_validator("visual_queries")
+    @classmethod
+    def _normalize_visual_queries(cls, values: list[str]) -> list[str]:
+        cleaned = [_WHITESPACE_RE.sub(" ", item.strip()) for item in values if item.strip()]
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for item in cleaned:
+            key = item.lower()
+            if key not in seen:
+                deduped.append(item)
+                seen.add(key)
+        return deduped[:5]
+
+
+class GeneratedLongVideo(BaseModel):
+    bucket: str
+    topic: str
+    title: str = Field(min_length=25, max_length=90)
+    thumbnail_text: str = Field(min_length=4, max_length=34)
+    description: str = Field(min_length=120, max_length=2000)
+    tags: list[str] = Field(min_length=8, max_length=20)
+    sections: list[LongVideoSection] = Field(min_length=6, max_length=8)
+    facts: list[str] = Field(min_length=6, max_length=12)
+
+    @field_validator("bucket")
+    @classmethod
+    def _validate_bucket(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in ALLOWED_BUCKETS:
+            raise ValueError(f"Bucket must be one of {', '.join(ALLOWED_BUCKETS)}.")
+        return normalized
+
+    @field_validator("topic", "title", "thumbnail_text", "description")
+    @classmethod
+    def _validate_text_fields(cls, value: str) -> str:
+        cleaned = _WHITESPACE_RE.sub(" ", value.strip())
+        lowered = cleaned.lower()
+        if _EMOJI_RE.search(cleaned):
+            raise ValueError("Emoji are not allowed.")
+        if any(phrase in lowered for phrase in _BANNED_PHRASES):
+            raise ValueError("Banned uncertainty or unsafe phrase detected.")
+        return cleaned
+
+    @field_validator("tags")
+    @classmethod
+    def _validate_tags(cls, values: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            tag = _WHITESPACE_RE.sub(" ", value.strip().lstrip("#"))
+            if not tag:
+                continue
+            key = tag.lower()
+            if key in seen:
+                continue
+            cleaned.append(tag[:45])
+            seen.add(key)
+        if len(cleaned) < 8:
+            raise ValueError("At least 8 distinct tags are required.")
+        return cleaned[:20]
+
+    @field_validator("facts")
+    @classmethod
+    def _validate_facts(cls, values: list[str]) -> list[str]:
+        cleaned = [_WHITESPACE_RE.sub(" ", item.strip()) for item in values if item.strip()]
+        if len(cleaned) < 6:
+            raise ValueError("At least 6 facts are required.")
+        if len({item.lower() for item in cleaned}) != len(cleaned):
+            raise ValueError("Facts must be distinct.")
+        return cleaned[:12]
+
+    @model_validator(mode="after")
+    def _validate_long_duration_shape(self) -> "GeneratedLongVideo":
+        word_count = len(self.narration.split())
+        if not 1325 <= word_count <= 1650:
+            raise ValueError("Long-form narration should be roughly 8:30-11:00 at normal Kokoro speed.")
+        return self
+
+    @property
+    def narration(self) -> str:
+        return "\n\n".join(section.narration for section in self.sections).strip()
+
+    def estimated_duration_seconds(self) -> float:
+        return round(len(self.narration.split()) / 2.6, 2)
+
+    def keyword_queries(self) -> list[str]:
+        queries = [self.topic, f"{self.topic} {self.bucket}", self.bucket]
+        for section in self.sections:
+            queries.extend(section.visual_queries)
+        return list(dict.fromkeys(query for query in queries if query))[:12]
+
+    def upload_description(self, chapters: list[tuple[float, str]]) -> str:
+        chapter_lines = ["Chapters:"]
+        for seconds, title in chapters:
+            chapter_lines.append(f"{self._format_chapter_time(seconds)} {title}")
+        hashtags = " ".join(f"#{self._normalize_hashtag(tag)}" for tag in self.tags[:8])
+        return f"{self.description}\n\n{chr(10).join(chapter_lines)}\n\n{hashtags}".strip()
+
+    def _normalize_hashtag(self, raw_value: str) -> str:
+        words = _WORD_RE.findall(raw_value)
+        if not words:
+            return "Facts"
+        return "".join(word.capitalize() for word in words)
+
+    def _format_chapter_time(self, seconds: float) -> str:
+        total = max(int(seconds), 0)
+        minutes = total // 60
+        remainder = total % 60
+        return f"{minutes:02d}:{remainder:02d}"

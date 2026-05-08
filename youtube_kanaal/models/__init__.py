@@ -7,12 +7,21 @@ from youtube_kanaal.models.assets import (
     UploadMetadata,
     VideoClipAsset,
 )
-from youtube_kanaal.models.content import ALLOWED_BUCKETS, GeneratedShort, TopicChoice, TOPIC_CATALOG
+from youtube_kanaal.models.content import (
+    ALLOWED_BUCKETS,
+    GeneratedLongVideo,
+    GeneratedShort,
+    LongVideoSection,
+    TopicChoice,
+    TOPIC_CATALOG,
+)
 from youtube_kanaal.models.run import (
     BatchRequest,
     DoctorCheck,
     DoctorReport,
     HistoryEntry,
+    LongRunRequest,
+    LongRunResult,
     RunStatus,
     ShortRunRequest,
     ShortRunResult,
@@ -28,7 +37,11 @@ __all__ = [
     "DoctorCheck",
     "DoctorReport",
     "GeneratedShort",
+    "GeneratedLongVideo",
     "HistoryEntry",
+    "LongVideoSection",
+    "LongRunRequest",
+    "LongRunResult",
     "NarrationAsset",
     "RunStatus",
     "ShortRunRequest",

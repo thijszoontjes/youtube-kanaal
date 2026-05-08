@@ -16,9 +16,9 @@ from rich.table import Table
 from youtube_kanaal.config import Settings, load_settings, project_root
 from youtube_kanaal.db import Database
 from youtube_kanaal.exceptions import PipelineStageError, YoutubeKanaalError
-from youtube_kanaal.models import BatchRequest, ShortRunRequest
+from youtube_kanaal.models import BatchRequest, LongRunRequest, ShortRunRequest
 from youtube_kanaal.models.content import TOPIC_CATALOG
-from youtube_kanaal.pipelines import ShortPipeline, validate_artifact_directory
+from youtube_kanaal.pipelines import LongPipeline, ShortPipeline, validate_artifact_directory
 from youtube_kanaal.services.doctor import DoctorService
 from youtube_kanaal.services.ffmpeg_service import FFmpegService
 from youtube_kanaal.services.narration_service import NarrationService
@@ -34,7 +34,7 @@ from youtube_kanaal.utils.scheduling import (
     parse_schedule_times,
 )
 
-app = typer.Typer(help="Local YouTube Shorts pipeline.", add_completion=False)
+app = typer.Typer(help="Local YouTube video pipeline.", add_completion=False)
 console = Console()
 
 
@@ -43,6 +43,14 @@ def _bootstrap(debug: bool = False, mock_mode: bool = False) -> tuple[Database, 
     database = Database(settings.database_path)
     database.initialize()
     pipeline = ShortPipeline(settings, database)
+    return database, pipeline
+
+
+def _bootstrap_long(debug: bool = False, mock_mode: bool = False) -> tuple[Database, LongPipeline]:
+    settings = load_settings(app_debug=debug, mock_mode=mock_mode)
+    database = Database(settings.database_path)
+    database.initialize()
+    pipeline = LongPipeline(settings, database)
     return database, pipeline
 
 
@@ -60,6 +68,27 @@ def _render_result(result) -> None:
         table.add_row("Privacy", result.privacy_status)
     if result.scheduled_publish_at:
         table.add_row("Scheduled publish", result.scheduled_publish_at.isoformat())
+    table.add_row("Run ID", result.run_id)
+    table.add_row("Log file", str(result.log_path))
+    console.print(table)
+
+
+def _render_long_result(result) -> None:
+    table = Table(title="Long-Form Video Completed")
+    table.add_column("Field")
+    table.add_column("Value")
+    table.add_row("Title", result.title)
+    table.add_row("Topic", result.topic)
+    table.add_row("Duration", f"{result.duration_seconds:.2f}s")
+    table.add_row("Video", str(result.output_path))
+    table.add_row("Thumbnail", str(result.thumbnail_path))
+    table.add_row("Metadata", str(result.metadata_path))
+    table.add_row("Upload status", str(result.upload_status_path))
+    table.add_row("Uploaded", "yes" if result.uploaded else "no")
+    if result.scheduled_publish_at:
+        table.add_row("Scheduled publish", result.scheduled_publish_at.isoformat())
+    if result.youtube_video_id:
+        table.add_row("YouTube video ID", result.youtube_video_id)
     table.add_row("Run ID", result.run_id)
     table.add_row("Log file", str(result.log_path))
     console.print(table)
@@ -91,6 +120,21 @@ def _run_pipeline(request: ShortRunRequest) -> None:
     _render_result(result)
 
 
+def _run_long_pipeline_result(request: LongRunRequest):
+    _, pipeline = _bootstrap_long(debug=request.debug, mock_mode=request.mock_mode)
+    _preflight_long_pipeline_requirements(request, pipeline.settings)
+    try:
+        return pipeline.run(request)
+    except Exception as exc:
+        _print_failure(exc)
+        raise typer.Exit(code=1) from exc
+
+
+def _run_long_pipeline(request: LongRunRequest) -> None:
+    result = _run_long_pipeline_result(request)
+    _render_long_result(result)
+
+
 def _resolve_schedule_date(
     *,
     date_text: str | None,
@@ -103,6 +147,19 @@ def _resolve_schedule_date(
         except ValueError as exc:
             raise typer.BadParameter("Date must use YYYY-MM-DD format.") from exc
     return datetime.now(schedule_timezone).date() + timedelta(days=1)
+
+
+def _resolve_long_schedule_date(*, for_value: str, timezone_name: str) -> date:
+    normalized = for_value.strip().lower()
+    schedule_timezone = _load_schedule_timezone(timezone_name)
+    if normalized in {"tomorrow", "next-day", "next_day"}:
+        return datetime.now(schedule_timezone).date() + timedelta(days=1)
+    if normalized in {"today"}:
+        return datetime.now(schedule_timezone).date()
+    try:
+        return date.fromisoformat(for_value)
+    except ValueError as exc:
+        raise typer.BadParameter("--for must be 'tomorrow', 'today', or a YYYY-MM-DD date.") from exc
 
 
 def _build_publish_schedule(
@@ -161,6 +218,36 @@ def _preflight_pipeline_requirements(request: ShortRunRequest, settings: Setting
         return
 
     console.print("[red]Pipeline prerequisites are not ready.[/red]")
+    for check in blocking:
+        console.print(f"- {check.name}: {check.status} | {check.action or check.details}")
+    console.print("Run `python -m youtube_kanaal doctor` after fixing the items above.")
+    raise typer.Exit(code=1)
+
+
+def _preflight_long_pipeline_requirements(request: LongRunRequest, settings: Settings) -> None:
+    if request.mock_mode:
+        return
+
+    report = DoctorService(settings).run()
+    required_names = {
+        "Python version",
+        "FFmpeg",
+        "Ollama reachable",
+        "Ollama model",
+        "Narration engine",
+        "Pexels API key",
+    }
+    required_names.update(_narration_required_check_names(settings))
+    blocking = [
+        check
+        for check in report.checks
+        if check.name in required_names and check.status in {"fail", "warn"}
+    ]
+    if not blocking:
+        _print_narration_fallback_note(settings)
+        return
+
+    console.print("[red]Long-form pipeline prerequisites are not ready.[/red]")
     for check in blocking:
         console.print(f"- {check.name}: {check.status} | {check.action or check.details}")
     console.print("Run `python -m youtube_kanaal doctor` after fixing the items above.")
@@ -375,6 +462,61 @@ def make_short_schedule(
         console.print(table)
     if failures:
         raise typer.Exit(code=1)
+
+
+@app.command()
+def generate_and_schedule(
+    for_value: str = typer.Option(
+        "tomorrow",
+        "--for",
+        help="Publish date: tomorrow, today, or YYYY-MM-DD in SCHEDULED_TIMEZONE.",
+    ),
+    upload: bool = typer.Option(True, help="Upload and schedule on YouTube. Disable to build a local package only."),
+    dry_run: bool = typer.Option(False, help="Generate the full local package without upload."),
+    debug: bool = typer.Option(False, help="Enable verbose logging."),
+    topic: Optional[str] = typer.Option(None, help="Force a specific catalog topic."),
+    bucket: Optional[str] = typer.Option(None, help="Optional bucket for a forced topic."),
+    mock_mode: bool = typer.Option(False, help="Use deterministic mock services."),
+) -> None:
+    """Generate one English long-form video and schedule it for 05:00 the next day by default."""
+
+    settings = load_settings(app_debug=debug, mock_mode=mock_mode)
+    target_date = _resolve_long_schedule_date(for_value=for_value, timezone_name=settings.scheduled_timezone)
+    publish_slots = _build_publish_schedule(
+        times=[settings.long_publish_time],
+        target_date=target_date,
+        timezone_name=settings.scheduled_timezone,
+    )
+    publish_at = publish_slots[0]
+    effective_upload = upload and not dry_run
+    console.print(
+        f"Planning one English long-form video for {publish_at.isoformat()} "
+        f"({settings.scheduled_timezone}); upload={'yes' if effective_upload else 'no'}."
+    )
+    _run_long_pipeline(
+        LongRunRequest(
+            upload=effective_upload,
+            dry_run=dry_run,
+            debug=debug,
+            preferred_topic=topic,
+            preferred_bucket=bucket,
+            privacy_status="private" if effective_upload else None,
+            scheduled_publish_at=publish_at if effective_upload else None,
+            save_to_downloads=False,
+            mock_mode=mock_mode,
+        )
+    )
+
+
+@app.command()
+def daily_video(
+    dry_run: bool = typer.Option(False, help="Generate locally without YouTube upload."),
+    debug: bool = typer.Option(False, help="Enable verbose logging."),
+    mock_mode: bool = typer.Option(False, help="Use deterministic mock services."),
+) -> None:
+    """Daily long-form entrypoint: generate and schedule tomorrow at 05:00."""
+
+    generate_and_schedule(for_value="tomorrow", upload=True, dry_run=dry_run, debug=debug, mock_mode=mock_mode)
 
 
 @app.command()

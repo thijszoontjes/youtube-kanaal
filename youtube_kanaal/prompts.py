@@ -92,3 +92,52 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
         }}
         """
     ).strip()
+
+
+def build_long_content_generation_prompt(topic: TopicChoice, excluded_titles: list[str]) -> str:
+    excluded = ", ".join(excluded_titles[-20:]) if excluded_titles else "None"
+    return dedent(
+        f"""
+        Write a long-form YouTube video package in the same fast, curious, visual fact-explainer style as the Shorts,
+        but expanded into a naturally paced 8:30 to 11:00 minute video.
+
+        Topic:
+        - Bucket: {topic.bucket}
+        - Topic: {topic.topic}
+
+        Constraints:
+        - English only.
+        - No emoji, no bullet labels inside narration, no stage directions.
+        - Keep the tone conversational, curious, and clean.
+        - Open with a strong hook, then build through clear segments with visual variety.
+        - Include exactly 7 sections.
+        - Each section narration should be 190-225 words.
+        - Total narration should be 1325-1650 words.
+        - Mention {topic.topic} early.
+        - Avoid clickbait spam, but make the title SEO-friendly and attractive.
+        - thumbnail_text must be short, powerful, and readable on mobile.
+        - Every section needs 2-5 Pexels-friendly visual search queries.
+        - Generate 8-20 tags without # symbols.
+        - Facts must be complete sentences and distinct.
+        - Avoid title similarity to these recent titles: {excluded}
+        - Return strict JSON only.
+
+        JSON schema:
+        {{
+          "bucket": "{topic.bucket}",
+          "topic": "{topic.topic}",
+          "title": "<SEO-friendly long-form title>",
+          "thumbnail_text": "<2-5 word thumbnail phrase>",
+          "description": "<2-4 paragraph YouTube description>",
+          "tags": ["tag 1", "tag 2", "tag 3", "tag 4", "tag 5", "tag 6", "tag 7", "tag 8"],
+          "sections": [
+            {{
+              "title": "<chapter title>",
+              "narration": "<190-225 spoken words>",
+              "visual_queries": ["<query 1>", "<query 2>"]
+            }}
+          ],
+          "facts": ["<fact sentence 1>", "<fact sentence 2>", "<fact sentence 3>", "<fact sentence 4>", "<fact sentence 5>", "<fact sentence 6>"]
+        }}
+        """
+    ).strip()

@@ -76,6 +76,49 @@ class PexelsService:
             )
         return selected
 
+    def fetch_broll_clips(
+        self,
+        *,
+        queries: list[str],
+        max_clips: int,
+        response_path: Path,
+    ) -> list[VideoClipAsset]:
+        if self.settings.mock_mode:
+            clips = self._mock_clips(max_clips * 12.0)[:max_clips]
+            write_json(response_path, [clip.model_dump(mode="json") for clip in clips])
+            return clips
+        if not self.settings.pexels_api_key:
+            raise ConfigurationError("PEXELS_API_KEY is required for stock footage downloads.")
+
+        raw_payloads: list[dict[str, object]] = []
+        candidates: list[VideoClipAsset] = []
+        for original_query in queries:
+            for query in self._expand_queries(original_query):
+                payload = self._search(query)
+                raw_payloads.append({"query": query, "original_query": original_query, "response": payload})
+                candidates.extend(self._parse_results(query, payload))
+        write_json(response_path, raw_payloads)
+
+        chosen: list[VideoClipAsset] = []
+        used_ids: set[str] = set()
+        for clip in self._prioritized_candidates(candidates, queries):
+            if clip.source_id in used_ids:
+                continue
+            if not self._prepare_clip_for_use(clip):
+                continue
+            chosen.append(clip)
+            used_ids.add(clip.source_id)
+            if len(chosen) >= max_clips:
+                break
+        if not chosen:
+            raise PipelineStageError(
+                stage="stock_video_download",
+                message="Pexels returned no usable long-form B-roll clips.",
+                probable_cause="Try a different topic, or inspect the saved API response.",
+                details_path=response_path,
+            )
+        return chosen
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=8),

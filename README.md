@@ -1,11 +1,67 @@
 # youtube-kanaal
 
-Local, terminal-first YouTube Shorts automation for English Shorts in the format `3 facts about X`.
+Local, terminal-first YouTube automation for English Shorts and daily long-form fact explainers.
 
 ## Quick Start
 
+## Daily Long-Form Video
+
+The long-form pipeline generates English videos between `8:30` and `11:00`, uses the existing Kokoro-first narration config, pulls B-roll from Pexels, adds a generated royalty-free background bed with ducking, renders a 1280x720 thumbnail, writes metadata/chapters/tags, and schedules the YouTube upload for the next day at `05:00` in `SCHEDULED_TIMEZONE`.
+
+Daily production command:
+
+```bash
+make daily-video
+```
+
+Equivalent direct command:
+
+```bash
+python -m youtube_kanaal generate-and-schedule --for tomorrow
+```
+
+Dry-run without upload:
+
+```bash
+make daily-video-dry-run
+python -m youtube_kanaal generate-and-schedule --for tomorrow --dry-run
+```
+
+Outputs are written to `output/<run_id>/`:
+
+- `video/*.mp4`
+- `metadata/thumbnail.jpg`
+- `metadata/metadata.json`
+- `metadata/metadata.txt`
+- `metadata/upload_status.json`
+
+Required one-time setup:
+
+```bash
+python -m youtube_kanaal init-config
+python -m youtube_kanaal auth-pexels --key YOUR_PEXELS_KEY --write-env
+python -m youtube_kanaal auth-youtube
+python -m youtube_kanaal doctor
+```
+
+YouTube OAuth uses a Google Cloud Desktop OAuth client JSON at `YOUTUBE_CLIENT_SECRET_PATH` and stores the refresh token at `YOUTUBE_TOKEN_PATH`. If upload auth is missing or fails, the long-form command still leaves a ready-to-upload local package with `upload_status.json` explaining the fallback.
+
+Long-form config lives in `.env`:
+
+```dotenv
+MIN_LONG_DURATION_SECONDS=510
+MAX_LONG_DURATION_SECONDS=660
+LONG_PUBLISH_TIME=05:00
+LONG_BROLL_CLIP_COUNT=32
+SCHEDULED_TIMEZONE=Europe/Amsterdam
+NARRATION_ENGINE=kokoro
+KOKORO_VOICE=af_heart
+```
+
+Cost notes: Pexels, FFmpeg, Pillow thumbnails, generated background music, Kokoro, SQLite, and local Ollama are free/open-source or free-account friendly. YouTube upload uses YouTube Data API quota. Paid options are optional only if you replace local Ollama/TTS or stock sources with commercial APIs.
+
 Activate the virtual environment first on macOS/Linux:
-.\.venv\Scripts\python -m youtube_kanaal make-short-schedule --date 2026-04-25 --times "14:45,15:00,19:00"
+.\.venv\Scripts\python -m youtube_kanaal make-short-schedule --date 2026-05-08 --times "11:00,14:45,15:00,19:00"
 
 ```bash
 source .venv/bin/activate

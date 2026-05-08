@@ -148,6 +148,45 @@ class YouTubeService:
             uploaded=True,
         )
 
+    def upload_thumbnail(
+        self,
+        *,
+        video_id: str,
+        thumbnail_path: Path,
+        response_path: Path,
+    ) -> Path:
+        if self.settings.mock_mode:
+            write_json(response_path, {"videoId": video_id, "mock": True})
+            return response_path
+
+        credentials = self._load_credentials()
+        try:
+            from googleapiclient.discovery import build
+            from googleapiclient.errors import HttpError
+            from googleapiclient.http import MediaFileUpload
+        except ImportError as exc:
+            raise PipelineStageError(
+                stage="youtube_upload",
+                message="Google API client libraries are not installed.",
+                probable_cause="Install the project dependencies first.",
+            ) from exc
+
+        youtube = build("youtube", "v3", credentials=credentials, cache_discovery=False)
+        request = youtube.thumbnails().set(
+            videoId=video_id,
+            media_body=MediaFileUpload(str(thumbnail_path), mimetype="image/jpeg", resumable=False),
+        )
+        try:
+            payload = request.execute()
+        except HttpError as exc:
+            raise PipelineStageError(
+                stage="youtube_upload",
+                message="YouTube thumbnail upload failed.",
+                probable_cause=str(exc),
+            ) from exc
+        write_json(response_path, payload)
+        return response_path
+
     def _resolve_upload_schedule(
         self,
         *,
@@ -165,7 +204,7 @@ class YouTubeService:
             )
         now_utc = datetime.now(timezone.utc)
         publish_at_utc = scheduled_publish_at.astimezone(timezone.utc)
-        if publish_at_utc <= now_utc:
+        if publish_at_utc <= now_utc and not self.settings.mock_mode:
             raise PipelineStageError(
                 stage="youtube_upload",
                 message="Scheduled publish time must be in the future.",

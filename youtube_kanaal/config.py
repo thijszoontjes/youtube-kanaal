@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
@@ -32,7 +33,21 @@ class Settings(BaseSettings):
         extra="ignore",
         case_sensitive=False,
         populate_by_name=True,
+        validate_by_name=True,
     )
+
+    def __init__(self, **data: Any) -> None:
+        normalized_data = dict(data)
+        for field_name, field_info in self.__class__.model_fields.items():
+            if field_name not in normalized_data:
+                continue
+            validation_alias = field_info.validation_alias
+            choices = getattr(validation_alias, "choices", None)
+            if choices:
+                normalized_data.setdefault(str(choices[0]), normalized_data.pop(field_name))
+            elif validation_alias:
+                normalized_data.setdefault(str(validation_alias), normalized_data.pop(field_name))
+        super().__init__(**normalized_data)
 
     app_name: str = Field(default="youtube-kanaal", validation_alias=AliasChoices("YOUTUBE_KANAAL_APP_NAME", "APP_NAME"))
     app_env: str = Field(default="development", validation_alias=AliasChoices("YOUTUBE_KANAAL_ENV", "APP_ENV"))
@@ -207,6 +222,21 @@ class Settings(BaseSettings):
         default=35,
         validation_alias=AliasChoices("MAX_SHORT_DURATION_SECONDS"),
     )
+    min_long_duration_seconds: int = Field(
+        default=510,
+        validation_alias=AliasChoices("MIN_LONG_DURATION_SECONDS"),
+    )
+    max_long_duration_seconds: int = Field(
+        default=660,
+        validation_alias=AliasChoices("MAX_LONG_DURATION_SECONDS"),
+    )
+    long_publish_time: str = Field(default="05:00", validation_alias=AliasChoices("LONG_PUBLISH_TIME"))
+    long_broll_clip_count: int = Field(default=32, ge=12, le=80, validation_alias=AliasChoices("LONG_BROLL_CLIP_COUNT"))
+    long_segment_min_seconds: float = Field(default=10.0, ge=3.0, le=30.0, validation_alias=AliasChoices("LONG_SEGMENT_MIN_SECONDS"))
+    long_segment_max_seconds: float = Field(default=22.0, ge=5.0, le=45.0, validation_alias=AliasChoices("LONG_SEGMENT_MAX_SECONDS"))
+    thumbnail_font_path: Path | None = Field(default=None, validation_alias=AliasChoices("THUMBNAIL_FONT_PATH"))
+    thumbnail_accent_color: str = Field(default="#6BFF7C", validation_alias=AliasChoices("THUMBNAIL_ACCENT_COLOR"))
+    thumbnail_text_color: str = Field(default="#FFFFFF", validation_alias=AliasChoices("THUMBNAIL_TEXT_COLOR"))
     subtitle_font_name: str = Field(default="Arial", validation_alias=AliasChoices("SUBTITLE_FONT_NAME"))
     subtitle_font_size: int = Field(default=48, validation_alias=AliasChoices("SUBTITLE_FONT_SIZE"))
     subtitle_margin_v: int = Field(default=640, validation_alias=AliasChoices("SUBTITLE_MARGIN_V"))
@@ -230,6 +260,7 @@ class Settings(BaseSettings):
         "downloads_dir",
         "database_path",
         "sound_design_custom_audio_dir",
+        "thumbnail_font_path",
         mode="before",
     )
     @classmethod
@@ -327,10 +358,27 @@ class Settings(BaseSettings):
                 raise ValueError("SCHEDULED_RUN_TIMES must use valid HH:MM 24-hour times.")
         return ",".join(dict.fromkeys(parts))
 
+    @field_validator("long_publish_time")
+    @classmethod
+    def _validate_long_publish_time(cls, value: str) -> str:
+        normalized = value.strip()
+        hours, minutes = normalized.split(":") if ":" in normalized else ("", "")
+        if not (hours.isdigit() and minutes.isdigit() and len(hours) == 2 and len(minutes) == 2):
+            raise ValueError("LONG_PUBLISH_TIME must use HH:MM 24-hour time.")
+        if not (0 <= int(hours) <= 23 and 0 <= int(minutes) <= 59):
+            raise ValueError("LONG_PUBLISH_TIME must use a valid HH:MM 24-hour time.")
+        return normalized
+
     @model_validator(mode="after")
     def _validate_duration_window(self) -> "Settings":
         if self.min_short_duration_seconds >= self.max_short_duration_seconds:
             raise ValueError("MIN_SHORT_DURATION_SECONDS must be lower than MAX_SHORT_DURATION_SECONDS.")
+        if self.min_long_duration_seconds >= self.max_long_duration_seconds:
+            raise ValueError("MIN_LONG_DURATION_SECONDS must be lower than MAX_LONG_DURATION_SECONDS.")
+        if self.min_long_duration_seconds < 510 or self.max_long_duration_seconds > 660:
+            raise ValueError("Long-form duration must stay within 8:30-11:00.")
+        if self.long_segment_min_seconds >= self.long_segment_max_seconds:
+            raise ValueError("LONG_SEGMENT_MIN_SECONDS must be lower than LONG_SEGMENT_MAX_SECONDS.")
         if self.xtts_speaker_wav_dir is None:
             self.xtts_speaker_wav_dir = self.data_dir / "voice_samples" / self.xtts_language
         return self
