@@ -132,6 +132,10 @@ class LongPipeline(ShortPipeline):
                 if not is_near_duplicate(content.title, recent_titles, self.settings.similarity_threshold):
                     runtime.stage_summaries["long_content_generation"] = content.model_dump(mode="json")
                     return content
+                retitled = self._retitle_long_content(content, recent_titles)
+                if retitled is not None:
+                    runtime.stage_summaries["long_content_generation"] = retitled.model_dump(mode="json")
+                    return retitled
                 recent_titles.append(content.title)
             raise PipelineStageError(
                 stage="long_content_generation",
@@ -507,6 +511,27 @@ class LongPipeline(ShortPipeline):
             f"Thumbnail: {thumbnail_path}",
         ]
         return "\n".join(lines).strip() + "\n"
+
+    def _retitle_long_content(
+        self,
+        content: GeneratedLongVideo,
+        recent_titles: list[str],
+    ) -> GeneratedLongVideo | None:
+        topic_title = content.topic[:1].upper() + content.topic[1:]
+        candidates = [
+            f"{topic_title}: A Visual Guide to the Details Most People Miss",
+            f"The Full Story Behind {topic_title}",
+            f"{topic_title} Explained Through the Details That Matter",
+            f"Why {topic_title} Is More Interesting Than It Looks",
+            f"{topic_title}: The Long-Form Visual Explainer",
+        ]
+        payload = content.model_dump(mode="json")
+        for candidate in candidates:
+            if is_near_duplicate(candidate, recent_titles, self.settings.similarity_threshold):
+                continue
+            payload["title"] = candidate
+            return GeneratedLongVideo.model_validate(payload)
+        return None
 
     @contextmanager
     def _long_stage(self, runtime: "LongPipelineRuntime", stage_name: str, input_summary: dict[str, object]):

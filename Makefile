@@ -1,6 +1,6 @@
 PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python)
 
-.PHONY: install init doctor make-short make-batch daily-video daily-video-dry-run auth-youtube auth-pexels history validate-assets test test-unit test-feature test-e2e smoke
+.PHONY: install init doctor make-short make-batch daily-content daily-content-dry-run daily-video daily-video-dry-run auth-youtube auth-pexels history validate-assets test test-unit test-feature test-e2e smoke
 
 install:
 	sh scripts/install_python_deps.sh
@@ -16,6 +16,12 @@ make-short:
 
 make-batch:
 	$(PYTHON) -m youtube_kanaal make-batch --count 3
+
+daily-content:
+	$(PYTHON) -m youtube_kanaal daily-content
+
+daily-content-dry-run:
+	$(PYTHON) -m youtube_kanaal daily-content --dry-run
 
 daily-video:
 	$(PYTHON) -m youtube_kanaal daily-video

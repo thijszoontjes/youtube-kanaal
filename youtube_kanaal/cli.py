@@ -135,6 +135,56 @@ def _run_long_pipeline(request: LongRunRequest) -> None:
     _render_long_result(result)
 
 
+def _run_scheduled_shorts_batch(
+    *,
+    publish_slots: list[datetime],
+    debug: bool,
+    mock_mode: bool,
+    upload: bool,
+) -> list[tuple[str, datetime, str | None]]:
+    scheduled_results: list[tuple[str, datetime, str | None]] = []
+    failures = 0
+    for index, publish_at in enumerate(publish_slots, start=1):
+        console.print(
+            f"[cyan]Running scheduled Short {index}/{len(publish_slots)} for {publish_at.isoformat()}[/cyan]"
+        )
+        try:
+            result = _run_pipeline_result(
+                ShortRunRequest(
+                    upload=upload,
+                    debug=debug,
+                    privacy_status="private" if upload else None,
+                    scheduled_publish_at=publish_at if upload else None,
+                    save_to_downloads=not upload,
+                    mock_mode=mock_mode,
+                )
+            )
+        except typer.Exit:
+            failures += 1
+            continue
+        _render_result(result)
+        scheduled_results.append((result.run_id, publish_at, result.youtube_video_id))
+    if failures:
+        raise typer.Exit(code=1)
+    return scheduled_results
+
+
+def _render_scheduled_uploads_table(
+    *,
+    title: str,
+    scheduled_results: list[tuple[str, datetime, str | None]],
+) -> None:
+    if not scheduled_results:
+        return
+    table = Table(title=title)
+    table.add_column("Run ID")
+    table.add_column("Local publish time")
+    table.add_column("YouTube video ID")
+    for run_id, publish_at, youtube_video_id in scheduled_results:
+        table.add_row(run_id, publish_at.isoformat(), youtube_video_id or "")
+    console.print(table)
+
+
 def _resolve_schedule_date(
     *,
     date_text: str | None,
@@ -429,39 +479,13 @@ def make_short_schedule(
     console.print(
         f"Planning {len(publish_slots)} Shorts for {target_date.isoformat()} in {settings.scheduled_timezone}."
     )
-    failures = 0
-    scheduled_results: list[tuple[str, datetime, str | None]] = []
-    for index, publish_at in enumerate(publish_slots, start=1):
-        console.print(
-            f"[cyan]Running scheduled Short {index}/{len(publish_slots)} for {publish_at.isoformat()}[/cyan]"
-        )
-        try:
-            result = _run_pipeline_result(
-                ShortRunRequest(
-                    upload=True,
-                    debug=debug,
-                    privacy_status="private",
-                    scheduled_publish_at=publish_at,
-                    save_to_downloads=False,
-                    mock_mode=mock_mode,
-                )
-            )
-        except typer.Exit:
-            failures += 1
-            continue
-        _render_result(result)
-        scheduled_results.append((result.run_id, publish_at, result.youtube_video_id))
-
-    if scheduled_results:
-        table = Table(title="Scheduled Uploads")
-        table.add_column("Run ID")
-        table.add_column("Local publish time")
-        table.add_column("YouTube video ID")
-        for run_id, publish_at, youtube_video_id in scheduled_results:
-            table.add_row(run_id, publish_at.isoformat(), youtube_video_id or "")
-        console.print(table)
-    if failures:
-        raise typer.Exit(code=1)
+    scheduled_results = _run_scheduled_shorts_batch(
+        publish_slots=publish_slots,
+        debug=debug,
+        mock_mode=mock_mode,
+        upload=True,
+    )
+    _render_scheduled_uploads_table(title="Scheduled Uploads", scheduled_results=scheduled_results)
 
 
 @app.command()
@@ -478,7 +502,7 @@ def generate_and_schedule(
     bucket: Optional[str] = typer.Option(None, help="Optional bucket for a forced topic."),
     mock_mode: bool = typer.Option(False, help="Use deterministic mock services."),
 ) -> None:
-    """Generate one English long-form video and schedule it for 05:00 the next day by default."""
+    """Generate one English long-form video and schedule it for LONG_PUBLISH_TIME the next day by default."""
 
     settings = load_settings(app_debug=debug, mock_mode=mock_mode)
     target_date = _resolve_long_schedule_date(for_value=for_value, timezone_name=settings.scheduled_timezone)
@@ -514,9 +538,82 @@ def daily_video(
     debug: bool = typer.Option(False, help="Enable verbose logging."),
     mock_mode: bool = typer.Option(False, help="Use deterministic mock services."),
 ) -> None:
-    """Daily long-form entrypoint: generate and schedule tomorrow at 05:00."""
+    """Daily long-form entrypoint: generate and schedule tomorrow at LONG_PUBLISH_TIME."""
 
     generate_and_schedule(for_value="tomorrow", upload=True, dry_run=dry_run, debug=debug, mock_mode=mock_mode)
+
+
+@app.command()
+def daily_content(
+    for_value: str = typer.Option(
+        "tomorrow",
+        "--for",
+        help="Publish date: tomorrow, today, or YYYY-MM-DD in SCHEDULED_TIMEZONE.",
+    ),
+    short_times: Optional[str] = typer.Option(
+        None,
+        help="Comma-separated local Short publish times in HH:MM format.",
+    ),
+    video_time: Optional[str] = typer.Option(
+        None,
+        help="Local long-form publish time in HH:MM. Defaults to 17:00.",
+    ),
+    dry_run: bool = typer.Option(False, help="Generate all local packages without YouTube upload."),
+    debug: bool = typer.Option(False, help="Enable verbose logging."),
+    mock_mode: bool = typer.Option(False, help="Use deterministic mock services."),
+) -> None:
+    """Generate and schedule 4 Shorts first, then 1 long-form video for the next day."""
+
+    settings = load_settings(app_debug=debug, mock_mode=mock_mode)
+    target_date = _resolve_long_schedule_date(for_value=for_value, timezone_name=settings.scheduled_timezone)
+    parsed_short_times = parse_schedule_times(short_times or settings.scheduled_run_times)
+    if short_times is None and len(parsed_short_times) != 4:
+        parsed_short_times = parse_schedule_times("10:00,13:00,15:00,19:00")
+    if len(parsed_short_times) != 4:
+        raise typer.BadParameter("--short-times must contain exactly 4 publish times.")
+    selected_video_time = video_time or "17:00"
+    parsed_video_time = parse_schedule_times(selected_video_time)
+    if len(parsed_video_time) != 1:
+        raise typer.BadParameter("--video-time must contain exactly one HH:MM value.")
+
+    short_publish_slots = _build_publish_schedule(
+        times=parsed_short_times,
+        target_date=target_date,
+        timezone_name=settings.scheduled_timezone,
+    )
+    video_publish_at = _build_publish_schedule(
+        times=parsed_video_time,
+        target_date=target_date,
+        timezone_name=settings.scheduled_timezone,
+    )[0]
+    effective_upload = not dry_run
+
+    console.print(
+        f"Planning 4 Shorts first, then 1 English long-form video for {target_date.isoformat()} "
+        f"in {settings.scheduled_timezone}; video={video_publish_at.isoformat()}; "
+        f"upload={'yes' if effective_upload else 'no'}."
+    )
+    short_results = _run_scheduled_shorts_batch(
+        publish_slots=short_publish_slots,
+        debug=debug,
+        mock_mode=mock_mode,
+        upload=effective_upload,
+    )
+    _render_scheduled_uploads_table(title="Scheduled Shorts", scheduled_results=short_results)
+
+    console.print(f"[cyan]Running long-form video for {video_publish_at.isoformat()}[/cyan]")
+    long_result = _run_long_pipeline_result(
+        LongRunRequest(
+            upload=effective_upload,
+            dry_run=dry_run,
+            debug=debug,
+            privacy_status="private" if effective_upload else None,
+            scheduled_publish_at=video_publish_at if effective_upload else None,
+            save_to_downloads=False,
+            mock_mode=mock_mode,
+        )
+    )
+    _render_long_result(long_result)
 
 
 @app.command()

@@ -193,7 +193,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("DATABASE_PATH"),
     )
     scheduled_run_times: str = Field(
-        default="13:00,15:00,19:00",
+        default="10:00,13:00,15:00,19:00",
         validation_alias=AliasChoices("SCHEDULED_RUN_TIMES"),
     )
     scheduled_timezone: str = Field(
@@ -230,7 +230,7 @@ class Settings(BaseSettings):
         default=660,
         validation_alias=AliasChoices("MAX_LONG_DURATION_SECONDS"),
     )
-    long_publish_time: str = Field(default="05:00", validation_alias=AliasChoices("LONG_PUBLISH_TIME"))
+    long_publish_time: str = Field(default="17:00", validation_alias=AliasChoices("LONG_PUBLISH_TIME"))
     long_broll_clip_count: int = Field(default=32, ge=12, le=80, validation_alias=AliasChoices("LONG_BROLL_CLIP_COUNT"))
     long_segment_min_seconds: float = Field(default=10.0, ge=3.0, le=30.0, validation_alias=AliasChoices("LONG_SEGMENT_MIN_SECONDS"))
     long_segment_max_seconds: float = Field(default=22.0, ge=5.0, le=45.0, validation_alias=AliasChoices("LONG_SEGMENT_MAX_SECONDS"))

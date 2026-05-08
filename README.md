@@ -4,28 +4,30 @@ Local, terminal-first YouTube automation for English Shorts and daily long-form 
 
 ## Quick Start
 
-## Daily Long-Form Video
+## Daily Content Run
 
-The long-form pipeline generates English videos between `8:30` and `11:00`, uses the existing Kokoro-first narration config, pulls B-roll from Pexels, adds a generated royalty-free background bed with ducking, renders a 1280x720 thumbnail, writes metadata/chapters/tags, and schedules the YouTube upload for the next day at `05:00` in `SCHEDULED_TIMEZONE`.
+The normal daily command generates and schedules 4 Shorts first, then 1 English long-form video. Shorts use `SCHEDULED_RUN_TIMES` (`10:00,13:00,15:00,19:00` by default), and the long-form video publishes at `17:00` in `SCHEDULED_TIMEZONE`.
 
 Daily production command:
 
 ```bash
-make daily-video
+make daily-content
 ```
 
 Equivalent direct command:
 
 ```bash
-python -m youtube_kanaal generate-and-schedule --for tomorrow
+python -m youtube_kanaal daily-content
 ```
 
 Dry-run without upload:
 
 ```bash
-make daily-video-dry-run
-python -m youtube_kanaal generate-and-schedule --for tomorrow --dry-run
+make daily-content-dry-run
+python -m youtube_kanaal daily-content --dry-run
 ```
+
+The long-form part generates English videos between `8:30` and `11:00`, uses the existing Kokoro-first narration config, pulls B-roll from Pexels, adds a generated royalty-free background bed with ducking, renders a 1280x720 thumbnail, writes metadata/chapters/tags, and schedules the YouTube upload for the next day at `LONG_PUBLISH_TIME`.
 
 Outputs are written to `output/<run_id>/`:
 
@@ -51,9 +53,10 @@ Long-form config lives in `.env`:
 ```dotenv
 MIN_LONG_DURATION_SECONDS=510
 MAX_LONG_DURATION_SECONDS=660
-LONG_PUBLISH_TIME=05:00
+LONG_PUBLISH_TIME=17:00
 LONG_BROLL_CLIP_COUNT=32
 SCHEDULED_TIMEZONE=Europe/Amsterdam
+SCHEDULED_RUN_TIMES=10:00,13:00,15:00,19:00
 NARRATION_ENGINE=kokoro
 KOKORO_VOICE=af_heart
 ```
@@ -259,7 +262,7 @@ XTTS_LANGUAGE=en
 XTTS_FALLBACK_TO_PIPER=true
 WHISPER_MODEL_PATH=./cache/whisper/ggml-base.en.bin
 DOWNLOADS_DIR=~/Downloads
-SCHEDULED_RUN_TIMES=13:00,15:00,19:00
+SCHEDULED_RUN_TIMES=10:00,13:00,15:00,19:00
 SCHEDULED_TIMEZONE=Europe/Amsterdam
 SCHEDULED_TASK_PREFIX=youtube-kanaal-auto-upload
 SOUND_DESIGN_CUSTOM_AUDIO_DIR=./data/sound_design/custom
@@ -585,7 +588,7 @@ python -m youtube_kanaal scheduled-run
 Settings for later use in `.env`:
 
 ```dotenv
-SCHEDULED_RUN_TIMES=13:00,15:00,19:00
+SCHEDULED_RUN_TIMES=10:00,13:00,15:00,19:00
 SCHEDULED_TIMEZONE=Europe/Amsterdam
 SCHEDULED_TASK_PREFIX=youtube-kanaal-auto-upload
 ```
