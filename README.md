@@ -11,8 +11,11 @@ The normal daily command generates and schedules 4 Shorts first, then 1 English 
 
 python -m youtube_kanaal daily-content --for today --short-times "12:00,13:00,15:00,19:00" --video-time "17:00"  
 
-
 ollama pull llama3.2:3b 
+
+.\.venv\Scripts\python -m youtube_kanaal generate-and-schedule --for today --upload
+
+
 Daily production command:
 
 ```bash

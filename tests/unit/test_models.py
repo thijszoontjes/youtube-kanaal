@@ -171,7 +171,8 @@ def test_ollama_service_normalizes_short_preserves_human_sounding_narration(conf
 
     normalized = service._normalize_generated_short(content, topic)
 
-    assert normalized.title == "Saturn Ring Wonders"
+    assert normalized.title == "SATURN IS HIDING SOMETHING WEIRD"
+    assert normalized.title.isupper()
     assert normalized.narration == content.narration
     assert not normalized.narration.startswith("Here are 3 facts about Saturn.")
     assert normalized.subtitle_text == normalized.narration

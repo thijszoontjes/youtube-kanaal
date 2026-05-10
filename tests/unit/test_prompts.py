@@ -23,7 +23,9 @@ def test_content_prompt_contains_recent_titles() -> None:
     assert '"topic": "axolotls"' in prompt
     assert "Generate at least 10 relevant hashtags" in prompt
     assert "natural spoken English" in prompt
-    assert '"title_hook": "<attention-grabbing alternative title>"' in prompt
+    assert '"title_hook": "<clickbait-curiosity alternative title>"' in prompt
+    assert "Use full ALL CAPS for some titles" in prompt
+    assert "Do NOT Ignore This About Axolotls" in prompt
     assert '"hook_text"' not in prompt
     assert "Do not write any separate on-screen title card or visual hook text" in prompt
     assert 'Never use "Here are", "First", "Second", "Third"' in prompt

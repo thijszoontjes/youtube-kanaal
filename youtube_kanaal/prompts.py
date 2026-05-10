@@ -48,13 +48,17 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
         Constraints:
         - English only
         - Exactly 3 concise, accurate-sounding facts
-        - Strong clear title, no emoji
-        - Also write title_hook: a more clickable SEO title that does not use "3 Facts About"
+        - Strong curiosity title, no emoji
+        - Make the title feel clickable and a little clickbait, but do not make false claims
+        - Do not use bland title shapes like "X Wonders", "X Explained", or "3 Facts About X"
+        - Use full ALL CAPS for some titles, and use ALL CAPS emphasis words in others; do not make every title all caps
+        - Also write title_hook: a bolder clickable SEO title that does not use "3 Facts About"
         - Prefer title formats like:
-          "Deep Sea Vents Shouldn't Exist (But They Do)"
-          "The Ocean Has a Secret You've Never Seen"
-          "This Is What Lives at 3,000 Meters Down"
-          "Saturn Is Stranger Than It Looks"
+          "DEEP SEA VENTS SHOULD NOT EXIST"
+          "The Ocean Secret Nobody Talks About"
+          "This Lives 3,000 Meters Down"
+          "SATURN IS HIDING SOMETHING WEIRD"
+          "Do NOT Ignore This About Axolotls"
         - The narration should feel like natural spoken English, not a rigid script
         - Open the narration with a surprising statement or a question
         - Mention {topic.topic} early, but do not force a fixed opener
@@ -83,7 +87,7 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
           "bucket": "{topic.bucket}",
           "topic": "{topic.topic}",
           "title": "<title>",
-          "title_hook": "<attention-grabbing alternative title>",
+          "title_hook": "<clickbait-curiosity alternative title>",
           "description": "<description>",
           "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5", "#tag6", "#tag7", "#tag8", "#tag9", "#tag10"],
           "narration": "<full narration>",
@@ -114,8 +118,11 @@ def build_long_content_generation_prompt(topic: TopicChoice, excluded_titles: li
         - Each section narration should be 190-225 words.
         - Total narration should be 1325-1650 words.
         - Mention {topic.topic} early.
-        - Avoid clickbait spam, but make the title SEO-friendly and attractive.
-        - thumbnail_text must be short, powerful, and readable on mobile.
+        - Use controlled clickbait: the title should create curiosity without lying or overpromising.
+        - Use full ALL CAPS for some titles, and use ALL CAPS emphasis words in others; do not make every title all caps.
+        - Avoid bland title shapes like "X Explained" or "A Visual Guide to X".
+        - thumbnail_text must be short, punchy, ALL CAPS, and readable on mobile.
+        - Good thumbnail_text examples: "WAIT WHAT?", "HIDDEN TRUTH", "THIS IS WEIRD", "NOBODY SEES THIS".
         - Every section needs 2-5 Pexels-friendly visual search queries.
         - Generate 8-20 tags without # symbols.
         - Facts must be complete sentences and distinct.
@@ -126,8 +133,8 @@ def build_long_content_generation_prompt(topic: TopicChoice, excluded_titles: li
         {{
           "bucket": "{topic.bucket}",
           "topic": "{topic.topic}",
-          "title": "<SEO-friendly long-form title>",
-          "thumbnail_text": "<2-5 word thumbnail phrase>",
+          "title": "<clickable SEO-friendly long-form title>",
+          "thumbnail_text": "<2-5 word ALL CAPS thumbnail phrase>",
           "description": "<2-4 paragraph YouTube description>",
           "tags": ["tag 1", "tag 2", "tag 3", "tag 4", "tag 5", "tag 6", "tag 7", "tag 8"],
           "sections": [

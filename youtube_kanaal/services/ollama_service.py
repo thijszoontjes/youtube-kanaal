@@ -54,6 +54,42 @@ _GENERIC_TITLE_RE = re.compile(
     r"^\s*(?:3|three)\s+(?:quick\s+|wild\s+|surprising\s+|amazing\s+|interesting\s+)?facts\s+about\b",
     re.IGNORECASE,
 )
+_BLAND_TITLE_RE = re.compile(
+    r"\b(?:wonders?|explained|visual guide|long-form visual explainer|interesting facts|amazing facts)\b",
+    re.IGNORECASE,
+)
+_CLICKABLE_TITLE_TERMS: tuple[str, ...] = (
+    "secret",
+    "hiding",
+    "hidden",
+    "truth",
+    "strange",
+    "weird",
+    "nobody",
+    "miss",
+    "shouldn't",
+    "should not",
+    "do not",
+    "don't",
+    "ignore",
+    "what",
+    "why",
+    "this",
+    "never",
+    "wrong",
+)
+_TITLE_EMPHASIS_WORDS: tuple[str, ...] = (
+    "secret",
+    "hiding",
+    "hidden",
+    "truth",
+    "weird",
+    "nobody",
+    "never",
+    "not",
+    "wrong",
+    "this",
+)
 
 
 class OllamaService:
@@ -560,16 +596,26 @@ class OllamaService:
 
     def _clean_long_title(self, title: str, topic: str) -> str:
         cleaned = " ".join(title.split()).strip()
-        if 25 <= len(cleaned) <= 90 and not self._is_generic_title(cleaned):
-            return cleaned
         topic_title = topic[:1].upper() + topic[1:]
-        return f"{topic_title}: The Strange Details Most People Miss"
+        if 25 <= len(cleaned) <= 90 and not self._is_generic_title(cleaned) and self._clickable_title_score(cleaned) >= 1:
+            return self._style_clickable_title(cleaned, topic, [], max_length=90)
+        fallback = f"The Hidden Truth About {topic_title}"
+        return self._style_clickable_title(fallback, topic, [], max_length=90)
 
     def _clean_thumbnail_text(self, value: str, topic: str) -> str:
         cleaned = " ".join(value.upper().split()).strip()
-        if 4 <= len(cleaned) <= 34:
+        bland_fragments = ("EXPLAINED", "VISUAL GUIDE", "FACTS ABOUT", "DETAILS")
+        if 4 <= len(cleaned) <= 34 and not any(fragment in cleaned for fragment in bland_fragments):
             return cleaned
-        return f"{topic.upper()} EXPLAINED"[:34].strip()
+        options = [
+            "WAIT WHAT?",
+            "HIDDEN TRUTH",
+            "THIS IS WEIRD",
+            "NOBODY SEES THIS",
+            "DO NOT MISS THIS",
+        ]
+        seed = self._variation_seed(topic, [])
+        return options[seed % len(options)]
 
     def _clean_long_description(self, description: str, topic: str) -> str:
         cleaned = " ".join(description.split()).strip()
@@ -646,10 +692,10 @@ class OllamaService:
         cleaned_title = " ".join(title.split()).strip()
         cleaned_hook = " ".join(title_hook.split()).strip()
         if cleaned_hook and self._is_better_title(cleaned_hook, cleaned_title):
-            return cleaned_hook
+            return self._style_clickable_title(cleaned_hook, topic, facts, max_length=70)
         if cleaned_title and not self._is_generic_title(cleaned_title):
-            return cleaned_title
-        return self._fallback_title(topic, facts)
+            return self._style_clickable_title(cleaned_title, topic, facts, max_length=70)
+        return self._style_clickable_title(self._fallback_title(topic, facts), topic, facts, max_length=70)
 
     def _is_better_title(self, candidate: str, current: str) -> bool:
         if not candidate or len(candidate) > 70:
@@ -658,30 +704,41 @@ class OllamaService:
             return False
         if not current:
             return True
+        candidate_score = self._clickable_title_score(candidate)
+        current_score = self._clickable_title_score(current)
+        if candidate_score > current_score:
+            return True
+        if candidate_score < current_score:
+            return False
         return self._is_generic_title(current) or len(candidate) < len(current) + 18
 
     def _is_generic_title(self, title: str) -> bool:
         lowered = title.lower()
-        return bool(_GENERIC_TITLE_RE.search(lowered)) or ": 3 facts" in lowered or "3 facts you should know" in lowered
+        return (
+            bool(_GENERIC_TITLE_RE.search(lowered))
+            or bool(_BLAND_TITLE_RE.search(lowered))
+            or ": 3 facts" in lowered
+            or "3 facts you should know" in lowered
+        )
 
     def _fallback_title(self, topic: str, facts: list[str]) -> str:
         topic_title = topic[:1].upper() + topic[1:]
         fact_text = " ".join(facts).lower()
         if "ocean" in fact_text or "underwater" in fact_text or "sea" in fact_text:
             candidates = [
-                f"{topic_title} Shouldn't Exist Like This",
+                f"{topic_title} Should Not Exist Like This",
                 f"The Ocean Secret Behind {topic_title}",
                 f"What {topic_title} Is Hiding",
             ]
         elif "space" in fact_text or "planet" in fact_text or "moon" in fact_text:
             candidates = [
-                f"{topic_title} Is Stranger Than It Looks",
-                f"The Space Detail Everyone Misses About {topic_title}",
+                f"{topic_title} Is Hiding Something Weird",
+                f"The Space Secret Everyone Misses About {topic_title}",
                 f"What {topic_title} Is Hiding",
             ]
         else:
             candidates = [
-                f"{topic_title} Is Stranger Than It Looks",
+                f"Do Not Ignore This About {topic_title}",
                 f"What {topic_title} Is Hiding",
                 f"Nobody Expects This About {topic_title}",
             ]
@@ -689,6 +746,44 @@ class OllamaService:
             if 15 <= len(candidate) <= 70:
                 return candidate
         return f"The Weird Truth About {topic_title}"[:70].rstrip()
+
+    def _clickable_title_score(self, title: str) -> int:
+        lowered = title.lower()
+        return sum(1 for term in _CLICKABLE_TITLE_TERMS if term in lowered)
+
+    def _style_clickable_title(self, title: str, topic: str, facts: list[str], *, max_length: int) -> str:
+        cleaned = " ".join(title.split()).strip()
+        if not cleaned:
+            cleaned = self._fallback_title(topic, facts)
+        if self._clickable_title_score(cleaned) == 0:
+            cleaned = self._fallback_title(topic, facts)
+        seed = self._variation_seed(topic, facts)
+        if seed % 3 == 0:
+            return self._trim_title(cleaned.upper(), max_length)
+        if seed % 3 == 1:
+            return self._trim_title(self._emphasize_title_words(cleaned), max_length)
+        return self._trim_title(cleaned, max_length)
+
+    def _emphasize_title_words(self, title: str) -> str:
+        words = []
+        emphasized = False
+        for word in title.split():
+            plain = word.strip("()[]{}:;,.!?").lower()
+            if not emphasized and plain in _TITLE_EMPHASIS_WORDS:
+                words.append(word.upper())
+                emphasized = True
+            else:
+                words.append(word)
+        return " ".join(words)
+
+    def _trim_title(self, title: str, max_length: int) -> str:
+        cleaned = " ".join(title.split()).strip()
+        if len(cleaned) <= max_length:
+            return cleaned
+        trimmed = cleaned[:max_length].rstrip(" -|,:;")
+        if " " in trimmed:
+            trimmed = trimmed.rsplit(" ", 1)[0]
+        return trimmed.rstrip(" -|,:;") or cleaned[:max_length].rstrip()
 
     def _variation_seed(self, topic: str, facts: list[str]) -> int:
         return sum(ord(char) for char in topic.lower()) + sum(len(fact) for fact in facts)

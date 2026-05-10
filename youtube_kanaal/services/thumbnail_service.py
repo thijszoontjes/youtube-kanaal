@@ -34,34 +34,40 @@ class ThumbnailService:
         image = image.resize((1280, 720)).filter(ImageFilter.GaussianBlur(radius=1.2))
         overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
-        draw.rectangle((0, 0, 1280, 720), fill=(0, 0, 0, 88))
-        draw.rectangle((0, 0, 470, 720), fill=(0, 0, 0, 118))
-        draw.rectangle((48, 548, 1232, 610), fill=self._hex_rgba(self.settings.thumbnail_accent_color, 225))
+        draw.rectangle((0, 0, 1280, 720), fill=(0, 0, 0, 104))
+        draw.rectangle((0, 0, 560, 720), fill=(0, 0, 0, 142))
+        draw.rectangle((44, 546, 1238, 618), fill=self._hex_rgba(self.settings.thumbnail_accent_color, 238))
+        draw.polygon([(958, 0), (1280, 0), (1280, 118), (1012, 86)], fill=(255, 216, 38, 238))
         image = Image.alpha_composite(image.convert("RGBA"), overlay)
 
         draw = ImageDraw.Draw(image)
         main_text = self._compact_text(title_text or topic)
         topic_text = self._compact_text(topic).upper()
-        title_font = self._font(ImageFont, 104, bold=True)
+        badge_font = self._font(ImageFont, 42, bold=True)
+        title_font = self._font(ImageFont, 116, bold=True)
         topic_font = self._font(ImageFont, 42, bold=True)
-        small_font = self._font(ImageFont, 30, bold=False)
+        small_font = self._font(ImageFont, 34, bold=True)
 
-        lines = self._wrap_lines(draw, main_text, title_font, max_width=760, max_lines=3)
-        y = 106
+        draw.rectangle((54, 50, 294, 104), fill=(255, 216, 38))
+        draw.text((72, 57), "WAIT...", font=badge_font, fill="#080808")
+        draw.text((986, 18), "DO NOT\nMISS", font=badge_font, fill="#080808", spacing=0)
+
+        lines = self._wrap_lines(draw, main_text, title_font, max_width=850, max_lines=3)
+        y = 126
         for line in lines:
-            bbox = draw.textbbox((0, 0), line, font=title_font, stroke_width=3)
+            bbox = draw.textbbox((0, 0), line, font=title_font, stroke_width=4)
             draw.text(
                 (56, y),
                 line,
                 font=title_font,
                 fill=self.settings.thumbnail_text_color,
-                stroke_width=3,
+                stroke_width=4,
                 stroke_fill="#000000",
             )
-            y += (bbox[3] - bbox[1]) + 8
+            y += (bbox[3] - bbox[1]) + 4
 
         draw.text((58, 558), topic_text[:34], font=topic_font, fill="#050505")
-        draw.text((58, 628), "VISUAL EXPLAINER", font=small_font, fill="#FFFFFF")
+        draw.text((58, 632), "NOT WHAT YOU THINK", font=small_font, fill="#FFFFFF")
         image.convert("RGB").save(output_path, quality=92)
         return output_path
 
@@ -110,7 +116,7 @@ class ThumbnailService:
 
     def _compact_text(self, value: str) -> str:
         cleaned = " ".join(value.replace(":", " ").replace("|", " ").split())
-        return cleaned[:42].strip()
+        return cleaned[:38].strip()
 
     def _hex_rgba(self, value: str, alpha: int) -> tuple[int, int, int, int]:
         cleaned = value.strip().lstrip("#")
