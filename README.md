@@ -8,6 +8,11 @@ Local, terminal-first YouTube automation for English Shorts and daily long-form 
 
 The normal daily command generates and schedules 4 Shorts first, then 1 English long-form video. Shorts use `SCHEDULED_RUN_TIMES` (`10:00,13:00,15:00,19:00` by default), and the long-form video publishes at `17:00` in `SCHEDULED_TIMEZONE`.
 
+
+python -m youtube_kanaal daily-content --for today --short-times "12:00,13:00,15:00,19:00" --video-time "17:00"  
+
+
+ollama pull llama3.2:3b 
 Daily production command:
 
 ```bash
@@ -60,6 +65,8 @@ SCHEDULED_RUN_TIMES=10:00,13:00,15:00,19:00
 NARRATION_ENGINE=kokoro
 KOKORO_VOICE=af_heart
 ```
+ollama pull llama3.2:3b   
+python -m youtube_kanaal daily-content --for today --short-times "10:00,13:00,15:00,19:00" --video-time "17:00"
 
 Cost notes: Pexels, FFmpeg, Pillow thumbnails, generated background music, Kokoro, SQLite, and local Ollama are free/open-source or free-account friendly. YouTube upload uses YouTube Data API quota. Paid options are optional only if you replace local Ollama/TTS or stock sources with commercial APIs.
 
