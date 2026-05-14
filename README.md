@@ -17,7 +17,10 @@ $env:LONG_PUBLISH_TIME="13:30"
 .\.venv\Scripts\python -m youtube_kanaal make-short-schedule --date 2026-05-14 --times "13:00,13:00,15:00,19:00"
 
 
-python -m youtube_kanaal daily-content --for today --short-times "12:00,13:00,15:00,19:00" --video-time "17:00"  
+python -m youtube_kanaal daily-content --for today --short-times "16:00, 17:00, 19:00, 20:00" --video-time "17:00"  
+
+## op mac
+.venv/bin/python -m youtube_kanaal daily-content --for today --short-times "16:00,17:00,19:00,20:00" --video-time "17:00"
 
 ollama pull llama3.2:3b 
 
