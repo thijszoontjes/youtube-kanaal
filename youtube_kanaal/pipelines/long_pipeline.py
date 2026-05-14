@@ -105,7 +105,19 @@ class LongPipeline(ShortPipeline):
                 upload_metadata=upload_metadata,
                 started_at=started_at,
             )
-            runtime.logger.info("Long-form run completed", extra={"run_id": run_id, "output_path": str(final_video_path)})
+            cleanup = self.cleanup_uploaded_media(runtime, upload_metadata=upload_metadata)
+            result.media_cleaned = cleanup["cleaned"]
+            result.cleanup_deleted_bytes = int(cleanup["deleted_bytes"])
+            result.cleanup_summary_path = Path(cleanup["summary_path"]) if cleanup.get("summary_path") else None
+            runtime.logger.info(
+                "Long-form run completed",
+                extra={
+                    "run_id": run_id,
+                    "output_path": str(final_video_path),
+                    "media_cleaned": result.media_cleaned,
+                    "cleanup_deleted_bytes": result.cleanup_deleted_bytes,
+                },
+            )
             return result
         except Exception as exc:
             stage_name = exc.stage if isinstance(exc, PipelineStageError) else "pipeline"

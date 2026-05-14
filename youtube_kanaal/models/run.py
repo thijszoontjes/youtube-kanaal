@@ -123,6 +123,9 @@ class ShortRunResult(BaseModel):
     scheduled_publish_at: datetime | None = None
     log_path: Path
     metadata_path: Path
+    media_cleaned: bool = False
+    cleanup_deleted_bytes: int = 0
+    cleanup_summary_path: Path | None = None
 
 
 class LongRunResult(BaseModel):
@@ -140,6 +143,9 @@ class LongRunResult(BaseModel):
     privacy_status: str | None = None
     scheduled_publish_at: datetime | None = None
     log_path: Path
+    media_cleaned: bool = False
+    cleanup_deleted_bytes: int = 0
+    cleanup_summary_path: Path | None = None
 
 
 class HistoryEntry(BaseModel):

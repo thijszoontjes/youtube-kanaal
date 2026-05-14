@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -88,6 +89,18 @@ class PipelineRuntime:
     stage_summaries: dict[str, dict[str, object]] = field(default_factory=dict)
 
 
+def _path_size_bytes(path: Path) -> int:
+    if not path.exists():
+        return 0
+    if path.is_file():
+        return path.stat().st_size
+    return sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
+
+
+def _ensure_child_path(path: Path, parent: Path) -> None:
+    path.resolve().relative_to(parent.resolve())
+
+
 class ShortPipeline:
     """End-to-end Short generation pipeline."""
 
@@ -172,7 +185,19 @@ class ShortPipeline:
                 upload_metadata=upload_metadata,
                 started_at=started_at,
             )
-            runtime.logger.info("Run completed", extra={"run_id": run_id, "output_path": str(final_video_path)})
+            cleanup = self.cleanup_uploaded_media(runtime, upload_metadata=upload_metadata)
+            result.media_cleaned = cleanup["cleaned"]
+            result.cleanup_deleted_bytes = int(cleanup["deleted_bytes"])
+            result.cleanup_summary_path = Path(cleanup["summary_path"]) if cleanup.get("summary_path") else None
+            runtime.logger.info(
+                "Run completed",
+                extra={
+                    "run_id": run_id,
+                    "output_path": str(final_video_path),
+                    "media_cleaned": result.media_cleaned,
+                    "cleanup_deleted_bytes": result.cleanup_deleted_bytes,
+                },
+            )
             return result
         except Exception as exc:
             stage_name = exc.stage if isinstance(exc, PipelineStageError) else "pipeline"
@@ -189,6 +214,80 @@ class ShortPipeline:
                 completed_at=completed_at,
             )
             raise
+
+    def cleanup_uploaded_media(self, runtime: PipelineRuntime, *, upload_metadata: UploadMetadata) -> dict[str, object]:
+        if not upload_metadata.uploaded:
+            return {"cleaned": False, "deleted_bytes": 0, "summary_path": None, "deleted_paths": []}
+        if self.settings.keep_uploaded_media:
+            return {"cleaned": False, "deleted_bytes": 0, "summary_path": None, "deleted_paths": []}
+
+        candidates = [
+            runtime.artifacts.video_dir,
+            runtime.artifacts.assets_dir,
+            runtime.artifacts.audio_dir,
+            runtime.artifacts.subtitles_dir,
+            runtime.artifacts.prompts_dir,
+            runtime.artifacts.responses_dir,
+        ]
+        try:
+            deleted_paths: list[str] = []
+            deleted_bytes = 0
+            for path in candidates:
+                if not path.exists():
+                    continue
+                _ensure_child_path(path, runtime.artifacts.run_dir)
+                deleted_bytes += _path_size_bytes(path)
+                if path.is_dir():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+                deleted_paths.append(str(path))
+
+            summary = {
+                "cleaned": True,
+                "deleted_bytes": deleted_bytes,
+                "deleted_megabytes": round(deleted_bytes / 1024 / 1024, 2),
+                "deleted_paths": deleted_paths,
+                "retained": {
+                    "topic": runtime.stage_summaries.get("topic_selection", {}).get("topic"),
+                    "metadata_dir": str(runtime.artifacts.metadata_dir),
+                    "database": str(self.settings.database_path),
+                    "log_file": str(runtime.logging_bundle.human_log_path),
+                },
+                "reason": "Uploaded media is removed after successful upload to keep local storage small.",
+            }
+            summary_path = write_json(runtime.artifacts.metadata_dir / "media_cleanup.json", summary)
+            runtime.stage_summaries["uploaded_media_cleanup"] = {
+                "cleaned": True,
+                "deleted_bytes": deleted_bytes,
+                "summary_path": str(summary_path),
+            }
+            runtime.logger.info(
+                "Uploaded media cleaned",
+                extra={"run_id": runtime.run_id, "deleted_bytes": deleted_bytes, "deleted_paths": deleted_paths},
+            )
+            return {
+                "cleaned": True,
+                "deleted_bytes": deleted_bytes,
+                "summary_path": str(summary_path),
+                "deleted_paths": deleted_paths,
+            }
+        except Exception as exc:
+            failure_path = write_json(
+                runtime.artifacts.metadata_dir / "media_cleanup_failed.json",
+                {
+                    "cleaned": False,
+                    "error": str(exc),
+                    "reason": "Upload succeeded, but local media cleanup failed.",
+                },
+            )
+            runtime.stage_summaries["uploaded_media_cleanup"] = {
+                "cleaned": False,
+                "error": str(exc),
+                "summary_path": str(failure_path),
+            }
+            runtime.logger.exception("Uploaded media cleanup failed", extra={"run_id": runtime.run_id})
+            return {"cleaned": False, "deleted_bytes": 0, "summary_path": str(failure_path), "deleted_paths": []}
 
     def select_topic(
         self,

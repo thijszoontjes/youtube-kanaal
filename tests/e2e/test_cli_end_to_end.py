@@ -146,6 +146,10 @@ def test_cli_make_short_upload_skips_downloads_copy(cli_runner, configured_env) 
     assert metadata["upload"]["uploaded"] is True
     assert metadata["validation"]
     assert metadata["stages"]["downloads_export"]["copied"] is False
+    cleanup = json.loads((latest_run_dir / "metadata" / "media_cleanup.json").read_text(encoding="utf-8"))
+    assert cleanup["cleaned"] is True
+    assert cleanup["deleted_bytes"] > 0
+    assert not (latest_run_dir / "video").exists()
 
 
 def test_cli_make_short_schedule_creates_four_scheduled_uploads(cli_runner, configured_env) -> None:
@@ -154,7 +158,7 @@ def test_cli_make_short_schedule_creates_four_scheduled_uploads(cli_runner, conf
         [
             "make-short-schedule",
             "--date",
-            "2026-04-12",
+            "2099-04-12",
             "--times",
             "10:00,13:00,15:00,19:00",
             "--mock-mode",
@@ -177,6 +181,8 @@ def test_cli_make_short_schedule_creates_four_scheduled_uploads(cli_runner, conf
         assert metadata["upload"]["uploaded"] is True
         assert metadata["upload"]["privacy_status"] == "private"
         assert metadata["stages"]["downloads_export"]["copied"] is False
+        assert (run_dir / "metadata" / "media_cleanup.json").exists()
+        assert not (run_dir / "video").exists()
         scheduled_publish_at = metadata["upload"]["scheduled_publish_at"]
         assert scheduled_publish_at is not None
         scheduled_hours.append(datetime.fromisoformat(scheduled_publish_at).hour)

@@ -14,7 +14,7 @@ $env:LONG_PUBLISH_TIME="13:30"
 .\.venv\Scripts\python -m youtube_kanaal generate-and-schedule --for today --upload
 
 #short met datum upload
-.\.venv\Scripts\python -m youtube_kanaal make-short-schedule --date 2026-05-12 --times "10:00,13:00,15:00,19:00"
+.\.venv\Scripts\python -m youtube_kanaal make-short-schedule --date 2026-05-14 --times "13:00,13:00,15:00,19:00"
 
 
 python -m youtube_kanaal daily-content --for today --short-times "12:00,13:00,15:00,19:00" --video-time "17:00"  
@@ -52,6 +52,8 @@ Outputs are written to `output/<run_id>/`:
 - `metadata/metadata.json`
 - `metadata/metadata.txt`
 - `metadata/upload_status.json`
+
+After a successful upload, heavy media folders are cleaned by default, so uploaded runs keep only lightweight metadata such as topic/title, upload status, and cleanup summary. Set `KEEP_UPLOADED_MEDIA=true` if you want to retain uploaded MP4s locally.
 
 Required one-time setup:
 
@@ -526,10 +528,16 @@ The intended safe workflow is generate first, inspect outputs, and upload only w
 
 ## Downloads Folder Behavior
 
-By default the final MP4 is saved in two places:
+For local generation without upload, the final MP4 is saved in two places:
 
 - the per-run project output directory
 - your Downloads folder
+
+For upload/scheduled runs, the final MP4 and heavy intermediate media are deleted after a successful upload by default. The run keeps lightweight metadata in `output/<run_id>/metadata/` and the topic/title in SQLite, which is enough for duplicate prevention. To keep uploaded MP4s locally anyway:
+
+```dotenv
+KEEP_UPLOADED_MEDIA=true
+```
 
 Default Downloads path:
 

@@ -212,6 +212,10 @@ class Settings(BaseSettings):
         default=False,
         validation_alias=AliasChoices("ALLOW_PLACEHOLDER_VIDEO"),
     )
+    keep_uploaded_media: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("KEEP_UPLOADED_MEDIA"),
+    )
     pexels_results_per_query: int = Field(default=12, validation_alias=AliasChoices("PEXELS_RESULTS_PER_QUERY"))
     similarity_threshold: float = Field(default=0.86, validation_alias=AliasChoices("SIMILARITY_THRESHOLD"))
     min_short_duration_seconds: int = Field(

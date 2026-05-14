@@ -64,6 +64,8 @@ def _render_result(result) -> None:
     table.add_row("Output", str(result.output_path))
     table.add_row("Downloads copy", str(result.downloads_copy_path or "not copied"))
     table.add_row("Uploaded", "yes" if result.uploaded else "no")
+    if result.media_cleaned:
+        table.add_row("Local media cleanup", f"deleted {result.cleanup_deleted_bytes / 1024 / 1024:.2f} MB")
     if result.privacy_status:
         table.add_row("Privacy", result.privacy_status)
     if result.scheduled_publish_at:
@@ -85,6 +87,8 @@ def _render_long_result(result) -> None:
     table.add_row("Metadata", str(result.metadata_path))
     table.add_row("Upload status", str(result.upload_status_path))
     table.add_row("Uploaded", "yes" if result.uploaded else "no")
+    if result.media_cleaned:
+        table.add_row("Local media cleanup", f"deleted {result.cleanup_deleted_bytes / 1024 / 1024:.2f} MB")
     if result.scheduled_publish_at:
         table.add_row("Scheduled publish", result.scheduled_publish_at.isoformat())
     if result.youtube_video_id:
