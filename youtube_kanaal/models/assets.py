@@ -24,6 +24,8 @@ class SoundDesignAsset(BaseModel):
     duration_seconds: float = Field(ge=0)
     effect_count: int = Field(default=0, ge=0)
     stem_paths: list[Path] = Field(default_factory=list)
+    music_path: Path | None = None
+    music_profile: str | None = None
     fallback_reason: str | None = None
 
 

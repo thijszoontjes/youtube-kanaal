@@ -19,6 +19,47 @@ class _PlacedStem:
     audio_filter: str | None = None
 
 
+@dataclass(frozen=True)
+class _MusicProfile:
+    name: str
+    frequencies: tuple[float, float, float, float]
+    noise_color: str
+    noise_amplitude: float
+    lowpass_hz: int
+
+
+_MUSIC_PROFILES = (
+    _MusicProfile(
+        name="warm_ambient",
+        frequencies=(196.00, 246.94, 293.66, 392.00),
+        noise_color="pink",
+        noise_amplitude=0.007,
+        lowpass_hz=1200,
+    ),
+    _MusicProfile(
+        name="soft_lift",
+        frequencies=(220.00, 277.18, 329.63, 440.00),
+        noise_color="brown",
+        noise_amplitude=0.006,
+        lowpass_hz=1350,
+    ),
+    _MusicProfile(
+        name="calm_focus",
+        frequencies=(174.61, 220.00, 261.63, 349.23),
+        noise_color="pink",
+        noise_amplitude=0.008,
+        lowpass_hz=1050,
+    ),
+    _MusicProfile(
+        name="quiet_motion",
+        frequencies=(164.81, 207.65, 246.94, 329.63),
+        noise_color="velvet",
+        noise_amplitude=0.006,
+        lowpass_hz=1450,
+    ),
+)
+
+
 class SoundDesignService:
     """Build subtle procedural or single-file sound design under narration."""
 
@@ -50,8 +91,9 @@ class SoundDesignService:
                 duration_seconds=duration_seconds,
                 fallback_reason="Sound design skipped in mock mode.",
             )
+        fallback_reason = None
         custom_audio_path = self._resolve_custom_audio_path()
-        if custom_audio_path is not None:
+        if custom_audio_path is not None and custom_audio_path.exists():
             return self._build_custom_mix(
                 narration_path=narration_path,
                 duration_seconds=duration_seconds,
@@ -59,6 +101,16 @@ class SoundDesignService:
                 custom_audio_path=custom_audio_path,
                 logger=logger,
             )
+        if custom_audio_path is not None:
+            fallback_reason = f"Custom sound design file was not found: {custom_audio_path}; used procedural music instead."
+            if logger:
+                logger.warning(
+                    "sound_design_plan: custom_missing_procedural_fallback",
+                    extra={
+                        "duration_seconds": duration_seconds,
+                        "custom_audio_path": str(custom_audio_path),
+                    },
+                )
 
         sound_dir = working_dir / "sound_design"
         sound_dir.mkdir(parents=True, exist_ok=True)
@@ -74,6 +126,10 @@ class SoundDesignService:
         transition_hits = self._transition_offsets(duration_seconds)
         placed_stems: list[_PlacedStem] = []
         stem_paths: list[Path] = []
+
+        music_path, music_profile = self._render_background_music(sound_dir / "background_music.wav", duration_seconds)
+        placed_stems.append(_PlacedStem(path=music_path, label=f"music_{music_profile.name}", offset_seconds=0.0))
+        stem_paths.append(music_path)
 
         room_tone_path = sound_dir / "room_tone.wav"
         self._render_room_tone(room_tone_path, duration_seconds)
@@ -112,6 +168,7 @@ class SoundDesignService:
                     "duration_seconds": duration_seconds,
                     "effect_count": len(placed_stems),
                     "transition_hits": transition_hits,
+                    "music_profile": music_profile.name,
                     "mix_path": str(mix_path),
                 },
             )
@@ -121,6 +178,9 @@ class SoundDesignService:
             duration_seconds=duration_seconds,
             effect_count=len(placed_stems),
             stem_paths=stem_paths,
+            music_path=music_path,
+            music_profile=music_profile.name,
+            fallback_reason=fallback_reason,
         )
 
     def _resolve_custom_audio_path(self) -> Path | None:
@@ -213,6 +273,63 @@ class SoundDesignService:
                 f"afade=t=out:st={max(duration_seconds - 0.8, 0):.2f}:d=0.8"
             ),
         )
+
+    def _render_background_music(self, output_path: Path, duration_seconds: float) -> tuple[Path, _MusicProfile]:
+        profile = random.choice(_MUSIC_PROFILES)
+        duration = max(duration_seconds, 0.25)
+        fade_out_start = max(duration - 1.4, 0.0)
+        detune = random.choice((-2.5, 0.0, 2.5))
+        tremolo_depth = random.uniform(0.12, 0.24)
+        command = [self.settings.ffmpeg_binary, "-y"]
+        for frequency in profile.frequencies:
+            command.extend(
+                [
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    f"sine=frequency={frequency + detune:.2f}:sample_rate=48000:duration={duration:.2f}",
+                ]
+            )
+        command.extend(
+            [
+                "-f",
+                "lavfi",
+                "-i",
+                (
+                    f"anoisesrc=color={profile.noise_color}:amplitude={profile.noise_amplitude}:"
+                    f"sample_rate=48000:d={duration:.2f}"
+                ),
+            ]
+        )
+        filter_complex = (
+            f"[0:a]volume=-34dB,lowpass=f={profile.lowpass_hz},tremolo=f=0.12:d={tremolo_depth:.2f}[m0];"
+            f"[1:a]volume=-37dB,lowpass=f={profile.lowpass_hz},tremolo=f=0.15:d={tremolo_depth:.2f}[m1];"
+            f"[2:a]volume=-40dB,lowpass=f={profile.lowpass_hz + 250},tremolo=f=0.11:d={tremolo_depth:.2f}[m2];"
+            "[3:a]volume=-43dB,highpass=f=350,lowpass=f=2600,tremolo=f=0.16:d=0.40[m3];"
+            "[4:a]volume=-50dB,highpass=f=180,lowpass=f=1200[n];"
+            "[m0][m1][m2][m3][n]amix=inputs=5:normalize=0,"
+            "afade=t=in:st=0:d=1.0,"
+            f"afade=t=out:st={fade_out_start:.2f}:d=1.4,"
+            "alimiter=limit=0.55[music]"
+        )
+        command.extend(
+            [
+                "-filter_complex",
+                filter_complex,
+                "-map",
+                "[music]",
+                "-ar",
+                "48000",
+                "-ac",
+                "1",
+                "-c:a",
+                "pcm_s16le",
+                str(output_path),
+            ]
+        )
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        run_command(command, timeout_seconds=180, stage="sound_design")
+        return output_path, profile
 
     def _render_whoosh(self, output_path: Path) -> None:
         self._render_effect(
