@@ -15,6 +15,7 @@ class RunStatus(str, Enum):
 
 class ShortRunRequest(BaseModel):
     upload: bool = False
+    instagram_upload: bool = False
     debug: bool = False
     preferred_topic: str | None = None
     preferred_bucket: str | None = None
@@ -119,6 +120,8 @@ class ShortRunResult(BaseModel):
     downloads_copy_path: Path | None = None
     uploaded: bool = False
     youtube_video_id: str | None = None
+    instagram_uploaded: bool = False
+    instagram_media_id: str | None = None
     privacy_status: str | None = None
     scheduled_publish_at: datetime | None = None
     log_path: Path

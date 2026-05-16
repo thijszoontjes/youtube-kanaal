@@ -188,3 +188,24 @@ def test_cli_make_short_schedule_creates_four_scheduled_uploads(cli_runner, conf
         scheduled_hours.append(datetime.fromisoformat(scheduled_publish_at).hour)
 
     assert scheduled_hours == [10, 13, 15, 19]
+
+
+def test_cli_upload_instagram_reel_accepts_existing_video_in_mock_mode(cli_runner, configured_env) -> None:
+    video_path = Path(configured_env["output_dir"]) / "test-reel.mp4"
+    video_path.parent.mkdir(parents=True, exist_ok=True)
+    video_path.write_bytes(b"video")
+
+    result = cli_runner.invoke(
+        app,
+        [
+            "upload-instagram-reel",
+            str(video_path),
+            "--caption",
+            "Test reel",
+            "--mock-mode",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "Instagram Reel Uploaded" in result.stdout
+    assert "mock-instagram-media-id" in result.stdout

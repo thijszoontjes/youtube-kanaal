@@ -1,6 +1,7 @@
 from youtube_kanaal.models.assets import (
     AssetPlan,
     AssetPlanSegment,
+    InstagramUploadMetadata,
     NarrationAsset,
     SoundDesignAsset,
     SubtitleAsset,
@@ -39,6 +40,7 @@ __all__ = [
     "GeneratedShort",
     "GeneratedLongVideo",
     "HistoryEntry",
+    "InstagramUploadMetadata",
     "LongVideoSection",
     "LongRunRequest",
     "LongRunResult",

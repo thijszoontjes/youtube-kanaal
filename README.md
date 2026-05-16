@@ -21,6 +21,12 @@ $env:LONG_PUBLISH_TIME="13:30"
 .\.venv\Scripts\python -m youtube_kanaal make-short-schedule --date 2026-05-14 --times "13:00,14:00,15:00,19:00"
 
 
+
+## shorts op yt en insta
+.\.venv\Scripts\python.exe -m youtube_kanaal make-short-schedule-reels
+
+
+
 python -m youtube_kanaal daily-content --for today --short-times "16:00, 17:00, 19:00, 20:00" --video-time "17:00"  
 
 ## op mac
@@ -275,6 +281,9 @@ PEXELS_API_KEY=
 YOUTUBE_CLIENT_SECRET_PATH=./data/credentials/client_secret.json
 YOUTUBE_TOKEN_PATH=./data/credentials/youtube_token.json
 DEFAULT_PRIVACY_STATUS=public
+INSTAGRAM_USER_ID=
+INSTAGRAM_ACCESS_TOKEN=
+INSTAGRAM_API_VERSION=v24.0
 NARRATION_ENGINE=kokoro
 KOKORO_VOICE=af_heart
 KOKORO_LANG_CODE=a
@@ -294,6 +303,29 @@ SCHEDULED_TIMEZONE=Europe/Amsterdam
 SCHEDULED_TASK_PREFIX=youtube-kanaal-auto-upload
 SOUND_DESIGN_CUSTOM_AUDIO_DIR=./data/sound_design/custom
 SOUND_DESIGN_CUSTOM_AUDIO_FILENAME=
+```
+
+## Instagram Reels Uploads
+
+Instagram uploads use the official Instagram Graph API. The account must be an Instagram Professional account, and the token must have publishing access for that Instagram user.
+
+```dotenv
+INSTAGRAM_USER_ID=
+INSTAGRAM_ACCESS_TOKEN=
+INSTAGRAM_API_VERSION=v24.0
+INSTAGRAM_SHARE_TO_FEED=true
+```
+
+Generate 4 Shorts, schedule them on YouTube using the configured times, and publish the same videos to Instagram Reels immediately:
+
+```bash
+.venv/bin/python -m youtube_kanaal make-short-schedule-reels
+```
+
+Test one existing local video as a Reel:
+
+```bash
+.venv/bin/python -m youtube_kanaal upload-instagram-reel ./path/to/video.mp4 --caption "Test reel"
 ```
 
 Run this once if `.env` does not exist:

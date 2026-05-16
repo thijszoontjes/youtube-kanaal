@@ -17,6 +17,7 @@ from youtube_kanaal.models import (
     AssetPlan,
     AssetPlanSegment,
     GeneratedShort,
+    InstagramUploadMetadata,
     NarrationAsset,
     ShortRunRequest,
     ShortRunResult,
@@ -28,6 +29,7 @@ from youtube_kanaal.models import (
     VideoClipAsset,
 )
 from youtube_kanaal.services.ffmpeg_service import FFmpegService
+from youtube_kanaal.services.instagram_service import InstagramService
 from youtube_kanaal.services.kokoro_service import KokoroService
 from youtube_kanaal.services.narration_service import NarrationService
 from youtube_kanaal.services.ollama_service import OllamaService
@@ -119,6 +121,7 @@ class ShortPipeline:
         ffmpeg_service: FFmpegService | None = None,
         sound_design_service: SoundDesignService | None = None,
         youtube_service: YouTubeService | None = None,
+        instagram_service: InstagramService | None = None,
     ) -> None:
         self.settings = settings
         self.database = database
@@ -134,6 +137,7 @@ class ShortPipeline:
         self.ffmpeg = ffmpeg_service or FFmpegService(settings)
         self.sound_design = sound_design_service or SoundDesignService(settings)
         self.youtube = youtube_service or YouTubeService(settings)
+        self.instagram = instagram_service or InstagramService(settings)
 
     def run(self, request: ShortRunRequest) -> ShortRunResult:
         run_id = _new_run_id()
@@ -171,6 +175,7 @@ class ShortPipeline:
             validation_payload = self.validate_output(runtime, final_video_path)
             downloads_copy = self.export_to_downloads(runtime, final_video_path, content)
             upload_metadata = self.upload_if_requested(runtime, final_video_path, content)
+            instagram_metadata = self.upload_instagram_if_requested(runtime, final_video_path, content)
             result = self.persist_run(
                 runtime=runtime,
                 topic=topic,
@@ -183,6 +188,7 @@ class ShortPipeline:
                 downloads_copy_path=downloads_copy,
                 validation_payload=validation_payload,
                 upload_metadata=upload_metadata,
+                instagram_metadata=instagram_metadata,
                 started_at=started_at,
             )
             cleanup = self.cleanup_uploaded_media(runtime, upload_metadata=upload_metadata)
@@ -590,6 +596,25 @@ class ShortPipeline:
             runtime.stage_summaries["youtube_upload"] = metadata.model_dump(mode="json")
             return metadata
 
+    def upload_instagram_if_requested(
+        self,
+        runtime: PipelineRuntime,
+        final_video_path: Path,
+        content: GeneratedShort,
+    ) -> InstagramUploadMetadata:
+        with self._stage(runtime, "instagram_upload", {"requested": runtime.request.instagram_upload}):
+            if not runtime.request.instagram_upload:
+                metadata = InstagramUploadMetadata(uploaded=False)
+                runtime.stage_summaries["instagram_upload"] = metadata.model_dump(mode="json")
+                return metadata
+            metadata = self.instagram.upload_reel(
+                video_path=final_video_path,
+                caption=content.upload_description(minimum_hashtags=10),
+                response_path=runtime.artifacts.responses_dir / "instagram_upload.json",
+            )
+            runtime.stage_summaries["instagram_upload"] = metadata.model_dump(mode="json")
+            return metadata
+
     def persist_run(
         self,
         *,
@@ -604,6 +629,7 @@ class ShortPipeline:
         downloads_copy_path: Path | None,
         validation_payload: dict[str, object],
         upload_metadata: UploadMetadata,
+        instagram_metadata: InstagramUploadMetadata,
         started_at: str,
     ) -> ShortRunResult:
         with self._stage(runtime, "persistence", {"topic": topic.topic, "title": content.title}):
@@ -619,6 +645,7 @@ class ShortPipeline:
                 "clips": [clip.model_dump(mode="json") for clip in clips],
                 "validation": validation_payload,
                 "upload": upload_metadata.model_dump(mode="json"),
+                "instagram_upload": instagram_metadata.model_dump(mode="json"),
                 "stages": runtime.stage_summaries,
             }
             metadata_path = write_json(runtime.artifacts.metadata_dir / "run_metadata.json", metadata)
@@ -689,6 +716,16 @@ class ShortPipeline:
                     response=response_payload,
                     uploaded_at=completed_at,
                 )
+            if instagram_metadata.uploaded:
+                self.database.record_asset(
+                    run_id=runtime.run_id,
+                    asset_type="instagram_reel",
+                    source_id=instagram_metadata.instagram_media_id,
+                    source_url=instagram_metadata.permalink,
+                    local_path=str(final_video_path),
+                    metadata=instagram_metadata.model_dump(mode="json"),
+                    created_at=completed_at,
+                )
             self.database.mark_run_success(
                 run_id=runtime.run_id,
                 bucket=topic.bucket,
@@ -711,6 +748,8 @@ class ShortPipeline:
                 downloads_copy_path=downloads_copy_path,
                 uploaded=upload_metadata.uploaded,
                 youtube_video_id=upload_metadata.youtube_video_id,
+                instagram_uploaded=instagram_metadata.uploaded,
+                instagram_media_id=instagram_metadata.instagram_media_id,
                 privacy_status=upload_metadata.privacy_status,
                 scheduled_publish_at=upload_metadata.scheduled_publish_at,
                 log_path=runtime.logging_bundle.human_log_path,

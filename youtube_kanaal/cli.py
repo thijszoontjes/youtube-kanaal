@@ -21,6 +21,7 @@ from youtube_kanaal.models.content import TOPIC_CATALOG
 from youtube_kanaal.pipelines import LongPipeline, ShortPipeline, validate_artifact_directory
 from youtube_kanaal.services.doctor import DoctorService
 from youtube_kanaal.services.ffmpeg_service import FFmpegService
+from youtube_kanaal.services.instagram_service import InstagramService
 from youtube_kanaal.services.narration_service import NarrationService
 from youtube_kanaal.services.online_runtime_service import OnlineRuntimeService
 from youtube_kanaal.services.pexels_service import PexelsService
@@ -64,6 +65,9 @@ def _render_result(result) -> None:
     table.add_row("Output", str(result.output_path))
     table.add_row("Downloads copy", str(result.downloads_copy_path or "not copied"))
     table.add_row("Uploaded", "yes" if result.uploaded else "no")
+    table.add_row("Instagram uploaded", "yes" if result.instagram_uploaded else "no")
+    if result.instagram_media_id:
+        table.add_row("Instagram media ID", result.instagram_media_id)
     if result.media_cleaned:
         table.add_row("Local media cleanup", f"deleted {result.cleanup_deleted_bytes / 1024 / 1024:.2f} MB")
     if result.privacy_status:
@@ -145,8 +149,9 @@ def _run_scheduled_shorts_batch(
     debug: bool,
     mock_mode: bool,
     upload: bool,
-) -> list[tuple[str, datetime, str | None]]:
-    scheduled_results: list[tuple[str, datetime, str | None]] = []
+    instagram_upload: bool = False,
+) -> list[tuple[str, datetime, str | None, str | None]]:
+    scheduled_results: list[tuple[str, datetime, str | None, str | None]] = []
     failures = 0
     for index, publish_at in enumerate(publish_slots, start=1):
         console.print(
@@ -156,6 +161,7 @@ def _run_scheduled_shorts_batch(
             result = _run_pipeline_result(
                 ShortRunRequest(
                     upload=upload,
+                    instagram_upload=instagram_upload,
                     debug=debug,
                     privacy_status="private" if upload else None,
                     scheduled_publish_at=publish_at if upload else None,
@@ -167,7 +173,7 @@ def _run_scheduled_shorts_batch(
             failures += 1
             continue
         _render_result(result)
-        scheduled_results.append((result.run_id, publish_at, result.youtube_video_id))
+        scheduled_results.append((result.run_id, publish_at, result.youtube_video_id, result.instagram_media_id))
     if failures:
         raise typer.Exit(code=1)
     return scheduled_results
@@ -176,7 +182,7 @@ def _run_scheduled_shorts_batch(
 def _render_scheduled_uploads_table(
     *,
     title: str,
-    scheduled_results: list[tuple[str, datetime, str | None]],
+    scheduled_results: list[tuple[str, datetime, str | None, str | None]],
 ) -> None:
     if not scheduled_results:
         return
@@ -184,8 +190,13 @@ def _render_scheduled_uploads_table(
     table.add_column("Run ID")
     table.add_column("Local publish time")
     table.add_column("YouTube video ID")
-    for run_id, publish_at, youtube_video_id in scheduled_results:
-        table.add_row(run_id, publish_at.isoformat(), youtube_video_id or "")
+    if any(instagram_media_id for *_rest, instagram_media_id in scheduled_results):
+        table.add_column("Instagram media ID")
+        for run_id, publish_at, youtube_video_id, instagram_media_id in scheduled_results:
+            table.add_row(run_id, publish_at.isoformat(), youtube_video_id or "", instagram_media_id or "")
+    else:
+        for run_id, publish_at, youtube_video_id, _instagram_media_id in scheduled_results:
+            table.add_row(run_id, publish_at.isoformat(), youtube_video_id or "")
     console.print(table)
 
 
@@ -281,6 +292,13 @@ def _preflight_pipeline_requirements(request: ShortRunRequest, settings: Setting
 def _preflight_long_pipeline_requirements(request: LongRunRequest, settings: Settings) -> None:
     if request.mock_mode:
         return
+
+    if request.instagram_upload:
+        try:
+            InstagramService(settings).ensure_configured()
+        except PipelineStageError as exc:
+            _print_failure(exc)
+            raise typer.Exit(code=1) from exc
 
     report = DoctorService(settings).run()
     required_names = {
@@ -490,6 +508,57 @@ def make_short_schedule(
         upload=True,
     )
     _render_scheduled_uploads_table(title="Scheduled Uploads", scheduled_results=scheduled_results)
+
+
+@app.command()
+def make_short_schedule_reels(
+    times: Optional[str] = typer.Option(
+        None,
+        help="Comma-separated local YouTube publish times in HH:MM. Defaults to SCHEDULED_RUN_TIMES.",
+    ),
+    date_text: Optional[str] = typer.Option(
+        None,
+        "--date",
+        help="Target local YouTube publish date in YYYY-MM-DD. Defaults to tomorrow in SCHEDULED_TIMEZONE.",
+    ),
+    debug: bool = typer.Option(False, help="Enable verbose logging."),
+    mock_mode: bool = typer.Option(False, help="Use deterministic mock services."),
+) -> None:
+    """Generate 4 Shorts, schedule them on YouTube, and publish matching Instagram Reels immediately."""
+
+    settings = load_settings(app_debug=debug, mock_mode=mock_mode)
+    if not mock_mode:
+        try:
+            InstagramService(settings).ensure_configured()
+        except PipelineStageError as exc:
+            _print_failure(exc)
+            raise typer.Exit(code=1) from exc
+
+    schedule_times = parse_schedule_times(times or settings.scheduled_run_times)
+    if len(schedule_times) != 4:
+        raise typer.BadParameter("Times must contain exactly 4 HH:MM values.")
+    target_date = _resolve_schedule_date(
+        date_text=date_text,
+        timezone_name=settings.scheduled_timezone,
+    )
+    publish_slots = _build_publish_schedule(
+        times=schedule_times,
+        target_date=target_date,
+        timezone_name=settings.scheduled_timezone,
+    )
+
+    console.print(
+        f"Planning 4 Shorts for YouTube schedule on {target_date.isoformat()} in "
+        f"{settings.scheduled_timezone}; Instagram Reels upload immediately."
+    )
+    scheduled_results = _run_scheduled_shorts_batch(
+        publish_slots=publish_slots,
+        debug=debug,
+        mock_mode=mock_mode,
+        upload=True,
+        instagram_upload=True,
+    )
+    _render_scheduled_uploads_table(title="Scheduled Shorts + Instagram Reels", scheduled_results=scheduled_results)
 
 
 @app.command()
@@ -909,6 +978,52 @@ def preview_voice(
         )
         return
     console.print(f"Voice preview written to {final_path} using {active_engine}.")
+
+
+@app.command()
+def upload_instagram_reel(
+    video_path: Path = typer.Argument(..., help="Path to an existing MP4/MOV Reel file."),
+    caption: str = typer.Option("", help="Caption to publish with the Reel."),
+    debug: bool = typer.Option(False, help="Enable verbose logging."),
+    mock_mode: bool = typer.Option(False, help="Use deterministic mock upload."),
+) -> None:
+    """Upload one existing video file to Instagram as a Reel."""
+
+    settings = load_settings(app_debug=debug, mock_mode=mock_mode)
+    resolved_video = video_path.expanduser().resolve()
+    if not resolved_video.exists() or resolved_video.stat().st_size == 0:
+        raise typer.BadParameter(f"Video file not found or empty: {resolved_video}")
+    if not mock_mode:
+        try:
+            InstagramService(settings).ensure_configured()
+        except PipelineStageError as exc:
+            _print_failure(exc)
+            raise typer.Exit(code=1) from exc
+
+    upload_dir = settings.output_dir / "instagram_reel_uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    response_path = upload_dir / f"{timestamp}-{resolved_video.stem}.json"
+    try:
+        metadata = InstagramService(settings).upload_reel(
+            video_path=resolved_video,
+            caption=caption or resolved_video.stem,
+            response_path=response_path,
+        )
+    except Exception as exc:
+        _print_failure(exc)
+        raise typer.Exit(code=1) from exc
+
+    table = Table(title="Instagram Reel Uploaded")
+    table.add_column("Field")
+    table.add_column("Value")
+    table.add_row("Video", str(resolved_video))
+    table.add_row("Uploaded", "yes" if metadata.uploaded else "no")
+    table.add_row("Instagram media ID", metadata.instagram_media_id or "")
+    table.add_row("Container ID", metadata.container_id or "")
+    table.add_row("Permalink", metadata.permalink or "")
+    table.add_row("Response", str(metadata.response_path or response_path))
+    console.print(table)
 
 
 @app.command()

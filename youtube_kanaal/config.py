@@ -72,6 +72,20 @@ class Settings(BaseSettings):
         default_factory=lambda: project_root() / "data" / "credentials" / "youtube_token.json",
         validation_alias=AliasChoices("YOUTUBE_TOKEN_PATH"),
     )
+    instagram_user_id: str | None = Field(default=None, validation_alias=AliasChoices("INSTAGRAM_USER_ID"))
+    instagram_access_token: str | None = Field(default=None, validation_alias=AliasChoices("INSTAGRAM_ACCESS_TOKEN"))
+    instagram_api_version: str = Field(default="v24.0", validation_alias=AliasChoices("INSTAGRAM_API_VERSION"))
+    instagram_share_to_feed: bool = Field(default=True, validation_alias=AliasChoices("INSTAGRAM_SHARE_TO_FEED"))
+    instagram_processing_timeout_seconds: int = Field(
+        default=300,
+        ge=10,
+        validation_alias=AliasChoices("INSTAGRAM_PROCESSING_TIMEOUT_SECONDS"),
+    )
+    instagram_poll_interval_seconds: float = Field(
+        default=5.0,
+        ge=1.0,
+        validation_alias=AliasChoices("INSTAGRAM_POLL_INTERVAL_SECONDS"),
+    )
     default_privacy_status: str = Field(
         default="public",
         validation_alias=AliasChoices("DEFAULT_PRIVACY_STATUS"),
@@ -278,6 +292,22 @@ class Settings(BaseSettings):
             return None
         normalized = value.strip()
         return normalized or None
+
+    @field_validator("instagram_user_id", "instagram_access_token", mode="before")
+    @classmethod
+    def _normalize_optional_instagram_string(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    @field_validator("instagram_api_version")
+    @classmethod
+    def _normalize_instagram_api_version(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not re.fullmatch(r"v\d+\.\d+", normalized):
+            raise ValueError("INSTAGRAM_API_VERSION must look like v24.0.")
+        return normalized
 
     @field_validator("default_privacy_status")
     @classmethod
