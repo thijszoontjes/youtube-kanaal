@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
+from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from youtube_kanaal.exceptions import ConfigurationError
+
+
+_IANA_TIMEZONE_RE = re.compile(r"^[A-Za-z_]+(?:/[A-Za-z0-9_\-+]+)+$")
 
 
 def project_root() -> Path:
@@ -27,7 +33,21 @@ class Settings(BaseSettings):
         extra="ignore",
         case_sensitive=False,
         populate_by_name=True,
+        validate_by_name=True,
     )
+
+    def __init__(self, **data: Any) -> None:
+        normalized_data = dict(data)
+        for field_name, field_info in self.__class__.model_fields.items():
+            if field_name not in normalized_data:
+                continue
+            validation_alias = field_info.validation_alias
+            choices = getattr(validation_alias, "choices", None)
+            if choices:
+                normalized_data.setdefault(str(choices[0]), normalized_data.pop(field_name))
+            elif validation_alias:
+                normalized_data.setdefault(str(validation_alias), normalized_data.pop(field_name))
+        super().__init__(**normalized_data)
 
     app_name: str = Field(default="youtube-kanaal", validation_alias=AliasChoices("YOUTUBE_KANAAL_APP_NAME", "APP_NAME"))
     app_env: str = Field(default="development", validation_alias=AliasChoices("YOUTUBE_KANAAL_ENV", "APP_ENV"))
@@ -58,6 +78,16 @@ class Settings(BaseSettings):
     )
 
     ffmpeg_binary: str = Field(default="ffmpeg", validation_alias=AliasChoices("FFMPEG_BINARY"))
+    narration_engine: str = Field(default="kokoro", validation_alias=AliasChoices("NARRATION_ENGINE"))
+    kokoro_voice: str = Field(default="af_heart", validation_alias=AliasChoices("KOKORO_VOICE"))
+    kokoro_lang_code: str = Field(default="a", validation_alias=AliasChoices("KOKORO_LANG_CODE"))
+    kokoro_speed: float = Field(default=1.05, ge=0.5, le=2.0, validation_alias=AliasChoices("KOKORO_SPEED"))
+    kokoro_device: str = Field(default="auto", validation_alias=AliasChoices("KOKORO_DEVICE"))
+    kokoro_espeak_binary: str = Field(default="espeak-ng", validation_alias=AliasChoices("KOKORO_ESPEAK_BINARY"))
+    kokoro_fallback_to_piper: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("KOKORO_FALLBACK_TO_PIPER"),
+    )
     piper_binary: str = Field(default="piper", validation_alias=AliasChoices("PIPER_BINARY"))
     piper_voice_model_path: Path | None = Field(
         default=None,
@@ -71,6 +101,52 @@ class Settings(BaseSettings):
     piper_noise_scale: float = Field(default=0.667, validation_alias=AliasChoices("PIPER_NOISE_SCALE"))
     piper_noise_w_scale: float = Field(default=0.8, validation_alias=AliasChoices("PIPER_NOISE_W_SCALE"))
     piper_sentence_silence: float = Field(default=0.12, validation_alias=AliasChoices("PIPER_SENTENCE_SILENCE"))
+    xtts_runtime: str = Field(default="docker", validation_alias=AliasChoices("XTTS_RUNTIME"))
+    xtts_binary: str = Field(default="tts", validation_alias=AliasChoices("XTTS_BINARY"))
+    xtts_docker_image: str = Field(
+        default="ghcr.io/coqui-ai/tts-cpu",
+        validation_alias=AliasChoices("XTTS_DOCKER_IMAGE"),
+    )
+    xtts_model_name: str = Field(
+        default="tts_models/multilingual/multi-dataset/xtts_v2",
+        validation_alias=AliasChoices("XTTS_MODEL_NAME"),
+    )
+    xtts_language: str = Field(default="en", validation_alias=AliasChoices("XTTS_LANGUAGE"))
+    xtts_use_cuda: bool = Field(default=False, validation_alias=AliasChoices("XTTS_USE_CUDA"))
+    xtts_speaker_wav_path: Path | None = Field(
+        default=None,
+        validation_alias=AliasChoices("XTTS_SPEAKER_WAV_PATH"),
+    )
+    xtts_speaker_wav_dir: Path | None = Field(
+        default=None,
+        validation_alias=AliasChoices("XTTS_SPEAKER_WAV_DIR"),
+    )
+    xtts_max_reference_clips: int = Field(
+        default=5,
+        ge=1,
+        le=12,
+        validation_alias=AliasChoices("XTTS_MAX_REFERENCE_CLIPS"),
+    )
+    xtts_reference_max_seconds: int = Field(
+        default=30,
+        ge=5,
+        le=180,
+        validation_alias=AliasChoices("XTTS_REFERENCE_MAX_SECONDS"),
+    )
+    xtts_timeout_seconds: int = Field(
+        default=3600,
+        ge=300,
+        le=14400,
+        validation_alias=AliasChoices("XTTS_TIMEOUT_SECONDS"),
+    )
+    coqui_tos_agreed: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("COQUI_TOS_AGREED"),
+    )
+    xtts_fallback_to_piper: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("XTTS_FALLBACK_TO_PIPER"),
+    )
     whisper_cpp_binary: str = Field(
         default="whisper-cli",
         validation_alias=AliasChoices("WHISPER_CPP_BINARY"),
@@ -78,6 +154,18 @@ class Settings(BaseSettings):
     whisper_model_path: Path | None = Field(
         default=None,
         validation_alias=AliasChoices("WHISPER_MODEL_PATH"),
+    )
+    sound_design_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("SOUND_DESIGN_ENABLED"),
+    )
+    sound_design_custom_audio_dir: Path = Field(
+        default_factory=lambda: project_root() / "data" / "sound_design" / "custom",
+        validation_alias=AliasChoices("SOUND_DESIGN_CUSTOM_AUDIO_DIR"),
+    )
+    sound_design_custom_audio_filename: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("SOUND_DESIGN_CUSTOM_AUDIO_FILENAME"),
     )
 
     output_dir: Path = Field(
@@ -105,8 +193,12 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("DATABASE_PATH"),
     )
     scheduled_run_times: str = Field(
-        default="13:00,18:00,22:00",
+        default="10:00,13:00,15:00,19:00",
         validation_alias=AliasChoices("SCHEDULED_RUN_TIMES"),
+    )
+    scheduled_timezone: str = Field(
+        default="Europe/Amsterdam",
+        validation_alias=AliasChoices("SCHEDULED_TIMEZONE"),
     )
     scheduled_task_prefix: str = Field(
         default="youtube-kanaal-auto-upload",
@@ -120,6 +212,10 @@ class Settings(BaseSettings):
         default=False,
         validation_alias=AliasChoices("ALLOW_PLACEHOLDER_VIDEO"),
     )
+    keep_uploaded_media: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("KEEP_UPLOADED_MEDIA"),
+    )
     pexels_results_per_query: int = Field(default=12, validation_alias=AliasChoices("PEXELS_RESULTS_PER_QUERY"))
     similarity_threshold: float = Field(default=0.86, validation_alias=AliasChoices("SIMILARITY_THRESHOLD"))
     min_short_duration_seconds: int = Field(
@@ -130,6 +226,21 @@ class Settings(BaseSettings):
         default=35,
         validation_alias=AliasChoices("MAX_SHORT_DURATION_SECONDS"),
     )
+    min_long_duration_seconds: int = Field(
+        default=510,
+        validation_alias=AliasChoices("MIN_LONG_DURATION_SECONDS"),
+    )
+    max_long_duration_seconds: int = Field(
+        default=660,
+        validation_alias=AliasChoices("MAX_LONG_DURATION_SECONDS"),
+    )
+    long_publish_time: str = Field(default="17:00", validation_alias=AliasChoices("LONG_PUBLISH_TIME"))
+    long_broll_clip_count: int = Field(default=32, ge=12, le=80, validation_alias=AliasChoices("LONG_BROLL_CLIP_COUNT"))
+    long_segment_min_seconds: float = Field(default=10.0, ge=3.0, le=30.0, validation_alias=AliasChoices("LONG_SEGMENT_MIN_SECONDS"))
+    long_segment_max_seconds: float = Field(default=22.0, ge=5.0, le=45.0, validation_alias=AliasChoices("LONG_SEGMENT_MAX_SECONDS"))
+    thumbnail_font_path: Path | None = Field(default=None, validation_alias=AliasChoices("THUMBNAIL_FONT_PATH"))
+    thumbnail_accent_color: str = Field(default="#6BFF7C", validation_alias=AliasChoices("THUMBNAIL_ACCENT_COLOR"))
+    thumbnail_text_color: str = Field(default="#FFFFFF", validation_alias=AliasChoices("THUMBNAIL_TEXT_COLOR"))
     subtitle_font_name: str = Field(default="Arial", validation_alias=AliasChoices("SUBTITLE_FONT_NAME"))
     subtitle_font_size: int = Field(default=48, validation_alias=AliasChoices("SUBTITLE_FONT_SIZE"))
     subtitle_margin_v: int = Field(default=640, validation_alias=AliasChoices("SUBTITLE_MARGIN_V"))
@@ -143,6 +254,8 @@ class Settings(BaseSettings):
         "youtube_client_secret_path",
         "youtube_token_path",
         "piper_voice_model_path",
+        "xtts_speaker_wav_path",
+        "xtts_speaker_wav_dir",
         "whisper_model_path",
         "output_dir",
         "cache_dir",
@@ -150,11 +263,21 @@ class Settings(BaseSettings):
         "logs_dir",
         "downloads_dir",
         "database_path",
+        "sound_design_custom_audio_dir",
+        "thumbnail_font_path",
         mode="before",
     )
     @classmethod
     def _normalize_paths(cls, value: str | Path | None) -> Path | None:
         return _expand_path(value)
+
+    @field_validator("sound_design_custom_audio_filename", mode="before")
+    @classmethod
+    def _normalize_optional_string(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
 
     @field_validator("default_privacy_status")
     @classmethod
@@ -162,6 +285,67 @@ class Settings(BaseSettings):
         normalized = value.strip().lower()
         if normalized not in {"private", "unlisted", "public"}:
             raise ValueError("DEFAULT_PRIVACY_STATUS must be private, unlisted, or public.")
+        return normalized
+
+    @field_validator("narration_engine")
+    @classmethod
+    def _validate_narration_engine(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"kokoro", "piper", "xtts"}:
+            raise ValueError("NARRATION_ENGINE must be kokoro, piper, or xtts.")
+        return normalized
+
+    @field_validator("kokoro_lang_code", "kokoro_device")
+    @classmethod
+    def _normalize_kokoro_string(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Kokoro settings must not be empty.")
+        return normalized.lower()
+
+    @field_validator("kokoro_espeak_binary")
+    @classmethod
+    def _normalize_kokoro_binary(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("KOKORO_ESPEAK_BINARY must not be empty.")
+        return normalized
+
+    @field_validator("kokoro_voice")
+    @classmethod
+    def _normalize_kokoro_voice(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("KOKORO_VOICE must not be empty.")
+        return normalized
+
+    @field_validator("xtts_runtime")
+    @classmethod
+    def _validate_xtts_runtime(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"binary", "docker"}:
+            raise ValueError("XTTS_RUNTIME must be binary or docker.")
+        return normalized
+
+    @field_validator("xtts_language")
+    @classmethod
+    def _validate_xtts_language(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not normalized:
+            raise ValueError("XTTS_LANGUAGE cannot be empty.")
+        return normalized
+
+    @field_validator("scheduled_timezone")
+    @classmethod
+    def _validate_scheduled_timezone(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("SCHEDULED_TIMEZONE cannot be empty.")
+        try:
+            ZoneInfo(normalized)
+        except ZoneInfoNotFoundError as exc:
+            if not _IANA_TIMEZONE_RE.fullmatch(normalized):
+                raise ValueError("SCHEDULED_TIMEZONE must be a valid IANA timezone.") from exc
         return normalized
 
     @field_validator("scheduled_run_times")
@@ -178,10 +362,29 @@ class Settings(BaseSettings):
                 raise ValueError("SCHEDULED_RUN_TIMES must use valid HH:MM 24-hour times.")
         return ",".join(dict.fromkeys(parts))
 
+    @field_validator("long_publish_time")
+    @classmethod
+    def _validate_long_publish_time(cls, value: str) -> str:
+        normalized = value.strip()
+        hours, minutes = normalized.split(":") if ":" in normalized else ("", "")
+        if not (hours.isdigit() and minutes.isdigit() and len(hours) == 2 and len(minutes) == 2):
+            raise ValueError("LONG_PUBLISH_TIME must use HH:MM 24-hour time.")
+        if not (0 <= int(hours) <= 23 and 0 <= int(minutes) <= 59):
+            raise ValueError("LONG_PUBLISH_TIME must use a valid HH:MM 24-hour time.")
+        return normalized
+
     @model_validator(mode="after")
     def _validate_duration_window(self) -> "Settings":
         if self.min_short_duration_seconds >= self.max_short_duration_seconds:
             raise ValueError("MIN_SHORT_DURATION_SECONDS must be lower than MAX_SHORT_DURATION_SECONDS.")
+        if self.min_long_duration_seconds >= self.max_long_duration_seconds:
+            raise ValueError("MIN_LONG_DURATION_SECONDS must be lower than MAX_LONG_DURATION_SECONDS.")
+        if self.min_long_duration_seconds < 510 or self.max_long_duration_seconds > 660:
+            raise ValueError("Long-form duration must stay within 8:30-11:00.")
+        if self.long_segment_min_seconds >= self.long_segment_max_seconds:
+            raise ValueError("LONG_SEGMENT_MIN_SECONDS must be lower than LONG_SEGMENT_MAX_SECONDS.")
+        if self.xtts_speaker_wav_dir is None:
+            self.xtts_speaker_wav_dir = self.data_dir / "voice_samples" / self.xtts_language
         return self
 
     def ensure_directories(self) -> None:
@@ -191,6 +394,9 @@ class Settings(BaseSettings):
         self.youtube_token_path.parent.mkdir(parents=True, exist_ok=True)
         self.downloads_dir.mkdir(parents=True, exist_ok=True)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self.sound_design_custom_audio_dir.mkdir(parents=True, exist_ok=True)
+        if self.xtts_speaker_wav_dir:
+            self.xtts_speaker_wav_dir.mkdir(parents=True, exist_ok=True)
 
     def require(self, field_name: str, reason: str) -> None:
         value = getattr(self, field_name)

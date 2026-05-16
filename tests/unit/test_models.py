@@ -18,6 +18,19 @@ def test_topic_choice_requires_catalog_topic() -> None:
         )
 
 
+def test_topic_choice_accepts_new_gaming_catalog_topic() -> None:
+    topic = TopicChoice(
+        bucket="gaming",
+        topic="Fortnite",
+        visual_queries=["Fortnite gaming setup", "Fortnite esports"],
+        search_terms=["Fortnite", "gaming"],
+    )
+
+    assert topic.bucket == "gaming"
+    assert topic.topic == "Fortnite"
+    assert topic.search_terms[0] == "Fortnite"
+
+
 def test_generated_short_requires_three_distinct_facts() -> None:
     with pytest.raises(ValidationError):
         GeneratedShort(
@@ -90,6 +103,8 @@ def test_generated_short_builds_upload_metadata_with_hashtags() -> None:
     assert len(short.upload_hashtags()) >= 10
     assert upload_title.count("#") >= 3
     assert "#Saturn" in upload_title
+    assert "Download my app SecureSets (Android only):" in upload_description
+    assert "https://play.google.com/store/apps/details?id=com.securesets.app&pli=1" in upload_description
     assert "#Space" in upload_description
 
 
@@ -127,7 +142,7 @@ def test_ollama_service_repairs_bucket_only_response(configured_env) -> None:
     assert repaired.topic == "Saturn"
 
 
-def test_ollama_service_normalizes_short_into_three_facts_intro(configured_env) -> None:
+def test_ollama_service_normalizes_short_preserves_human_sounding_narration(configured_env) -> None:
     service = OllamaService(load_settings())
     topic = TopicChoice(
         bucket="space",
@@ -156,11 +171,10 @@ def test_ollama_service_normalizes_short_into_three_facts_intro(configured_env) 
 
     normalized = service._normalize_generated_short(content, topic)
 
-    assert normalized.title == "3 Facts About Saturn"
-    assert normalized.narration.startswith("Here are 3 facts about Saturn.")
-    assert "First," in normalized.narration
-    assert "Second," in normalized.narration
-    assert "Third," in normalized.narration
+    assert normalized.title == "SATURN IS HIDING SOMETHING WEIRD"
+    assert normalized.title.isupper()
+    assert normalized.narration == content.narration
+    assert not normalized.narration.startswith("Here are 3 facts about Saturn.")
     assert normalized.subtitle_text == normalized.narration
     assert len(normalized.hashtags) >= 10
 
@@ -182,3 +196,102 @@ def test_ollama_service_repairs_generated_short_with_missing_description(configu
     assert repaired is not None
     assert repaired.description.startswith("Three fast facts about mantis shrimp")
     assert len(repaired.hashtags) >= 10
+    assert not repaired.narration.lower().startswith("here are 3 facts")
+    assert "first," not in repaired.narration.lower()
+    assert "that is why" not in repaired.narration.lower()
+    assert "people remember" not in repaired.narration.lower()
+    assert "looks so unusual on screen" not in repaired.narration.lower()
+    assert repaired.subtitle_text == repaired.narration
+
+
+def test_ollama_service_repairs_generated_short_with_missing_facts_from_narration(configured_env) -> None:
+    service = OllamaService(load_settings())
+
+    repaired = service._repair_model_response(
+        response_text=(
+            '{"bucket":"history","topic":"the Bronze Age",'
+            '"title":"The Dawn of Metalworking: 3 Facts About the Bronze Age",'
+            '"description":"","hashtags":["#BronzeAge","#AncientHistory","#Metalworking"],'
+            '"narration":"The Bronze Age, spanning from around 3000 to 1200 BCE, marked a significant turning point '
+            "in human history. It was during this period that humans first discovered how to extract tin and copper "
+            "from their ores, leading to the development of bronze, an alloy that provided a substantial increase "
+            "in strength over copper. This innovation had far-reaching consequences, enabling early civilizations "
+            "like the Egyptians, Mycenaeans, and Sumerians to create more durable tools and weapons. The widespread "
+            "adoption of bronze technology also facilitated trade networks across vast distances, helping to "
+            'solidify the foundations of complex societies.","facts":[],"subtitle_text":""}'
+        ),
+        model_cls=GeneratedShort,
+    )
+
+    assert repaired is not None
+    assert repaired.description.startswith("Three fast facts about the Bronze Age")
+    assert len(repaired.facts) == 3
+    assert repaired.facts[0].startswith("The Bronze Age")
+    assert repaired.subtitle_text == repaired.narration
+
+
+def test_ollama_service_generate_model_repairs_core_validation_errors(configured_env, tmp_path) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "response": (
+                    '{"bucket":"geography","topic":"Patagonia","title":"What Makes Patagonia Unique?",'
+                    '"description":"","hashtags":["#PatagoniaGeography"],'
+                    '"narration":"Patagonia is a windswept region with dramatic mountains, glaciers, and wildlife.",'
+                    '"facts":["The Andes run through Patagonia.","It spans Argentina and Chile.","It includes glaciers and fjords."],'
+                    '"subtitle_text":"Patagonia"}'
+                )
+            }
+
+    service = OllamaService(load_settings())
+    service.client = type("FakeClient", (), {"post": lambda self, *args, **kwargs: FakeResponse()})()
+
+    repaired = service._generate_model(
+        prompt="irrelevant",
+        stage="content_generation",
+        prompt_output_path=tmp_path / "content_generation.json",
+        model_cls=GeneratedShort,
+    )
+
+    assert repaired.description.startswith("Three fast facts about Patagonia")
+    assert repaired.topic == "Patagonia"
+    assert repaired.bucket == "geography"
+
+
+def test_ollama_service_normalization_strips_stock_outro_phrases(configured_env) -> None:
+    service = OllamaService(load_settings())
+    topic = TopicChoice(
+        bucket="space",
+        topic="Saturn",
+        visual_queries=["Saturn", "Saturn rings"],
+        search_terms=["Saturn", "space"],
+    )
+    narration = (
+        "Saturn has rings and a moon called Titan. The planet is light for its size, which surprises a lot of people. "
+        "Its storms can be dramatic and long lasting in the upper atmosphere, and scientists keep studying them closely. "
+        "That mix of scale, motion, and mystery makes Saturn one of the most visually striking planets in short videos. "
+        "People remember Saturn because it looks so unusual on screen."
+    )
+    content = GeneratedShort(
+        bucket="space",
+        topic="Saturn",
+        title="Saturn Ring Wonders",
+        description="A short description that is comfortably long enough for validation and metadata.",
+        hashtags=["#shorts", "#space", "#saturn"],
+        narration=narration,
+        facts=[
+            "Saturn's rings are made mostly of ice.",
+            "Titan is larger than the planet Mercury.",
+            "Saturn is so low in density that it would float in water.",
+        ],
+        subtitle_text=narration,
+    )
+
+    normalized = service._normalize_generated_short(content, topic)
+
+    assert "people remember saturn because it looks so unusual on screen" not in normalized.narration.lower()
+    assert normalized.narration.endswith("short videos.")
+    assert normalized.subtitle_text == normalized.narration

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -19,6 +20,7 @@ from youtube_kanaal.models import (
     NarrationAsset,
     ShortRunRequest,
     ShortRunResult,
+    SoundDesignAsset,
     SubtitleAsset,
     TopicChoice,
     UploadMetadata,
@@ -26,10 +28,14 @@ from youtube_kanaal.models import (
     VideoClipAsset,
 )
 from youtube_kanaal.services.ffmpeg_service import FFmpegService
+from youtube_kanaal.services.kokoro_service import KokoroService
+from youtube_kanaal.services.narration_service import NarrationService
 from youtube_kanaal.services.ollama_service import OllamaService
 from youtube_kanaal.services.pexels_service import PexelsService
 from youtube_kanaal.services.piper_service import PiperService
+from youtube_kanaal.services.sound_design_service import SoundDesignService
 from youtube_kanaal.services.whisper_service import WhisperService
+from youtube_kanaal.services.xtts_service import XTTSService
 from youtube_kanaal.services.youtube_service import YouTubeService
 from youtube_kanaal.utils.files import copy_collision_safe, ensure_directory, safe_slug, write_json
 from youtube_kanaal.utils.similarity import is_near_duplicate, normalize_for_similarity
@@ -83,6 +89,18 @@ class PipelineRuntime:
     stage_summaries: dict[str, dict[str, object]] = field(default_factory=dict)
 
 
+def _path_size_bytes(path: Path) -> int:
+    if not path.exists():
+        return 0
+    if path.is_file():
+        return path.stat().st_size
+    return sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
+
+
+def _ensure_child_path(path: Path, parent: Path) -> None:
+    path.resolve().relative_to(parent.resolve())
+
+
 class ShortPipeline:
     """End-to-end Short generation pipeline."""
 
@@ -92,19 +110,29 @@ class ShortPipeline:
         database: Database,
         *,
         ollama_service: OllamaService | None = None,
+        narration_service: NarrationService | None = None,
+        kokoro_service: KokoroService | None = None,
         piper_service: PiperService | None = None,
+        xtts_service: XTTSService | None = None,
         whisper_service: WhisperService | None = None,
         pexels_service: PexelsService | None = None,
         ffmpeg_service: FFmpegService | None = None,
+        sound_design_service: SoundDesignService | None = None,
         youtube_service: YouTubeService | None = None,
     ) -> None:
         self.settings = settings
         self.database = database
         self.ollama = ollama_service or OllamaService(settings)
-        self.piper = piper_service or PiperService(settings)
+        self.narration = narration_service or NarrationService(
+            settings,
+            kokoro_service=kokoro_service,
+            piper_service=piper_service,
+            xtts_service=xtts_service,
+        )
         self.whisper = whisper_service or WhisperService(settings)
         self.pexels = pexels_service or PexelsService(settings)
         self.ffmpeg = ffmpeg_service or FFmpegService(settings)
+        self.sound_design = sound_design_service or SoundDesignService(settings)
         self.youtube = youtube_service or YouTubeService(settings)
 
     def run(self, request: ShortRunRequest) -> ShortRunResult:
@@ -132,13 +160,14 @@ class ShortPipeline:
         runtime.logger.info("Run started", extra={"run_id": run_id, "started_at": started_at})
 
         try:
-            topic = self.select_topic(runtime)
-            content = self.generate_content(runtime, topic)
+            topic, content = self.select_topic_and_content(runtime)
+            visual_queries = self.generate_visual_queries(runtime, topic, content)
             narration = self.generate_narration(runtime, content)
             subtitles = self.generate_subtitles(runtime, content, narration)
-            clips = self.download_stock_video(runtime, topic, content, narration)
+            sound_design = self.apply_sound_design(runtime, narration)
+            clips = self.download_stock_video(runtime, visual_queries, narration)
             plan = self.plan_assets(runtime, clips, narration)
-            final_video_path = self.render_video(runtime, plan, narration, subtitles, content)
+            final_video_path = self.render_video(runtime, plan, sound_design.mixed_path, subtitles, content)
             validation_payload = self.validate_output(runtime, final_video_path)
             downloads_copy = self.export_to_downloads(runtime, final_video_path, content)
             upload_metadata = self.upload_if_requested(runtime, final_video_path, content)
@@ -147,6 +176,7 @@ class ShortPipeline:
                 topic=topic,
                 content=content,
                 narration=narration,
+                sound_design=sound_design,
                 subtitles=subtitles,
                 clips=clips,
                 final_video_path=final_video_path,
@@ -155,7 +185,19 @@ class ShortPipeline:
                 upload_metadata=upload_metadata,
                 started_at=started_at,
             )
-            runtime.logger.info("Run completed", extra={"run_id": run_id, "output_path": str(final_video_path)})
+            cleanup = self.cleanup_uploaded_media(runtime, upload_metadata=upload_metadata)
+            result.media_cleaned = cleanup["cleaned"]
+            result.cleanup_deleted_bytes = int(cleanup["deleted_bytes"])
+            result.cleanup_summary_path = Path(cleanup["summary_path"]) if cleanup.get("summary_path") else None
+            runtime.logger.info(
+                "Run completed",
+                extra={
+                    "run_id": run_id,
+                    "output_path": str(final_video_path),
+                    "media_cleaned": result.media_cleaned,
+                    "cleanup_deleted_bytes": result.cleanup_deleted_bytes,
+                },
+            )
             return result
         except Exception as exc:
             stage_name = exc.stage if isinstance(exc, PipelineStageError) else "pipeline"
@@ -173,21 +215,145 @@ class ShortPipeline:
             )
             raise
 
-    def select_topic(self, runtime: PipelineRuntime) -> TopicChoice:
+    def cleanup_uploaded_media(self, runtime: PipelineRuntime, *, upload_metadata: UploadMetadata) -> dict[str, object]:
+        if not upload_metadata.uploaded:
+            return {"cleaned": False, "deleted_bytes": 0, "summary_path": None, "deleted_paths": []}
+        if self.settings.keep_uploaded_media:
+            return {"cleaned": False, "deleted_bytes": 0, "summary_path": None, "deleted_paths": []}
+
+        candidates = [
+            runtime.artifacts.video_dir,
+            runtime.artifacts.assets_dir,
+            runtime.artifacts.audio_dir,
+            runtime.artifacts.subtitles_dir,
+            runtime.artifacts.prompts_dir,
+            runtime.artifacts.responses_dir,
+        ]
+        try:
+            deleted_paths: list[str] = []
+            deleted_bytes = 0
+            for path in candidates:
+                if not path.exists():
+                    continue
+                _ensure_child_path(path, runtime.artifacts.run_dir)
+                deleted_bytes += _path_size_bytes(path)
+                if path.is_dir():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+                deleted_paths.append(str(path))
+
+            summary = {
+                "cleaned": True,
+                "deleted_bytes": deleted_bytes,
+                "deleted_megabytes": round(deleted_bytes / 1024 / 1024, 2),
+                "deleted_paths": deleted_paths,
+                "retained": {
+                    "topic": runtime.stage_summaries.get("topic_selection", {}).get("topic"),
+                    "metadata_dir": str(runtime.artifacts.metadata_dir),
+                    "database": str(self.settings.database_path),
+                    "log_file": str(runtime.logging_bundle.human_log_path),
+                },
+                "reason": "Uploaded media is removed after successful upload to keep local storage small.",
+            }
+            summary_path = write_json(runtime.artifacts.metadata_dir / "media_cleanup.json", summary)
+            runtime.stage_summaries["uploaded_media_cleanup"] = {
+                "cleaned": True,
+                "deleted_bytes": deleted_bytes,
+                "summary_path": str(summary_path),
+            }
+            runtime.logger.info(
+                "Uploaded media cleaned",
+                extra={"run_id": runtime.run_id, "deleted_bytes": deleted_bytes, "deleted_paths": deleted_paths},
+            )
+            return {
+                "cleaned": True,
+                "deleted_bytes": deleted_bytes,
+                "summary_path": str(summary_path),
+                "deleted_paths": deleted_paths,
+            }
+        except Exception as exc:
+            failure_path = write_json(
+                runtime.artifacts.metadata_dir / "media_cleanup_failed.json",
+                {
+                    "cleaned": False,
+                    "error": str(exc),
+                    "reason": "Upload succeeded, but local media cleanup failed.",
+                },
+            )
+            runtime.stage_summaries["uploaded_media_cleanup"] = {
+                "cleaned": False,
+                "error": str(exc),
+                "summary_path": str(failure_path),
+            }
+            runtime.logger.exception("Uploaded media cleanup failed", extra={"run_id": runtime.run_id})
+            return {"cleaned": False, "deleted_bytes": 0, "summary_path": str(failure_path), "deleted_paths": []}
+
+    def select_topic(
+        self,
+        runtime: PipelineRuntime,
+        *,
+        additional_excluded_topics: list[str] | None = None,
+    ) -> TopicChoice:
         recent_topics = self.database.recent_topics(limit=100)
-        with self._stage(runtime, "topic_selection", {"recent_topics": len(recent_topics)}):
+        excluded_topics = list(dict.fromkeys([*recent_topics, *(additional_excluded_topics or [])]))
+        with self._stage(
+            runtime,
+            "topic_selection",
+            {"recent_topics": len(recent_topics), "attempted_topics": len(additional_excluded_topics or [])},
+        ):
             if runtime.request.preferred_topic:
                 topic = self._preferred_topic(runtime.request.preferred_topic, runtime.request.preferred_bucket)
             else:
                 topic = self.ollama.choose_topic(
-                    excluded_topics=recent_topics,
+                    excluded_topics=excluded_topics,
                     prompt_path=runtime.artifacts.prompts_dir / "topic_selection.txt",
                     response_path=runtime.artifacts.responses_dir / "topic_selection.json",
                 )
-                if is_near_duplicate(topic.topic, recent_topics, self.settings.similarity_threshold):
-                    topic = self._fallback_topic_excluding(recent_topics)
+                if is_near_duplicate(topic.topic, excluded_topics, self.settings.similarity_threshold):
+                    topic = self._fallback_topic_excluding(excluded_topics)
             runtime.stage_summaries["topic_selection"] = topic.model_dump(mode="json")
             return topic
+
+    def select_topic_and_content(self, runtime: PipelineRuntime) -> tuple[TopicChoice, GeneratedShort]:
+        attempted_topics: list[str] = []
+        recent_topics = self.database.recent_topics(limit=100)
+        max_topic_attempts = max(
+            1,
+            sum(len(topics) for _, topics in self._topic_catalog_items()) - len({topic.lower() for topic in recent_topics}),
+        )
+        last_error: PipelineStageError | None = None
+
+        for attempt in range(1, max_topic_attempts + 1):
+            topic = self.select_topic(runtime, additional_excluded_topics=attempted_topics)
+            attempted_topics.append(topic.topic)
+            try:
+                content = self.generate_content(runtime, topic)
+            except PipelineStageError as exc:
+                if runtime.request.preferred_topic or not self._is_duplicate_title_generation_error(exc):
+                    raise
+                last_error = exc
+                runtime.logger.warning(
+                    "content_generation: duplicate_retry_with_new_topic",
+                    extra={
+                        "run_id": runtime.run_id,
+                        "stage": "content_generation",
+                        "attempt": attempt,
+                        "max_attempts": max_topic_attempts,
+                        "topic": topic.topic,
+                        "reason": exc.probable_cause or exc.message,
+                    },
+                )
+                continue
+
+            runtime.stage_summaries["content_generation"]["topic_retry_count"] = max(len(attempted_topics) - 1, 0)
+            return topic, content
+
+        raise last_error or PipelineStageError(
+            stage="content_generation",
+            message="Failed to generate a unique-enough video after exhausting fallback topics.",
+            probable_cause="Ollama kept producing titles that were too similar to recent history.",
+        )
 
     def generate_content(self, runtime: PipelineRuntime, topic: TopicChoice) -> GeneratedShort:
         recent_titles = self.database.recent_titles(limit=100)
@@ -223,7 +389,11 @@ class ShortPipeline:
         with self._stage(runtime, "narration_generation", {"topic": content.topic, "title": content.title}):
             raw_path = runtime.artifacts.audio_dir / "narration_raw.wav"
             normalized_path = runtime.artifacts.audio_dir / "narration.wav"
-            self.piper.synthesize(text=content.narration, output_path=raw_path)
+            synthesis = self.narration.synthesize(
+                text=content.narration,
+                output_path=raw_path,
+                logger=runtime.logger,
+            )
             self.ffmpeg.normalize_audio(input_path=raw_path, output_path=normalized_path)
             duration_seconds = self.ffmpeg.audio_duration_seconds(normalized_path)
             asset = NarrationAsset(
@@ -231,7 +401,13 @@ class ShortPipeline:
                 normalized_path=normalized_path,
                 duration_seconds=duration_seconds,
             )
-            runtime.stage_summaries["narration_generation"] = asset.model_dump(mode="json")
+            runtime.stage_summaries["narration_generation"] = {
+                "requested_engine": synthesis.requested_engine,
+                "engine": synthesis.engine_used,
+                "fallback_reason": synthesis.fallback_reason,
+                "reference_sources": [str(path) for path in synthesis.reference_sources],
+                **asset.model_dump(mode="json"),
+            }
             return asset
 
     def generate_subtitles(
@@ -250,14 +426,61 @@ class ShortPipeline:
             runtime.stage_summaries["subtitle_generation"] = subtitles.model_dump(mode="json")
             return subtitles
 
-    def download_stock_video(
+    def generate_visual_queries(
         self,
         runtime: PipelineRuntime,
         topic: TopicChoice,
         content: GeneratedShort,
+    ) -> list[str]:
+        queries = self._build_video_queries(topic, content)
+        with self._stage(runtime, "visual_query_generation", {"topic": content.topic, "facts": len(content.facts)}):
+            runtime.stage_summaries["visual_query_generation"] = {
+                "queries": queries,
+                "fact_queries": queries[: len(content.facts)],
+            }
+            return queries
+
+    def apply_sound_design(
+        self,
+        runtime: PipelineRuntime,
+        narration: NarrationAsset,
+    ) -> SoundDesignAsset:
+        with self._stage(
+            runtime,
+            "sound_design",
+            {"source_audio": str(narration.normalized_path), "duration_seconds": narration.duration_seconds},
+        ):
+            try:
+                asset = self.sound_design.build_mix(
+                    narration_path=narration.normalized_path,
+                    duration_seconds=narration.duration_seconds,
+                    working_dir=runtime.artifacts.audio_dir,
+                    logger=runtime.logger,
+                )
+            except Exception as exc:
+                runtime.logger.warning(
+                    "sound_design: using dry narration",
+                    extra={
+                        "run_id": runtime.run_id,
+                        "stage": "sound_design",
+                        "reason": str(exc),
+                    },
+                )
+                asset = SoundDesignAsset(
+                    mixed_path=narration.normalized_path,
+                    applied=False,
+                    duration_seconds=narration.duration_seconds,
+                    fallback_reason=str(exc),
+                )
+            runtime.stage_summaries["sound_design"] = asset.model_dump(mode="json")
+            return asset
+
+    def download_stock_video(
+        self,
+        runtime: PipelineRuntime,
+        queries: list[str],
         narration: NarrationAsset,
     ) -> list[VideoClipAsset]:
-        queries = self._build_video_queries(topic, content)
         with self._stage(runtime, "stock_video_download", {"queries": queries}):
             clips = self.pexels.fetch_clips(
                 queries=queries,
@@ -296,7 +519,7 @@ class ShortPipeline:
         self,
         runtime: PipelineRuntime,
         plan: AssetPlan,
-        narration: NarrationAsset,
+        audio_path: Path,
         subtitles: SubtitleAsset,
         content: GeneratedShort,
     ) -> Path:
@@ -304,12 +527,15 @@ class ShortPipeline:
             final_video_path = runtime.artifacts.video_dir / f"{safe_slug(content.title)}.mp4"
             output_path = self.ffmpeg.render_short(
                 plan=plan,
-                audio_path=narration.normalized_path,
+                audio_path=audio_path,
                 subtitle_path=subtitles.ass_path or subtitles.srt_path,
                 working_dir=runtime.artifacts.video_dir,
                 output_path=final_video_path,
             )
-            runtime.stage_summaries["video_rendering"] = {"output_path": str(output_path)}
+            runtime.stage_summaries["video_rendering"] = {
+                "output_path": str(output_path),
+                "audio_path": str(audio_path),
+            }
             return output_path
 
     def validate_output(self, runtime: PipelineRuntime, final_video_path: Path) -> dict[str, object]:
@@ -345,6 +571,7 @@ class ShortPipeline:
                 metadata = UploadMetadata(
                     youtube_video_id=None,
                     privacy_status=runtime.request.privacy_status or self.settings.default_privacy_status,
+                    scheduled_publish_at=runtime.request.scheduled_publish_at,
                     uploaded=False,
                 )
                 runtime.stage_summaries["youtube_upload"] = metadata.model_dump(mode="json")
@@ -357,6 +584,7 @@ class ShortPipeline:
                 description=content.upload_description(minimum_hashtags=10),
                 hashtags=upload_hashtags,
                 privacy_status=runtime.request.privacy_status or self.settings.default_privacy_status,
+                scheduled_publish_at=runtime.request.scheduled_publish_at,
                 response_path=runtime.artifacts.responses_dir / "youtube_upload.json",
             )
             runtime.stage_summaries["youtube_upload"] = metadata.model_dump(mode="json")
@@ -369,6 +597,7 @@ class ShortPipeline:
         topic: TopicChoice,
         content: GeneratedShort,
         narration: NarrationAsset,
+        sound_design: SoundDesignAsset,
         subtitles: SubtitleAsset,
         clips: list[VideoClipAsset],
         final_video_path: Path,
@@ -385,6 +614,7 @@ class ShortPipeline:
                 "topic": topic.model_dump(mode="json"),
                 "content": content.model_dump(mode="json"),
                 "narration": narration.model_dump(mode="json"),
+                "sound_design": sound_design.model_dump(mode="json"),
                 "subtitles": subtitles.model_dump(mode="json"),
                 "clips": [clip.model_dump(mode="json") for clip in clips],
                 "validation": validation_payload,
@@ -410,6 +640,16 @@ class ShortPipeline:
                 metadata=narration.model_dump(mode="json"),
                 created_at=completed_at,
             )
+            if sound_design.mixed_path.exists() and sound_design.mixed_path != narration.normalized_path:
+                self.database.record_asset(
+                    run_id=runtime.run_id,
+                    asset_type="sound_design_mix",
+                    source_id=None,
+                    source_url=None,
+                    local_path=str(sound_design.mixed_path),
+                    metadata=sound_design.model_dump(mode="json"),
+                    created_at=completed_at,
+                )
             self.database.record_asset(
                 run_id=runtime.run_id,
                 asset_type="subtitles",
@@ -471,6 +711,8 @@ class ShortPipeline:
                 downloads_copy_path=downloads_copy_path,
                 uploaded=upload_metadata.uploaded,
                 youtube_video_id=upload_metadata.youtube_video_id,
+                privacy_status=upload_metadata.privacy_status,
+                scheduled_publish_at=upload_metadata.scheduled_publish_at,
                 log_path=runtime.logging_bundle.human_log_path,
                 metadata_path=metadata_path,
             )
@@ -546,24 +788,37 @@ class ShortPipeline:
         recent_titles: list[str],
     ) -> GeneratedShort | None:
         candidates = [
-            f"3 Facts About {content.topic}",
-            f"3 Wild Facts About {content.topic}",
-            f"3 Surprising Facts About {content.topic}",
-            f"3 Quick Facts About {content.topic}",
-            f"{content.topic}: 3 Facts You Should Know",
+            content.title_hook or "",
+            f"{content.topic} Is Stranger Than It Looks",
+            f"What {content.topic} Is Hiding",
+            f"Nobody Expects This About {content.topic}",
+            f"The Weird Truth About {content.topic}",
         ]
         payload = content.model_dump(mode="json")
         for candidate in candidates:
+            if not candidate:
+                continue
             if is_near_duplicate(candidate, recent_titles, self.settings.similarity_threshold):
                 continue
             payload["title"] = candidate
             return GeneratedShort.model_validate(payload)
         return None
 
+    def _is_duplicate_title_generation_error(self, exc: PipelineStageError) -> bool:
+        if exc.stage != "content_generation":
+            return False
+        details = " ".join(
+            item.lower()
+            for item in (exc.message, exc.probable_cause or "")
+            if item
+        )
+        return "too similar to recent history" in details or "near-duplicate title" in details
+
     def _build_video_queries(self, topic: TopicChoice, content: GeneratedShort) -> list[str]:
         topic_text = topic.topic
         lowered_facts = " ".join(content.facts).lower()
-        queries: list[str] = []
+        fact_queries = self._fact_visual_queries(topic, content)
+        queries: list[str] = list(fact_queries)
 
         if topic.bucket == "space":
             queries.extend(
@@ -662,9 +917,53 @@ class ShortPipeline:
                     f"{topic_text} technology",
                 ]
             )
+        elif topic.bucket == "gaming":
+            queries.extend(
+                [
+                    f"{topic_text} gaming setup",
+                    f"{topic_text} esports",
+                    "gamer rgb keyboard",
+                    "game controller neon",
+                ]
+            )
+        elif topic.bucket == "sports":
+            queries.extend(
+                [
+                    f"{topic_text} sport action",
+                    f"{topic_text} athlete training",
+                    f"{topic_text} slow motion",
+                    "stadium crowd action",
+                ]
+            )
+        elif topic.bucket == "vehicles":
+            queries.extend(
+                [
+                    f"{topic_text} cinematic motion",
+                    f"{topic_text} close up",
+                    f"{topic_text} driving",
+                    "transport action",
+                ]
+            )
+        elif topic.bucket == "technology":
+            queries.extend(
+                [
+                    f"{topic_text} technology close up",
+                    f"{topic_text} futuristic",
+                    f"{topic_text} lab",
+                    "innovation technology b-roll",
+                ]
+            )
+        else:
+            queries.extend(
+                [
+                    f"{topic_text} cinematic",
+                    f"{topic_text} close up",
+                    f"{topic_text} documentary",
+                ]
+            )
 
-        queries.extend(self._fact_visual_queries(topic, content))
-        queries.extend(topic.visual_queries)
+        if len(queries) < 5:
+            queries.extend(topic.visual_queries)
         queries.extend(content.keyword_queries())
         cleaned_queries = []
         for query in queries:
@@ -700,7 +999,6 @@ class ShortPipeline:
         return any(term in combined for term in marine_terms)
 
     def _fact_visual_queries(self, topic: TopicChoice, content: GeneratedShort) -> list[str]:
-        fact_text = " ".join(content.facts).lower()
         topic_text = topic.topic
         queries: list[str] = []
 
@@ -727,12 +1025,83 @@ class ShortPipeline:
             "bird": f"{topic_text} bird close up",
             "planet": f"{topic_text} in space",
             "space": f"{topic_text} astronomy animation",
+            "keyboard": f"{topic_text} keyboard close up",
+            "controller": f"{topic_text} game controller close up",
+            "gamer": "esports gamer setup",
+            "stadium": f"{topic_text} stadium action",
+            "surf": f"{topic_text} surfing slow motion",
+            "bike": f"{topic_text} biking action",
+            "snow": f"{topic_text} snow action",
+            "racing": f"{topic_text} racing action",
+            "car": f"{topic_text} driving close up",
+            "train": f"{topic_text} train motion",
+            "jet": f"{topic_text} jet takeoff",
+            "drone": f"{topic_text} drone flight",
+            "robot": f"{topic_text} robot close up",
+            "screen": f"{topic_text} screen close up",
         }
 
-        for keyword, query in keyword_map.items():
-            if keyword in fact_text and query not in queries:
-                queries.append(query)
-        return queries[:4]
+        for index, fact in enumerate(content.facts):
+            fact_text = fact.lower()
+            query = ""
+            for keyword, keyword_query in keyword_map.items():
+                if keyword in fact_text:
+                    query = keyword_query
+                    break
+            if not query:
+                query = self._fallback_fact_query(topic, fact, index)
+            if query in queries:
+                query = self._fallback_fact_query(topic, fact, index)
+            if query in queries:
+                query = f"{topic_text} {topic.bucket} documentary b-roll {index + 1}"
+            queries.append(query)
+        return queries[:3]
+
+    def _fallback_fact_query(self, topic: TopicChoice, fact: str, index: int) -> str:
+        topic_text = topic.topic
+        visual_tokens = [
+            token
+            for token in normalize_for_similarity(fact).split()
+            if len(token) > 4
+            and token
+            not in {
+                "about",
+                "because",
+                "their",
+                "there",
+                "these",
+                "those",
+                "which",
+                "while",
+                "would",
+                "could",
+                "should",
+                "people",
+                "scientists",
+                "studying",
+            }
+            and token not in normalize_for_similarity(topic_text).split()
+        ]
+        detail = " ".join(visual_tokens[:2])
+        bucket_modifiers = {
+            "animals": ["wildlife close up", "nature macro", "animal portrait"],
+            "space": ["space animation", "astronomy animation", "planet close up"],
+            "ocean": ["underwater macro", "ocean close up", "marine life"],
+            "geography": ["landscape drone", "nature aerial", "travel landscape"],
+            "architecture": ["architecture detail", "exterior drone", "building close up"],
+            "weather": ["slow motion weather", "sky timelapse", "storm clouds"],
+            "food": ["food macro", "preparation close up", "slow motion food"],
+            "human body": ["anatomy animation", "science animation", "medical animation"],
+            "history": ["historical site", "ancient ruins", "museum artifact"],
+            "inventions": ["machine close up", "technology detail", "invention detail"],
+            "gaming": ["gaming setup", "esports close up", "game controller"],
+            "sports": ["sport action", "athlete training", "slow motion sport"],
+            "vehicles": ["cinematic motion", "driving close up", "transport action"],
+            "technology": ["technology close up", "lab close up", "innovation b-roll"],
+        }
+        modifier_options = bucket_modifiers.get(topic.bucket, ["cinematic close up", "documentary b-roll", "macro detail"])
+        modifier = modifier_options[index % len(modifier_options)]
+        return " ".join(part for part in [topic_text, detail, modifier] if part).strip()
 
 
 def validate_artifact_directory(run_id: str, run_dir: Path) -> ValidationResult:

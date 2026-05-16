@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from math import ceil
 
 
@@ -12,7 +13,40 @@ class SubtitleCue:
     text: str
 
 
+@dataclass
+class TimedWord:
+    text: str
+    start_seconds: float
+    end_seconds: float
+
+
 _SRT_BLOCK_SPLIT_RE = re.compile(r"\r?\n\r?\n+")
+_ALIGNMENT_TOKEN_CLEAN_RE = re.compile(r"(^[^\w]+|[^\w]+$)")
+_ALIGNMENT_NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
+_SENTENCE_END_RE = re.compile(r"[.!?]+[\"')\]]*$")
+_NUMBER_WORDS = {
+    "0": "zero",
+    "1": "one",
+    "2": "two",
+    "3": "three",
+    "4": "four",
+    "5": "five",
+    "6": "six",
+    "7": "seven",
+    "8": "eight",
+    "9": "nine",
+    "10": "ten",
+    "11": "eleven",
+    "12": "twelve",
+    "13": "thirteen",
+    "14": "fourteen",
+    "15": "fifteen",
+    "16": "sixteen",
+    "17": "seventeen",
+    "18": "eighteen",
+    "19": "nineteen",
+    "20": "twenty",
+}
 
 
 def _format_timestamp(seconds: float, *, vtt: bool = False) -> str:
@@ -177,56 +211,14 @@ def normalize_whisper_srt(
     max_chars_per_line: int = 16,
     min_cue_duration_seconds: float = 0.45,
 ) -> str:
-    normalized_cues: list[SubtitleCue] = []
-    for cue in parse_srt_text(srt_text):
-        chunked_words = _chunk_words(
-            cue.text.split(),
-            max_words_per_cue=max_words_per_cue,
-            max_chars_per_line=max_chars_per_line,
-        )
-        if not chunked_words:
-            continue
-        total_duration = max(cue.end_seconds - cue.start_seconds, min_cue_duration_seconds)
-        if len(chunked_words) == 1:
-            normalized_cues.append(
-                SubtitleCue(
-                    start_seconds=cue.start_seconds,
-                    end_seconds=cue.end_seconds,
-                    text="\n".join(_wrap_words(chunked_words[0], max_chars_per_line=max_chars_per_line)),
-                )
-            )
-            continue
-
-        word_weights = [max(len(words), 1) for words in chunked_words]
-        total_weight = sum(word_weights)
-        cursor = cue.start_seconds
-        for index, words in enumerate(chunked_words):
-            if index == len(chunked_words) - 1:
-                next_cursor = cue.end_seconds
-            else:
-                remaining_chunks = len(chunked_words) - index - 1
-                proportional_duration = total_duration * (word_weights[index] / total_weight)
-                reserved_tail = remaining_chunks * min_cue_duration_seconds
-                next_cursor = min(
-                    cue.end_seconds - reserved_tail,
-                    cursor + max(min_cue_duration_seconds, proportional_duration),
-                )
-            if next_cursor <= cursor:
-                next_cursor = min(cue.end_seconds, cursor + min_cue_duration_seconds)
-            normalized_cues.append(
-                SubtitleCue(
-                    start_seconds=cursor,
-                    end_seconds=next_cursor,
-                    text="\n".join(_wrap_words(words, max_chars_per_line=max_chars_per_line)),
-                )
-            )
-            cursor = next_cursor
-    merged_cues = _merge_brief_cues(
-        normalized_cues,
+    timed_words = _extract_timed_words(parse_srt_text(srt_text), min_word_duration_seconds=min_cue_duration_seconds / 2)
+    normalized_cues = _build_cues_from_timed_words(
+        timed_words,
         max_words_per_cue=max_words_per_cue,
         max_chars_per_line=max_chars_per_line,
+        min_cue_duration_seconds=min_cue_duration_seconds,
     )
-    return build_srt_from_cues(merged_cues)
+    return build_srt_from_cues(normalized_cues)
 
 
 def align_script_to_reference_srt(
@@ -246,39 +238,277 @@ def align_script_to_reference_srt(
             max_chars_per_line=max_chars_per_line,
             min_cue_duration_seconds=min_cue_duration_seconds,
         )
-
-    total_duration = sum(max(cue.end_seconds - cue.start_seconds, min_cue_duration_seconds) for cue in reference_cues)
-    remaining_words = len(script_words)
-    remaining_cues = len(reference_cues)
-    cursor = 0
-    provisional_cues: list[SubtitleCue] = []
-
-    for cue in reference_cues:
-        cue_duration = max(cue.end_seconds - cue.start_seconds, min_cue_duration_seconds)
-        if remaining_cues == 1:
-            take = remaining_words
-        else:
-            proportional_take = round(len(script_words) * (cue_duration / total_duration))
-            take = max(1, proportional_take)
-            take = min(take, remaining_words - (remaining_cues - 1))
-        chunk_text = " ".join(script_words[cursor : cursor + take]).strip()
-        provisional_cues.append(
-            SubtitleCue(
-                start_seconds=cue.start_seconds,
-                end_seconds=cue.end_seconds,
-                text=chunk_text,
-            )
-        )
-        cursor += take
-        remaining_words -= take
-        remaining_cues -= 1
-
-    return normalize_whisper_srt(
-        build_srt_from_cues(provisional_cues),
+    reference_words = _extract_timed_words(reference_cues, min_word_duration_seconds=min_cue_duration_seconds / 2)
+    aligned_words = _align_script_words_to_reference(
+        reference_words,
+        script_words,
+        min_word_duration_seconds=min_cue_duration_seconds / 2,
+    )
+    aligned_cues = _build_cues_from_timed_words(
+        aligned_words,
         max_words_per_cue=max_words_per_cue,
         max_chars_per_line=max_chars_per_line,
         min_cue_duration_seconds=min_cue_duration_seconds,
     )
+    return build_srt_from_cues(aligned_cues)
+
+
+def _extract_timed_words(
+    cues: list[SubtitleCue],
+    *,
+    min_word_duration_seconds: float,
+) -> list[TimedWord]:
+    timed_words: list[TimedWord] = []
+    for cue in cues:
+        words = cue.text.split()
+        if not words:
+            continue
+        total_duration = max(cue.end_seconds - cue.start_seconds, min_word_duration_seconds)
+        weights = [max(len(_normalize_alignment_token(word)), 1) for word in words]
+        total_weight = sum(weights)
+        cursor = cue.start_seconds
+        for index, word in enumerate(words):
+            if index == len(words) - 1:
+                next_cursor = cue.end_seconds
+            else:
+                proportional_duration = total_duration * (weights[index] / total_weight)
+                next_cursor = min(cue.end_seconds, cursor + max(proportional_duration, min_word_duration_seconds))
+            if next_cursor <= cursor:
+                next_cursor = min(cue.end_seconds, cursor + min_word_duration_seconds)
+            timed_words.append(
+                TimedWord(
+                    text=word,
+                    start_seconds=cursor,
+                    end_seconds=next_cursor,
+                )
+            )
+            cursor = next_cursor
+    return timed_words
+
+
+def _build_cues_from_timed_words(
+    timed_words: list[TimedWord],
+    *,
+    max_words_per_cue: int,
+    max_chars_per_line: int,
+    min_cue_duration_seconds: float,
+) -> list[SubtitleCue]:
+    provisional: list[list[TimedWord]] = []
+    current: list[TimedWord] = []
+    max_chunk_chars = max_chars_per_line * 2 + 2
+
+    for word in timed_words:
+        if not current:
+            current = [word]
+            continue
+
+        candidate_words = [item.text for item in current] + [word.text]
+        candidate_text = " ".join(candidate_words)
+        gap_seconds = max(word.start_seconds - current[-1].end_seconds, 0.0)
+        should_break = (
+            _should_force_break_after(current[-1].text)
+            or gap_seconds > max(min_cue_duration_seconds * 0.55, 0.32)
+            or len(candidate_words) > max_words_per_cue
+            or len(candidate_text) > max_chunk_chars
+        )
+        if should_break:
+            provisional.append(current)
+            current = [word]
+            continue
+        current.append(word)
+
+    if current:
+        provisional.append(current)
+
+    merged_cues = _merge_brief_cues(
+        [
+            SubtitleCue(
+                start_seconds=group[0].start_seconds,
+                end_seconds=group[-1].end_seconds,
+                text="\n".join(_wrap_words([item.text for item in group], max_chars_per_line=max_chars_per_line)),
+            )
+            for group in provisional
+        ],
+        max_words_per_cue=max_words_per_cue,
+        max_chars_per_line=max_chars_per_line,
+    )
+    return merged_cues
+
+
+def _align_script_words_to_reference(
+    reference_words: list[TimedWord],
+    script_words: list[str],
+    *,
+    min_word_duration_seconds: float,
+) -> list[TimedWord]:
+    if not reference_words:
+        cursor = 0.0
+        timed_words: list[TimedWord] = []
+        for word in script_words:
+            next_cursor = cursor + min_word_duration_seconds
+            timed_words.append(TimedWord(text=word, start_seconds=cursor, end_seconds=next_cursor))
+            cursor = next_cursor
+        return timed_words
+
+    reference_tokens = [_normalize_alignment_token(word.text) for word in reference_words]
+    script_tokens = [_normalize_alignment_token(word) for word in script_words]
+    mapping = _match_script_indices_to_reference(reference_tokens, script_tokens)
+    average_duration = max(
+        sum(max(word.end_seconds - word.start_seconds, min_word_duration_seconds) for word in reference_words)
+        / max(len(reference_words), 1),
+        min_word_duration_seconds,
+    )
+
+    aligned: list[TimedWord | None] = [None] * len(script_words)
+    for script_index, reference_index in mapping.items():
+        reference_word = reference_words[reference_index]
+        aligned[script_index] = TimedWord(
+            text=script_words[script_index],
+            start_seconds=reference_word.start_seconds,
+            end_seconds=reference_word.end_seconds,
+        )
+
+    index = 0
+    while index < len(script_words):
+        if aligned[index] is not None:
+            index += 1
+            continue
+        span_start = index
+        while index < len(script_words) and aligned[index] is None:
+            index += 1
+        span_end = index - 1
+
+        previous_index = span_start - 1
+        while previous_index >= 0 and aligned[previous_index] is None:
+            previous_index -= 1
+        next_index = span_end + 1
+        while next_index < len(script_words) and aligned[next_index] is None:
+            next_index += 1
+
+        if previous_index >= 0 and aligned[previous_index] is not None:
+            window_start = aligned[previous_index].end_seconds
+        elif next_index < len(script_words) and aligned[next_index] is not None:
+            estimated_span = average_duration * (span_end - span_start + 1)
+            window_start = max(aligned[next_index].start_seconds - estimated_span, 0.0)
+        else:
+            window_start = 0.0
+
+        if next_index < len(script_words) and aligned[next_index] is not None:
+            window_end = aligned[next_index].start_seconds
+        elif previous_index >= 0 and aligned[previous_index] is not None:
+            window_end = window_start + (average_duration * (span_end - span_start + 1))
+        else:
+            window_end = average_duration * (span_end - span_start + 1)
+
+        if window_end <= window_start:
+            window_end = window_start + (average_duration * (span_end - span_start + 1))
+
+        span_words = script_words[span_start : span_end + 1]
+        span_weights = [max(len(_normalize_alignment_token(word)), 1) for word in span_words]
+        total_weight = sum(span_weights)
+        cursor = window_start
+        total_duration = max(window_end - window_start, min_word_duration_seconds * len(span_words))
+        for offset, word in enumerate(span_words):
+            if offset == len(span_words) - 1:
+                next_cursor = window_end
+            else:
+                proportional_duration = total_duration * (span_weights[offset] / total_weight)
+                next_cursor = min(window_end, cursor + max(proportional_duration, min_word_duration_seconds))
+            if next_cursor <= cursor:
+                next_cursor = cursor + min_word_duration_seconds
+            aligned[span_start + offset] = TimedWord(
+                text=word,
+                start_seconds=cursor,
+                end_seconds=next_cursor,
+            )
+            cursor = next_cursor
+
+    return [word for word in aligned if word is not None]
+
+
+def _match_script_indices_to_reference(reference_tokens: list[str], script_tokens: list[str]) -> dict[int, int]:
+    reference_length = len(reference_tokens)
+    script_length = len(script_tokens)
+    if not reference_length or not script_length:
+        return {}
+
+    gap_penalty = -1.0
+    scores = [[0.0] * (script_length + 1) for _ in range(reference_length + 1)]
+    trace = [[""] * (script_length + 1) for _ in range(reference_length + 1)]
+
+    for reference_index in range(1, reference_length + 1):
+        scores[reference_index][0] = reference_index * gap_penalty
+        trace[reference_index][0] = "up"
+    for script_index in range(1, script_length + 1):
+        scores[0][script_index] = script_index * gap_penalty
+        trace[0][script_index] = "left"
+
+    for reference_index in range(1, reference_length + 1):
+        for script_index in range(1, script_length + 1):
+            similarity = _alignment_similarity(
+                reference_tokens[reference_index - 1],
+                script_tokens[script_index - 1],
+            )
+            diagonal = scores[reference_index - 1][script_index - 1] + similarity
+            up = scores[reference_index - 1][script_index] + gap_penalty
+            left = scores[reference_index][script_index - 1] + gap_penalty
+
+            best_score = diagonal
+            best_trace = "diag"
+            if up > best_score:
+                best_score = up
+                best_trace = "up"
+            if left > best_score:
+                best_score = left
+                best_trace = "left"
+            scores[reference_index][script_index] = best_score
+            trace[reference_index][script_index] = best_trace
+
+    mapping: dict[int, int] = {}
+    reference_index = reference_length
+    script_index = script_length
+    while reference_index > 0 or script_index > 0:
+        direction = trace[reference_index][script_index]
+        if direction == "diag":
+            similarity = _alignment_similarity(
+                reference_tokens[reference_index - 1],
+                script_tokens[script_index - 1],
+            )
+            if similarity > 0:
+                mapping[script_index - 1] = reference_index - 1
+            reference_index -= 1
+            script_index -= 1
+        elif direction == "up":
+            reference_index -= 1
+        else:
+            script_index -= 1
+    return mapping
+
+
+def _alignment_similarity(reference_token: str, script_token: str) -> float:
+    if not reference_token or not script_token:
+        return -3.0
+    if reference_token == script_token:
+        return 4.0
+    ratio = SequenceMatcher(None, reference_token, script_token).ratio()
+    if ratio >= 0.9:
+        return 3.0
+    if ratio >= 0.72:
+        return 1.5
+    return -3.0
+
+
+def _normalize_alignment_token(word: str) -> str:
+    stripped = _ALIGNMENT_TOKEN_CLEAN_RE.sub("", word.strip().lower())
+    if not stripped:
+        return ""
+    if stripped.isdigit():
+        return _NUMBER_WORDS.get(stripped, stripped)
+    return _ALIGNMENT_NON_ALNUM_RE.sub("", stripped)
+
+
+def _should_force_break_after(word: str) -> bool:
+    return bool(_SENTENCE_END_RE.search(word.strip()))
 
 
 def _chunk_words(
@@ -352,7 +582,11 @@ def _merge_brief_cues(
         if len(current_words) == 1 and index + 1 < len(cues):
             next_words = cues[index + 1].text.replace("\n", " ").split()
             combined_words = current_words + next_words
-            if len(combined_words) <= max_words_per_cue + 1:
+            if (
+                len(combined_words) <= max_words_per_cue + 1
+                and not _should_force_break_after(current_words[-1])
+                and not _starts_new_sentence(next_words[0])
+            ):
                 merged.append(
                     SubtitleCue(
                         start_seconds=cues[index].start_seconds,
@@ -371,6 +605,14 @@ def _merge_brief_cues(
         )
         index += 1
     return merged
+
+
+def _starts_new_sentence(word: str) -> bool:
+    cleaned = word.strip()
+    if not cleaned:
+        return False
+    first_character = cleaned[0]
+    return first_character.isupper() or first_character.isdigit()
 
 
 def _build_ass_events_for_cue(

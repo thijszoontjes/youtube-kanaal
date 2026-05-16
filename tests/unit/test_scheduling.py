@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from youtube_kanaal.utils.scheduling import (
+    build_linux_cron_block,
     build_windows_task_action,
     build_windows_task_name,
     parse_schedule_times,
@@ -42,3 +43,25 @@ def test_build_windows_task_name_uses_time_suffix() -> None:
     assert build_windows_task_name(prefix="youtube-kanaal-auto-upload", time_value="13:00") == (
         "youtube-kanaal-auto-upload-13-00"
     )
+
+
+def test_build_linux_cron_block_contains_timezone_and_times(tmp_path: Path) -> None:
+    block = build_linux_cron_block(
+        marker="youtube-kanaal-auto-upload",
+        script_path=tmp_path / "scripts" / "run_scheduled_short.sh",
+        repo_root=tmp_path,
+        python_executable=tmp_path / ".venv" / "bin" / "python",
+        times=["13:00", "15:00", "19:00"],
+        timezone="Europe/Amsterdam",
+        upload=True,
+        debug=False,
+        privacy_status="private",
+        log_path=tmp_path / "logs" / "scheduled-cron.log",
+    )
+
+    assert "CRON_TZ=Europe/Amsterdam" in block
+    assert "0 13 * * *" in block
+    assert "0 15 * * *" in block
+    assert "0 19 * * *" in block
+    assert "--upload" in block
+    assert "--privacy-status private" in block

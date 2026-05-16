@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -15,6 +16,15 @@ class SubtitleAsset(BaseModel):
     srt_path: Path
     vtt_path: Path | None = None
     ass_path: Path | None = None
+
+
+class SoundDesignAsset(BaseModel):
+    mixed_path: Path
+    applied: bool = False
+    duration_seconds: float = Field(ge=0)
+    effect_count: int = Field(default=0, ge=0)
+    stem_paths: list[Path] = Field(default_factory=list)
+    fallback_reason: str | None = None
 
 
 class VideoClipAsset(BaseModel):
@@ -48,5 +58,6 @@ class AssetPlan(BaseModel):
 class UploadMetadata(BaseModel):
     youtube_video_id: str | None = None
     privacy_status: str
+    scheduled_publish_at: datetime | None = None
     response_path: Path | None = None
     uploaded: bool = False

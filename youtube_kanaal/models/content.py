@@ -17,6 +17,10 @@ ALLOWED_BUCKETS: tuple[str, ...] = (
     "human body",
     "weather",
     "architecture",
+    "gaming",
+    "sports",
+    "vehicles",
+    "technology",
 )
 
 TOPIC_CATALOG: dict[str, list[str]] = {
@@ -31,6 +35,14 @@ TOPIC_CATALOG: dict[str, list[str]] = {
         "red pandas",
         "orca whales",
         "leafcutter ants",
+        "capybaras",
+        "arctic foxes",
+        "jellyfish",
+        "cheetahs",
+        "meerkats",
+        "sloths",
+        "falcons",
+        "wolves",
     ],
     "space": [
         "Saturn",
@@ -43,6 +55,14 @@ TOPIC_CATALOG: dict[str, list[str]] = {
         "solar eclipses",
         "the International Space Station",
         "Venus",
+        "Jupiter",
+        "exoplanets",
+        "the Moon",
+        "asteroids",
+        "rocket launches",
+        "Titan",
+        "the Sun",
+        "nebulae",
     ],
     "geography": [
         "Iceland",
@@ -55,11 +75,18 @@ TOPIC_CATALOG: dict[str, list[str]] = {
         "Patagonia",
         "the Maldives",
         "Greenland",
+        "Norway fjords",
+        "the Grand Canyon",
+        "Mount Everest",
+        "Hawaii",
+        "the Galapagos Islands",
+        "Bali",
+        "the Nile River",
+        "Yellowstone",
     ],
     "history": [
         "ancient Rome",
         "the Silk Road",
-        "the printing press",
         "the Maya civilization",
         "the Industrial Revolution",
         "the Library of Alexandria",
@@ -67,6 +94,14 @@ TOPIC_CATALOG: dict[str, list[str]] = {
         "the Renaissance",
         "the Vikings",
         "Pompeii",
+        "ancient Egypt",
+        "the Aztec Empire",
+        "the Inca Empire",
+        "Apollo 11",
+        "the Titanic",
+        "samurai Japan",
+        "the Bronze Age",
+        "the Ottoman Empire",
     ],
     "inventions": [
         "the compass",
@@ -77,8 +112,15 @@ TOPIC_CATALOG: dict[str, list[str]] = {
         "the camera",
         "GPS",
         "the battery",
-        "the printing press",
         "the internet",
+        "the barcode",
+        "the light bulb",
+        "the zipper",
+        "the steam engine",
+        "the transistor",
+        "3D printing",
+        "the refrigerator",
+        "the telephone",
     ],
     "ocean": [
         "coral reefs",
@@ -91,6 +133,14 @@ TOPIC_CATALOG: dict[str, list[str]] = {
         "tsunamis",
         "tides",
         "the Mariana Trench",
+        "dolphins",
+        "sharks",
+        "sea otters",
+        "manta rays",
+        "seahorses",
+        "icebergs",
+        "whale sharks",
+        "sea anemones",
     ],
     "food": [
         "chocolate",
@@ -103,6 +153,14 @@ TOPIC_CATALOG: dict[str, list[str]] = {
         "pasta",
         "cinnamon",
         "potatoes",
+        "avocados",
+        "chili peppers",
+        "vanilla",
+        "croissants",
+        "green tea",
+        "bananas",
+        "maple syrup",
+        "tomatoes",
     ],
     "human body": [
         "the human brain",
@@ -115,6 +173,14 @@ TOPIC_CATALOG: dict[str, list[str]] = {
         "your eyes",
         "taste buds",
         "memory",
+        "the lungs",
+        "DNA",
+        "adrenaline",
+        "digestion",
+        "the spine",
+        "blood",
+        "hormones",
+        "the liver",
     ],
     "weather": [
         "lightning",
@@ -127,6 +193,14 @@ TOPIC_CATALOG: dict[str, list[str]] = {
         "clouds",
         "hail",
         "fog",
+        "monsoons",
+        "heat waves",
+        "blizzards",
+        "sandstorms",
+        "waterspouts",
+        "ice storms",
+        "cyclones",
+        "microbursts",
     ],
     "architecture": [
         "skyscrapers",
@@ -139,6 +213,94 @@ TOPIC_CATALOG: dict[str, list[str]] = {
         "the Colosseum",
         "traditional Japanese houses",
         "lighthouses",
+        "domes",
+        "suspension bridges",
+        "Art Deco buildings",
+        "ancient temples",
+        "medieval fortresses",
+        "treehouses",
+        "adobe houses",
+        "glass towers",
+    ],
+    "gaming": [
+        "Fortnite",
+        "Minecraft",
+        "Roblox",
+        "Tetris",
+        "Pac-Man",
+        "Super Mario",
+        "The Legend of Zelda",
+        "Pokemon",
+        "Call of Duty",
+        "Among Us",
+        "Rocket League",
+        "League of Legends",
+        "Valorant",
+        "Grand Theft Auto V",
+        "The Sims",
+        "Elden Ring",
+        "FIFA",
+        "Animal Crossing",
+    ],
+    "sports": [
+        "football",
+        "basketball",
+        "surfing",
+        "skateboarding",
+        "Formula 1",
+        "mountain biking",
+        "parkour",
+        "tennis",
+        "snowboarding",
+        "rock climbing",
+        "marathon running",
+        "swimming",
+        "table tennis",
+        "gymnastics",
+        "boxing",
+        "volleyball",
+        "skiing",
+        "rowing",
+    ],
+    "vehicles": [
+        "supercars",
+        "motorcycles",
+        "bullet trains",
+        "helicopters",
+        "fighter jets",
+        "sailboats",
+        "submarines",
+        "monster trucks",
+        "cruise ships",
+        "cargo ships",
+        "classic cars",
+        "rescue helicopters",
+        "tractors",
+        "bicycles",
+        "hot air balloons",
+        "race boats",
+        "scooters",
+        "electric trains",
+    ],
+    "technology": [
+        "robots",
+        "drones",
+        "3D printers",
+        "smartphones",
+        "AI chips",
+        "quantum computers",
+        "virtual reality",
+        "solar panels",
+        "satellites",
+        "humanoid robots",
+        "smart homes",
+        "data centers",
+        "wearable tech",
+        "computer keyboards",
+        "facial recognition",
+        "server racks",
+        "touchscreens",
+        "robot arms",
     ],
 }
 
@@ -162,6 +324,8 @@ _GENERIC_TITLE_HASHTAGS: tuple[str, ...] = (
     "#LearnOnYouTube",
     "#InterestingFacts",
 )
+_APP_PROMO_LINE = "Download my app SecureSets (Android only):"
+_APP_PROMO_URL = "https://play.google.com/store/apps/details?id=com.securesets.app&pli=1"
 _BUCKET_HASHTAGS: dict[str, tuple[str, ...]] = {
     "animals": ("#Wildlife", "#AnimalFacts", "#Nature"),
     "space": ("#Space", "#Astronomy", "#SolarSystem"),
@@ -173,6 +337,10 @@ _BUCKET_HASHTAGS: dict[str, tuple[str, ...]] = {
     "human body": ("#HumanBody", "#Science", "#Biology"),
     "weather": ("#Weather", "#NatureFacts", "#Storms"),
     "architecture": ("#Architecture", "#Design", "#Structures"),
+    "gaming": ("#Gaming", "#GameFacts", "#Esports"),
+    "sports": ("#Sports", "#AthleteLife", "#Action"),
+    "vehicles": ("#Vehicles", "#Transport", "#Motion"),
+    "technology": ("#Technology", "#FutureTech", "#Innovation"),
 }
 
 
@@ -226,6 +394,7 @@ class GeneratedShort(BaseModel):
     bucket: str
     topic: str
     title: str = Field(min_length=15, max_length=80)
+    title_hook: str | None = Field(default=None, min_length=15, max_length=80)
     description: str = Field(min_length=40, max_length=500)
     hashtags: list[str] = Field(min_length=3, max_length=15)
     narration: str = Field(min_length=80, max_length=700)
@@ -245,6 +414,19 @@ class GeneratedShort(BaseModel):
     @field_validator("topic", "title", "description", "narration", "subtitle_text")
     @classmethod
     def _validate_text_fields(cls, value: str) -> str:
+        cleaned = _WHITESPACE_RE.sub(" ", value.strip())
+        lowered = cleaned.lower()
+        if _EMOJI_RE.search(cleaned):
+            raise ValueError("Emoji are not allowed.")
+        if any(phrase in lowered for phrase in _BANNED_PHRASES):
+            raise ValueError("Banned uncertainty or unsafe phrase detected.")
+        return cleaned
+
+    @field_validator("title_hook")
+    @classmethod
+    def _validate_optional_text_fields(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         cleaned = _WHITESPACE_RE.sub(" ", value.strip())
         lowered = cleaned.lower()
         if _EMOJI_RE.search(cleaned):
@@ -318,7 +500,7 @@ class GeneratedShort(BaseModel):
 
     def upload_description(self, minimum_hashtags: int = 10) -> str:
         hashtags = " ".join(self.upload_hashtags(minimum=minimum_hashtags))
-        return f"{self.description}\n\n{hashtags}".strip()
+        return f"{self.description}\n\n{_APP_PROMO_LINE}\n{_APP_PROMO_URL}\n\n{hashtags}".strip()
 
     def _expand_hashtags(self, base_hashtags: list[str]) -> list[str]:
         candidates: list[str] = []
@@ -391,3 +573,130 @@ class GeneratedShort(BaseModel):
         if not words:
             return None
         return "#" + "".join(word.capitalize() for word in words)
+
+
+class LongVideoSection(BaseModel):
+    title: str = Field(min_length=8, max_length=64)
+    narration: str = Field(min_length=400, max_length=2500)
+    visual_queries: list[str] = Field(min_length=2, max_length=5)
+
+    @field_validator("title", "narration")
+    @classmethod
+    def _validate_section_text(cls, value: str) -> str:
+        cleaned = _WHITESPACE_RE.sub(" ", value.strip())
+        lowered = cleaned.lower()
+        if _EMOJI_RE.search(cleaned):
+            raise ValueError("Emoji are not allowed.")
+        if any(phrase in lowered for phrase in _BANNED_PHRASES):
+            raise ValueError("Banned uncertainty or unsafe phrase detected.")
+        return cleaned
+
+    @field_validator("visual_queries")
+    @classmethod
+    def _normalize_visual_queries(cls, values: list[str]) -> list[str]:
+        cleaned = [_WHITESPACE_RE.sub(" ", item.strip()) for item in values if item.strip()]
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for item in cleaned:
+            key = item.lower()
+            if key not in seen:
+                deduped.append(item)
+                seen.add(key)
+        return deduped[:5]
+
+
+class GeneratedLongVideo(BaseModel):
+    bucket: str
+    topic: str
+    title: str = Field(min_length=25, max_length=90)
+    thumbnail_text: str = Field(min_length=4, max_length=34)
+    description: str = Field(min_length=120, max_length=2000)
+    tags: list[str] = Field(min_length=8, max_length=20)
+    sections: list[LongVideoSection] = Field(min_length=6, max_length=8)
+    facts: list[str] = Field(min_length=6, max_length=12)
+
+    @field_validator("bucket")
+    @classmethod
+    def _validate_bucket(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in ALLOWED_BUCKETS:
+            raise ValueError(f"Bucket must be one of {', '.join(ALLOWED_BUCKETS)}.")
+        return normalized
+
+    @field_validator("topic", "title", "thumbnail_text", "description")
+    @classmethod
+    def _validate_text_fields(cls, value: str) -> str:
+        cleaned = _WHITESPACE_RE.sub(" ", value.strip())
+        lowered = cleaned.lower()
+        if _EMOJI_RE.search(cleaned):
+            raise ValueError("Emoji are not allowed.")
+        if any(phrase in lowered for phrase in _BANNED_PHRASES):
+            raise ValueError("Banned uncertainty or unsafe phrase detected.")
+        return cleaned
+
+    @field_validator("tags")
+    @classmethod
+    def _validate_tags(cls, values: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            tag = _WHITESPACE_RE.sub(" ", value.strip().lstrip("#"))
+            if not tag:
+                continue
+            key = tag.lower()
+            if key in seen:
+                continue
+            cleaned.append(tag[:45])
+            seen.add(key)
+        if len(cleaned) < 8:
+            raise ValueError("At least 8 distinct tags are required.")
+        return cleaned[:20]
+
+    @field_validator("facts")
+    @classmethod
+    def _validate_facts(cls, values: list[str]) -> list[str]:
+        cleaned = [_WHITESPACE_RE.sub(" ", item.strip()) for item in values if item.strip()]
+        if len(cleaned) < 6:
+            raise ValueError("At least 6 facts are required.")
+        if len({item.lower() for item in cleaned}) != len(cleaned):
+            raise ValueError("Facts must be distinct.")
+        return cleaned[:12]
+
+    @model_validator(mode="after")
+    def _validate_long_duration_shape(self) -> "GeneratedLongVideo":
+        word_count = len(self.narration.split())
+        if not 1325 <= word_count <= 1650:
+            raise ValueError("Long-form narration should be roughly 8:30-11:00 at normal Kokoro speed.")
+        return self
+
+    @property
+    def narration(self) -> str:
+        return "\n\n".join(section.narration for section in self.sections).strip()
+
+    def estimated_duration_seconds(self) -> float:
+        return round(len(self.narration.split()) / 2.6, 2)
+
+    def keyword_queries(self) -> list[str]:
+        queries = [self.topic, f"{self.topic} {self.bucket}", self.bucket]
+        for section in self.sections:
+            queries.extend(section.visual_queries)
+        return list(dict.fromkeys(query for query in queries if query))[:12]
+
+    def upload_description(self, chapters: list[tuple[float, str]]) -> str:
+        chapter_lines = ["Chapters:"]
+        for seconds, title in chapters:
+            chapter_lines.append(f"{self._format_chapter_time(seconds)} {title}")
+        hashtags = " ".join(f"#{self._normalize_hashtag(tag)}" for tag in self.tags[:8])
+        return f"{self.description}\n\n{chr(10).join(chapter_lines)}\n\n{hashtags}".strip()
+
+    def _normalize_hashtag(self, raw_value: str) -> str:
+        words = _WORD_RE.findall(raw_value)
+        if not words:
+            return "Facts"
+        return "".join(word.capitalize() for word in words)
+
+    def _format_chapter_time(self, seconds: float) -> str:
+        total = max(int(seconds), 0)
+        minutes = total // 60
+        remainder = total % 60
+        return f"{minutes:02d}:{remainder:02d}"

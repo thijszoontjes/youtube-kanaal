@@ -88,75 +88,73 @@ def test_pexels_service_prioritizes_one_clip_per_query_first(configured_env) -> 
     assert [clip.source_id for clip in prioritized[:2]] == ["a1", "b1"]
 
 
-def test_download_clip_replaces_corrupt_cached_file(configured_env, monkeypatch) -> None:
+def test_pexels_service_redownloads_invalid_cached_clip(monkeypatch, configured_env) -> None:
     service = PexelsService(load_settings())
-    clip_path = configured_env["cache_dir"] / "pexels" / "cached.mp4"
+    clip_path = service.settings.cache_dir / "pexels" / "broken.mp4"
     clip_path.parent.mkdir(parents=True, exist_ok=True)
     clip_path.write_bytes(b"")
     clip = VideoClipAsset(
-        source_id="cached",
-        query="ocean",
-        source_url="https://example.com/ocean",
-        download_url="https://example.com/cached.mp4",
+        source_id="broken",
+        query="saturn rings",
+        source_url="https://example.com/saturn-rings",
+        download_url="https://example.com/broken.mp4",
         local_path=clip_path,
         duration_seconds=5,
         width=1080,
         height=1920,
-        score=8.0,
+        score=9.5,
     )
 
     calls: list[str] = []
 
-    class FakeResponse:
-        content = b"valid-video"
+    class DummyResponse:
+        def __init__(self, content: bytes) -> None:
+            self.content = content
 
         def raise_for_status(self) -> None:
             return None
 
-    def fake_get(url: str) -> FakeResponse:
+    def fake_get(url: str):
         calls.append(url)
-        return FakeResponse()
+        return DummyResponse(b"0" * 4096)
 
+    validations = iter([False, True])
     monkeypatch.setattr(service.client, "get", fake_get)
-    monkeypatch.setattr(
-        service,
-        "_clip_file_is_usable",
-        lambda path: path.exists() and path.read_bytes() == b"valid-video",
-    )
+    monkeypatch.setattr(service, "_is_valid_clip_file", lambda path: next(validations))
 
-    service._download_clip(clip)
+    prepared = service._prepare_clip_for_use(clip)
 
-    assert calls == ["https://example.com/cached.mp4"]
-    assert clip_path.read_bytes() == b"valid-video"
+    assert prepared is True
+    assert calls == ["https://example.com/broken.mp4"]
+    assert clip.local_path.exists()
+    assert clip.local_path.stat().st_size == 4096
 
 
-def test_download_clip_skips_valid_cached_file(configured_env, monkeypatch) -> None:
+def test_pexels_service_skips_clip_when_downloaded_file_is_invalid(monkeypatch, configured_env) -> None:
     service = PexelsService(load_settings())
-    clip_path = configured_env["cache_dir"] / "pexels" / "cached-valid.mp4"
-    clip_path.parent.mkdir(parents=True, exist_ok=True)
-    clip_path.write_bytes(b"valid-video")
+    clip_path = service.settings.cache_dir / "pexels" / "still-broken.mp4"
     clip = VideoClipAsset(
-        source_id="cached-valid",
-        query="ocean",
-        source_url="https://example.com/ocean",
-        download_url="https://example.com/cached-valid.mp4",
+        source_id="still-broken",
+        query="saturn rings",
+        source_url="https://example.com/saturn-rings",
+        download_url="https://example.com/still-broken.mp4",
         local_path=clip_path,
         duration_seconds=5,
         width=1080,
         height=1920,
-        score=8.0,
+        score=9.5,
     )
 
-    def fail_get(_url: str):
-        raise AssertionError("download should not run for a valid cached clip")
+    class DummyResponse:
+        content = b"not-a-real-video"
 
-    monkeypatch.setattr(service.client, "get", fail_get)
-    monkeypatch.setattr(
-        service,
-        "_clip_file_is_usable",
-        lambda path: path.exists() and path.read_bytes() == b"valid-video",
-    )
+        def raise_for_status(self) -> None:
+            return None
 
-    service._download_clip(clip)
+    monkeypatch.setattr(service.client, "get", lambda url: DummyResponse())
+    monkeypatch.setattr(service, "_is_valid_clip_file", lambda path: False)
 
-    assert clip_path.read_bytes() == b"valid-video"
+    prepared = service._prepare_clip_for_use(clip)
+
+    assert prepared is False
+    assert not clip.local_path.exists()

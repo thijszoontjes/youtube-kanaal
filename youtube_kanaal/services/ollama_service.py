@@ -1,21 +1,95 @@
 from __future__ import annotations
 
 import json
+import re
 from itertools import chain
 from pathlib import Path
 from typing import TypeVar
 
 import httpx
 from pydantic import BaseModel, ValidationError
+from pydantic_core import ValidationError as CoreValidationError
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from youtube_kanaal.config import Settings
 from youtube_kanaal.exceptions import PipelineStageError
-from youtube_kanaal.models.content import GeneratedShort, TOPIC_CATALOG, TopicChoice
-from youtube_kanaal.prompts import build_content_generation_prompt, build_topic_selection_prompt
+from youtube_kanaal.models.content import GeneratedLongVideo, GeneratedShort, LongVideoSection, TOPIC_CATALOG, TopicChoice
+from youtube_kanaal.prompts import (
+    build_content_generation_prompt,
+    build_long_content_generation_prompt,
+    build_topic_selection_prompt,
+)
 from youtube_kanaal.utils.files import write_json, write_text
 
 TModel = TypeVar("TModel", bound=BaseModel)
+_VALIDATION_ERROR_TYPES = (ValidationError, CoreValidationError)
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+_STOCK_OUTRO_PREFIXES: tuple[str, ...] = (
+    "that is why ",
+    "that's why ",
+    "people remember ",
+)
+_STOCK_OUTRO_FRAGMENTS: tuple[str, ...] = (
+    "looks so unusual on screen",
+    "works so well in a fast visual short",
+    "keeps showing up in science videos and documentaries",
+)
+_FORMULAIC_NARRATION_PREFIXES: tuple[str, ...] = (
+    "here are ",
+    "first,",
+    "first:",
+    "first up,",
+    "second,",
+    "second:",
+    "third,",
+    "third:",
+    "fact 1",
+    "fact one",
+    "fact 2",
+    "fact two",
+    "fact 3",
+    "fact three",
+)
+_GENERIC_TITLE_RE = re.compile(
+    r"^\s*(?:3|three)\s+(?:quick\s+|wild\s+|surprising\s+|amazing\s+|interesting\s+)?facts\s+about\b",
+    re.IGNORECASE,
+)
+_BLAND_TITLE_RE = re.compile(
+    r"\b(?:wonders?|explained|visual guide|long-form visual explainer|interesting facts|amazing facts)\b",
+    re.IGNORECASE,
+)
+_CLICKABLE_TITLE_TERMS: tuple[str, ...] = (
+    "secret",
+    "hiding",
+    "hidden",
+    "truth",
+    "strange",
+    "weird",
+    "nobody",
+    "miss",
+    "shouldn't",
+    "should not",
+    "do not",
+    "don't",
+    "ignore",
+    "what",
+    "why",
+    "this",
+    "never",
+    "wrong",
+)
+_TITLE_EMPHASIS_WORDS: tuple[str, ...] = (
+    "secret",
+    "hiding",
+    "hidden",
+    "truth",
+    "weird",
+    "nobody",
+    "never",
+    "not",
+    "wrong",
+    "this",
+)
 
 
 class OllamaService:
@@ -86,6 +160,29 @@ class OllamaService:
         )
         return self._normalize_generated_short(content, topic)
 
+    def generate_long_content(
+        self,
+        *,
+        topic: TopicChoice,
+        excluded_titles: list[str],
+        prompt_path: Path,
+        response_path: Path,
+    ) -> GeneratedLongVideo:
+        if self.settings.mock_mode:
+            content = self._fallback_long_content(topic)
+            write_text(prompt_path, "mock-mode long-form content generation")
+            write_json(response_path, content.model_dump(mode="json"))
+            return content
+        prompt = build_long_content_generation_prompt(topic, excluded_titles)
+        write_text(prompt_path, prompt)
+        content = self._generate_model(
+            prompt=prompt,
+            stage="long_content_generation",
+            prompt_output_path=response_path,
+            model_cls=GeneratedLongVideo,
+        )
+        return self._normalize_generated_long(content, topic)
+
     def _generate_model(
         self,
         *,
@@ -97,7 +194,7 @@ class OllamaService:
         @retry(
             stop=stop_after_attempt(self.settings.retry_attempts),
             wait=wait_exponential(multiplier=1, min=1, max=8),
-            retry=retry_if_exception_type((httpx.HTTPError, ValidationError, ValueError)),
+            retry=retry_if_exception_type((httpx.HTTPError, ValueError, *_VALIDATION_ERROR_TYPES)),
             reraise=True,
         )
         def _request() -> TModel:
@@ -108,6 +205,7 @@ class OllamaService:
                     "prompt": prompt,
                     "stream": False,
                     "format": "json",
+                    "keep_alive": 0,
                 },
             )
             response.raise_for_status()
@@ -118,7 +216,7 @@ class OllamaService:
                 raise ValueError("Ollama returned an empty response.")
             try:
                 return model_cls.model_validate_json(response_text)
-            except ValidationError:
+            except _VALIDATION_ERROR_TYPES:
                 repaired = self._repair_model_response(response_text=response_text, model_cls=model_cls)
                 if repaired is not None:
                     return repaired
@@ -126,7 +224,7 @@ class OllamaService:
 
         try:
             return _request()
-        except (httpx.HTTPError, ValidationError, ValueError) as exc:
+        except (httpx.HTTPError, ValueError, *_VALIDATION_ERROR_TYPES) as exc:
             raise PipelineStageError(
                 stage=stage,
                 message="Failed to generate valid JSON from Ollama.",
@@ -177,10 +275,12 @@ class OllamaService:
             repaired_payload["search_terms"] = list(dict.fromkeys(cleaned_terms))[:6]
         elif model_cls is GeneratedShort:
             repaired_payload = self._repair_generated_short_payload(repaired_payload)
+        elif model_cls is GeneratedLongVideo:
+            repaired_payload = self._repair_generated_long_payload(repaired_payload)
 
         try:
             return model_cls.model_validate(repaired_payload)
-        except ValidationError:
+        except _VALIDATION_ERROR_TYPES:
             return None
 
     def _resolve_catalog_topic(self, topic: str) -> tuple[str, str] | None:
@@ -216,11 +316,6 @@ class OllamaService:
         repaired["bucket"] = bucket_value
         repaired["topic"] = topic_value
 
-        title = str(repaired.get("title", "")).strip()
-        if not title:
-            title = f"3 Facts About {topic_value}"
-        repaired["title"] = title
-
         description = str(repaired.get("description", "")).strip()
         if len(description) < 40:
             description = f"Three fast facts about {topic_value} for a visual YouTube Short made locally."
@@ -233,44 +328,126 @@ class OllamaService:
         cleaned_hashtags.extend(["#shorts", "#facts", f"#{topic_value.title().replace(' ', '')}"])
         repaired["hashtags"] = list(dict.fromkeys(cleaned_hashtags))[:8]
 
+        raw_narration = self._clean_narration(str(repaired.get("narration", "")))
+
         facts = repaired.get("facts")
         cleaned_facts = []
         if isinstance(facts, list):
             cleaned_facts = [self._normalize_sentence(str(fact)) for fact in facts if str(fact).strip()]
-        repaired["facts"] = cleaned_facts[:3]
+        if len(cleaned_facts) < 3:
+            cleaned_facts.extend(self._facts_from_narration(raw_narration, topic_value))
+        if len(cleaned_facts) < 3:
+            cleaned_facts.extend(self._fallback_facts(topic_value, bucket_value))
+        repaired["facts"] = self._dedupe_preserving_order(cleaned_facts)[:3]
 
-        narration = str(repaired.get("narration", "")).strip()
-        if not narration and cleaned_facts:
-            narration = " ".join(cleaned_facts)
-        if cleaned_facts and len(narration.split()) < 45:
-            narration = self._build_narration(topic_value, cleaned_facts)
-        if len(narration.split()) < 45:
-            narration = f"{narration} People remember {topic_value} because it looks so unusual on screen."
+        narration = raw_narration
+        repaired_facts = list(repaired["facts"]) if isinstance(repaired["facts"], list) else []
+        if not narration and repaired_facts:
+            narration = self._build_narration(topic_value, repaired_facts)
+        elif repaired_facts and not 45 <= len(narration.split()) <= 90:
+            narration = self._fit_narration_to_duration(narration, repaired_facts, topic_value)
         repaired["narration"] = narration
 
-        subtitle_text = str(repaired.get("subtitle_text", "")).strip()
-        repaired["subtitle_text"] = narration if len(subtitle_text.split()) < 10 else subtitle_text
+        title = str(repaired.get("title", "")).strip()
+        title_hook = str(repaired.get("title_hook", "")).strip()
+        repaired["title_hook"] = self._select_title(
+            title=title_hook,
+            title_hook=title,
+            topic=topic_value,
+            facts=repaired_facts,
+        )
+        repaired["title"] = self._select_title(
+            title=title,
+            title_hook=title_hook,
+            topic=topic_value,
+            facts=repaired_facts,
+        )
+        repaired["subtitle_text"] = narration
         return repaired
+
+    def _dedupe_preserving_order(self, values: list[str]) -> list[str]:
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            normalized = self._normalize_sentence(value)
+            if not normalized:
+                continue
+            key = normalized.lower()
+            if key in seen:
+                continue
+            deduped.append(normalized)
+            seen.add(key)
+        return deduped
+
+    def _facts_from_narration(self, narration: str, topic: str) -> list[str]:
+        sentences = [self._normalize_sentence(sentence) for sentence in _SENTENCE_SPLIT_RE.split(narration) if sentence.strip()]
+        facts: list[str] = []
+        for sentence in sentences:
+            lowered = sentence.lower()
+            if len(sentence.split()) < 5:
+                continue
+            if lowered.startswith(("here are ", "these are ")):
+                continue
+            facts.append(sentence)
+        if len(facts) >= 3:
+            return facts[:3]
+        topic_lower = topic.lower()
+        for sentence in sentences:
+            if topic_lower in sentence.lower() and sentence not in facts:
+                facts.append(sentence)
+            if len(facts) >= 3:
+                break
+        return facts[:3]
+
+    def _fallback_facts(self, topic: str, bucket: str) -> list[str]:
+        bucket_label = bucket or "science and culture"
+        return [
+            f"{topic} has details that make it useful for a fast visual explainer.",
+            f"{topic} connects to {bucket_label} in ways that can be shown clearly on screen.",
+            f"{topic} includes enough real-world context to support a short three-point story.",
+        ]
+
+    def _fit_narration_to_duration(self, narration: str, facts: list[str], topic: str) -> str:
+        sentences = [sentence.strip() for sentence in _SENTENCE_SPLIT_RE.split(narration) if sentence.strip()]
+        if sentences:
+            kept: list[str] = []
+            for sentence in sentences:
+                candidate = " ".join([*kept, sentence]).strip()
+                if len(candidate.split()) > 90:
+                    break
+                kept.append(sentence)
+            candidate = " ".join(kept).strip()
+            if len(candidate.split()) >= 45:
+                return candidate
+        return self._build_narration(topic, facts)
 
     def _normalize_generated_short(self, content: GeneratedShort, topic: TopicChoice) -> GeneratedShort:
         facts = [self._normalize_sentence(fact) for fact in content.facts]
-        narration_base = self._build_narration(topic.topic, facts)
-        narration_candidates = [
-            f"{narration_base} People remember {topic.topic} because it looks so unusual on screen.",
-            narration_base,
-            content.narration,
-        ]
+        narration_candidates: list[str] = []
+        cleaned_narration = self._clean_narration(content.narration)
+        if topic.topic.lower() in cleaned_narration.lower():
+            narration_candidates.append(cleaned_narration)
+        narration_candidates.append(self._build_narration(topic.topic, facts))
 
-        title = content.title.strip()
-        if "3 facts" not in title.lower():
-            title = f"3 Facts About {topic.topic}"
-
+        title = self._select_title(
+            title=content.title,
+            title_hook=content.title_hook or "",
+            topic=topic.topic,
+            facts=facts,
+        )
+        title_hook = self._select_title(
+            title=content.title_hook or "",
+            title_hook=content.title,
+            topic=topic.topic,
+            facts=facts,
+        )
         base_payload = content.model_dump(mode="json")
         base_payload.update(
             {
                 "bucket": topic.bucket,
                 "topic": topic.topic,
                 "title": title,
+                "title_hook": title_hook,
                 "facts": facts,
             }
         )
@@ -281,11 +458,209 @@ class OllamaService:
             candidate_payload["subtitle_text"] = narration
             try:
                 return GeneratedShort.model_validate(candidate_payload)
-            except ValidationError:
+            except _VALIDATION_ERROR_TYPES:
                 continue
 
         base_payload["subtitle_text"] = content.narration
         return GeneratedShort.model_validate(base_payload)
+
+    def _repair_generated_long_payload(self, payload: dict[str, object]) -> dict[str, object]:
+        repaired = dict(payload)
+        topic_value = str(repaired.get("topic", "")).strip()
+        catalog_match = self._resolve_catalog_topic(topic_value)
+        if catalog_match is not None:
+            bucket_value, topic_value = catalog_match
+        else:
+            bucket_value = str(repaired.get("bucket", "")).strip().lower()
+            bucket_match = self._resolve_bucket_candidate(bucket=bucket_value, topic=topic_value)
+            if bucket_match is not None:
+                bucket_value, topic_value = bucket_match
+            elif not bucket_value:
+                bucket_value = "animals"
+                topic_value = topic_value or TOPIC_CATALOG[bucket_value][0]
+
+        repaired["bucket"] = bucket_value
+        repaired["topic"] = topic_value
+        repaired["title"] = self._clean_long_title(str(repaired.get("title", "")), topic_value)
+        repaired["thumbnail_text"] = self._clean_thumbnail_text(str(repaired.get("thumbnail_text", "")), topic_value)
+        repaired["description"] = self._clean_long_description(str(repaired.get("description", "")), topic_value)
+
+        sections = repaired.get("sections")
+        cleaned_sections: list[dict[str, object]] = []
+        if isinstance(sections, list):
+            for index, section in enumerate(sections[:8], start=1):
+                if not isinstance(section, dict):
+                    continue
+                title = self._normalize_sentence(str(section.get("title", "")).strip() or f"Part {index}")
+                narration = self._clean_narration(str(section.get("narration", "")))
+                queries = section.get("visual_queries")
+                cleaned_queries = [str(query).strip() for query in queries if str(query).strip()] if isinstance(queries, list) else []
+                if narration:
+                    cleaned_sections.append(
+                        {
+                            "title": title[:64],
+                            "narration": narration,
+                            "visual_queries": cleaned_queries or [topic_value, f"{topic_value} documentary"],
+                        }
+                    )
+        repaired["sections"] = self._fit_long_sections(cleaned_sections, topic_value, bucket_value)
+
+        tags = repaired.get("tags")
+        cleaned_tags = [str(tag).strip().lstrip("#") for tag in tags if str(tag).strip()] if isinstance(tags, list) else []
+        cleaned_tags.extend([topic_value, bucket_value, "facts", "documentary", "explainer", "science"])
+        repaired["tags"] = list(dict.fromkeys(cleaned_tags))[:20]
+
+        facts = repaired.get("facts")
+        cleaned_facts = [self._normalize_sentence(str(fact)) for fact in facts if str(fact).strip()] if isinstance(facts, list) else []
+        cleaned_facts.extend(self._fallback_long_facts(topic_value, bucket_value))
+        repaired["facts"] = self._dedupe_preserving_order(cleaned_facts)[:12]
+        return repaired
+
+    def _normalize_generated_long(self, content: GeneratedLongVideo, topic: TopicChoice) -> GeneratedLongVideo:
+        payload = content.model_dump(mode="json")
+        payload["bucket"] = topic.bucket
+        payload["topic"] = topic.topic
+        payload["title"] = self._clean_long_title(content.title, topic.topic)
+        payload["thumbnail_text"] = self._clean_thumbnail_text(content.thumbnail_text, topic.topic)
+        payload["sections"] = self._fit_long_sections(
+            [section.model_dump(mode="json") for section in content.sections],
+            topic.topic,
+            topic.bucket,
+        )
+        return GeneratedLongVideo.model_validate(payload)
+
+    def _fit_long_sections(
+        self,
+        sections: list[dict[str, object]],
+        topic: str,
+        bucket: str,
+    ) -> list[LongVideoSection]:
+        normalized: list[dict[str, object]] = []
+        for index, section in enumerate(sections, start=1):
+            narration = self._fit_section_words(str(section.get("narration", "")), topic, index)
+            queries = section.get("visual_queries")
+            visual_queries = [str(query).strip() for query in queries if str(query).strip()] if isinstance(queries, list) else []
+            visual_queries.extend([topic, f"{topic} {bucket}", f"{topic} documentary b-roll"])
+            normalized.append(
+                {
+                    "title": str(section.get("title") or f"{topic.title()} Detail {index}")[:64],
+                    "narration": narration,
+                    "visual_queries": list(dict.fromkeys(visual_queries))[:5],
+                }
+            )
+        while len(normalized) < 7:
+            index = len(normalized) + 1
+            normalized.append(
+                {
+                    "title": f"{topic.title()} Detail {index}",
+                    "narration": self._fallback_long_section(topic, bucket, index),
+                    "visual_queries": [topic, f"{topic} {bucket}", f"{topic} documentary b-roll"],
+                }
+            )
+        normalized = normalized[:7]
+        total_words = sum(len(str(section["narration"]).split()) for section in normalized)
+        index = 0
+        while total_words < 1325:
+            addition = (
+                f" That detail matters because it changes how {topic} fits into the bigger story, "
+                "and it gives the visuals another layer instead of just repeating the same angle."
+            )
+            normalized[index]["narration"] = f"{normalized[index]['narration']}{addition}"
+            total_words += len(addition.split())
+            index = (index + 1) % len(normalized)
+        while total_words > 1650:
+            longest = max(range(len(normalized)), key=lambda i: len(str(normalized[i]["narration"]).split()))
+            words = str(normalized[longest]["narration"]).split()
+            normalized[longest]["narration"] = " ".join(words[: max(190, len(words) - 25)]).rstrip(" ,;:") + "."
+            new_total = sum(len(str(section["narration"]).split()) for section in normalized)
+            if new_total == total_words:
+                break
+            total_words = new_total
+        return [LongVideoSection.model_validate(section) for section in normalized]
+
+    def _fit_section_words(self, narration: str, topic: str, index: int) -> str:
+        cleaned = self._clean_narration(narration)
+        if not cleaned:
+            return self._fallback_long_section(topic, "facts", index)
+        words = cleaned.split()
+        if len(words) > 235:
+            return " ".join(words[:225]).rstrip(" ,;:") + "."
+        while len(words) < 190:
+            extension = (
+                f" For {topic}, that small point is useful because it connects the explanation "
+                "to something you can actually picture on screen."
+            )
+            cleaned = f"{cleaned} {extension}"
+            words = cleaned.split()
+        return cleaned
+
+    def _clean_long_title(self, title: str, topic: str) -> str:
+        cleaned = " ".join(title.split()).strip()
+        topic_title = topic[:1].upper() + topic[1:]
+        if 25 <= len(cleaned) <= 90 and not self._is_generic_title(cleaned) and self._clickable_title_score(cleaned) >= 1:
+            return self._style_clickable_title(cleaned, topic, [], max_length=90)
+        fallback = f"The Hidden Truth About {topic_title}"
+        return self._style_clickable_title(fallback, topic, [], max_length=90)
+
+    def _clean_thumbnail_text(self, value: str, topic: str) -> str:
+        cleaned = " ".join(value.upper().split()).strip()
+        bland_fragments = ("EXPLAINED", "VISUAL GUIDE", "FACTS ABOUT", "DETAILS")
+        if 4 <= len(cleaned) <= 34 and not any(fragment in cleaned for fragment in bland_fragments):
+            return cleaned
+        options = [
+            "WAIT WHAT?",
+            "HIDDEN TRUTH",
+            "THIS IS WEIRD",
+            "NOBODY SEES THIS",
+            "DO NOT MISS THIS",
+        ]
+        seed = self._variation_seed(topic, [])
+        return options[seed % len(options)]
+
+    def _clean_long_description(self, description: str, topic: str) -> str:
+        cleaned = " ".join(description.split()).strip()
+        if len(cleaned) >= 120:
+            return cleaned
+        return (
+            f"A long-form visual explainer about {topic}, built from a fast, curious fact-video format "
+            "and expanded with chapters, B-roll, narration, background music, and upload-ready metadata."
+        )
+
+    def _fallback_long_section(self, topic: str, bucket: str, index: int) -> str:
+        angles = [
+            "the first thing that makes it worth watching closely",
+            "the part that changes the way the whole topic feels",
+            "the detail that usually gets skipped in quick explainers",
+            "the visual clue that makes the story easier to understand",
+            "the practical context behind the most surprising part",
+            "the reason this keeps showing up in documentaries",
+            "the final connection that makes the whole thing stick",
+        ]
+        angle = angles[(index - 1) % len(angles)]
+        base = (
+            f"With {topic}, {angle} is not just trivia. It gives the story a shape. "
+            f"In the world of {bucket}, small details often explain why something looks strange, "
+            "why it behaves in a specific way, and why people keep coming back to study it. "
+            "A good visual sequence can move from wide context into close detail, then back out again, "
+            "so the viewer feels the scale without losing the point. "
+            "That pacing also keeps the video from becoming a list. "
+            "Instead of treating every fact as a separate stop, this section connects one idea to the next. "
+            "The result is a clearer explanation, because the footage has a job: it supports the narration, "
+            "adds texture, and gives each beat a different visual rhythm. "
+            f"By the end of this part, {topic} feels less like a random subject and more like a small system "
+            "with patterns you can recognize."
+        )
+        return self._fit_section_words(base, topic, index)
+
+    def _fallback_long_facts(self, topic: str, bucket: str) -> list[str]:
+        return [
+            f"{topic} has enough visual detail to support a multi-chapter explainer.",
+            f"{topic} connects to {bucket} through several distinct angles.",
+            f"{topic} can be explained with a mix of wide context and close-up detail.",
+            f"{topic} benefits from slower pacing because each idea needs visual support.",
+            f"{topic} works well with documentary-style B-roll and simple transitions.",
+            f"{topic} can be packaged with chapters, tags, and a mobile-readable thumbnail.",
+        ]
 
     def _normalize_sentence(self, value: str) -> str:
         cleaned = value.strip()
@@ -295,18 +670,177 @@ class OllamaService:
             cleaned = f"{cleaned}."
         return cleaned
 
-    def _build_narration(self, topic: str, facts: list[str]) -> str:
-        connectors = ["First", "Second", "Third"]
-        segments = [
-            f"{connector}, {self._normalize_sentence(fact)}"
-            for connector, fact in zip(connectors, facts)
-        ]
-        body = " ".join(segments)
+    def _clean_narration(self, narration: str) -> str:
+        cleaned = " ".join(narration.split()).strip()
+        if not cleaned:
+            return cleaned
+        sentences = _SENTENCE_SPLIT_RE.split(cleaned)
+        filtered_sentences = []
+        for sentence in sentences:
+            stripped = sentence.strip()
+            lowered = stripped.lower()
+            if any(lowered.startswith(prefix) for prefix in _FORMULAIC_NARRATION_PREFIXES):
+                continue
+            if any(lowered.startswith(prefix) for prefix in _STOCK_OUTRO_PREFIXES):
+                continue
+            if any(fragment in lowered for fragment in _STOCK_OUTRO_FRAGMENTS):
+                continue
+            filtered_sentences.append(stripped)
+        return " ".join(filtered_sentences).strip()
+
+    def _select_title(self, *, title: str, title_hook: str, topic: str, facts: list[str]) -> str:
+        cleaned_title = " ".join(title.split()).strip()
+        cleaned_hook = " ".join(title_hook.split()).strip()
+        if cleaned_hook and self._is_better_title(cleaned_hook, cleaned_title):
+            return self._style_clickable_title(cleaned_hook, topic, facts, max_length=70)
+        if cleaned_title and not self._is_generic_title(cleaned_title):
+            return self._style_clickable_title(cleaned_title, topic, facts, max_length=70)
+        return self._style_clickable_title(self._fallback_title(topic, facts), topic, facts, max_length=70)
+
+    def _is_better_title(self, candidate: str, current: str) -> bool:
+        if not candidate or len(candidate) > 70:
+            return False
+        if self._is_generic_title(candidate):
+            return False
+        if not current:
+            return True
+        candidate_score = self._clickable_title_score(candidate)
+        current_score = self._clickable_title_score(current)
+        if candidate_score > current_score:
+            return True
+        if candidate_score < current_score:
+            return False
+        return self._is_generic_title(current) or len(candidate) < len(current) + 18
+
+    def _is_generic_title(self, title: str) -> bool:
+        lowered = title.lower()
         return (
-            f"Here are 3 facts about {topic}. "
-            f"{body} "
-            f"That is why {topic} stands out, and why it works so well in a fast visual Short."
+            bool(_GENERIC_TITLE_RE.search(lowered))
+            or bool(_BLAND_TITLE_RE.search(lowered))
+            or ": 3 facts" in lowered
+            or "3 facts you should know" in lowered
+        )
+
+    def _fallback_title(self, topic: str, facts: list[str]) -> str:
+        topic_title = topic[:1].upper() + topic[1:]
+        fact_text = " ".join(facts).lower()
+        if "ocean" in fact_text or "underwater" in fact_text or "sea" in fact_text:
+            candidates = [
+                f"{topic_title} Should Not Exist Like This",
+                f"The Ocean Secret Behind {topic_title}",
+                f"What {topic_title} Is Hiding",
+            ]
+        elif "space" in fact_text or "planet" in fact_text or "moon" in fact_text:
+            candidates = [
+                f"{topic_title} Is Hiding Something Weird",
+                f"The Space Secret Everyone Misses About {topic_title}",
+                f"What {topic_title} Is Hiding",
+            ]
+        else:
+            candidates = [
+                f"Do Not Ignore This About {topic_title}",
+                f"What {topic_title} Is Hiding",
+                f"Nobody Expects This About {topic_title}",
+            ]
+        for candidate in candidates:
+            if 15 <= len(candidate) <= 70:
+                return candidate
+        return f"The Weird Truth About {topic_title}"[:70].rstrip()
+
+    def _clickable_title_score(self, title: str) -> int:
+        lowered = title.lower()
+        return sum(1 for term in _CLICKABLE_TITLE_TERMS if term in lowered)
+
+    def _style_clickable_title(self, title: str, topic: str, facts: list[str], *, max_length: int) -> str:
+        cleaned = " ".join(title.split()).strip()
+        if not cleaned:
+            cleaned = self._fallback_title(topic, facts)
+        if self._clickable_title_score(cleaned) == 0:
+            cleaned = self._fallback_title(topic, facts)
+        seed = self._variation_seed(topic, facts)
+        if seed % 3 == 0:
+            return self._trim_title(cleaned.upper(), max_length)
+        if seed % 3 == 1:
+            return self._trim_title(self._emphasize_title_words(cleaned), max_length)
+        return self._trim_title(cleaned, max_length)
+
+    def _emphasize_title_words(self, title: str) -> str:
+        words = []
+        emphasized = False
+        for word in title.split():
+            plain = word.strip("()[]{}:;,.!?").lower()
+            if not emphasized and plain in _TITLE_EMPHASIS_WORDS:
+                words.append(word.upper())
+                emphasized = True
+            else:
+                words.append(word)
+        return " ".join(words)
+
+    def _trim_title(self, title: str, max_length: int) -> str:
+        cleaned = " ".join(title.split()).strip()
+        if len(cleaned) <= max_length:
+            return cleaned
+        trimmed = cleaned[:max_length].rstrip(" -|,:;")
+        if " " in trimmed:
+            trimmed = trimmed.rsplit(" ", 1)[0]
+        return trimmed.rstrip(" -|,:;") or cleaned[:max_length].rstrip()
+
+    def _variation_seed(self, topic: str, facts: list[str]) -> int:
+        return sum(ord(char) for char in topic.lower()) + sum(len(fact) for fact in facts)
+
+    def _build_narration(self, topic: str, facts: list[str]) -> str:
+        normalized_facts = [self._normalize_sentence(fact) for fact in facts[:3]]
+        if len(normalized_facts) < 3:
+            return f"{topic} has a few details that are worth a closer look."
+
+        seed = self._variation_seed(topic, normalized_facts)
+        intros = [
+            f"Why is {topic} so much stranger than it looks?",
+            f"{topic} should be ordinary, but it really is not.",
+            f"Okay, something genuinely weird is hiding in {topic}.",
+            f"What makes {topic} worth stopping for is the part most people miss.",
+        ]
+        first_leads = [
+            f"For one thing, {normalized_facts[0]}",
+            f"To start, {normalized_facts[0]}",
+            f"Right away, {normalized_facts[0]}",
+            f"The opening detail is already odd: {normalized_facts[0]}",
+        ]
+        second_leads = [
+            f"Then there's this: {normalized_facts[1]}",
+            f"Also, {normalized_facts[1]}",
+            f"And it gets better, because {normalized_facts[1]}",
+            f"Another thing, {normalized_facts[1]}",
+        ]
+        third_leads = [
+            f"And honestly, {normalized_facts[2]}",
+            f"And maybe the weirdest part, {normalized_facts[2]}",
+            f"Oh, and {normalized_facts[2]}",
+            f"And somehow, {normalized_facts[2]}",
+        ]
+        closers = [
+            "Kind of a ridiculous combo, really.",
+            "Not exactly what most people expect.",
+            "Which is a lot to pack into one topic, honestly.",
+            "Yeah, that's a weird little stack of facts.",
+        ]
+        narration = " ".join(
+            [
+                intros[seed % len(intros)],
+                first_leads[(seed + 1) % len(first_leads)],
+                second_leads[(seed + 2) % len(second_leads)],
+                third_leads[(seed + 3) % len(third_leads)],
+                closers[(seed + 4) % len(closers)],
+            ]
         ).strip()
+        if len(narration.split()) < 45:
+            extra_beats = [
+                "Even on its own, that would already be enough to make somebody stop scrolling for a second.",
+                "And honestly, once those details stack up, the whole thing feels a lot less ordinary.",
+                "Which is kind of wild, because each part sounds made up until you remember it's real.",
+            ]
+            narration = f"{narration} {extra_beats[(seed + 5) % len(extra_beats)]}".strip()
+        return narration
 
     def _fallback_topic(self, excluded_topics: list[str]) -> TopicChoice:
         excluded = {item.lower() for item in excluded_topics}
@@ -335,17 +869,13 @@ class OllamaService:
             f"Scientists study {topic.topic.lower()} because it reveals useful patterns in nature.",
             f"{topic.topic.title()} is visually striking, which makes it perfect for a short explainer.",
         ]
-        narration = (
-            f"Here are 3 facts about {topic.topic}. "
-            f"First, {facts[0]} "
-            f"Second, {facts[1]} "
-            f"Third, {facts[2]} "
-            f"That is why {topic.topic} keeps showing up in science videos and documentaries."
-        )
+        narration = self._build_narration(topic.topic, facts)
+        fallback_title = self._fallback_title(topic.topic, facts)
         return GeneratedShort(
             bucket=topic.bucket,
             topic=topic.topic,
-            title=f"3 Facts About {topic.topic.title()}",
+            title=fallback_title,
+            title_hook=fallback_title,
             description=(
                 f"Three fast facts about {topic.topic} for a visual YouTube Short. "
                 "Generated locally with Ollama, Piper, whisper.cpp, FFmpeg, and Pexels."
@@ -354,4 +884,24 @@ class OllamaService:
             narration=narration,
             facts=facts,
             subtitle_text=narration,
+        )
+
+    def _fallback_long_content(self, topic: TopicChoice) -> GeneratedLongVideo:
+        sections = [
+            LongVideoSection(
+                title=f"{topic.topic.title()} Detail {index}",
+                narration=self._fallback_long_section(topic.topic, topic.bucket, index),
+                visual_queries=[topic.topic, f"{topic.topic} {topic.bucket}", f"{topic.topic} documentary"],
+            )
+            for index in range(1, 8)
+        ]
+        return GeneratedLongVideo(
+            bucket=topic.bucket,
+            topic=topic.topic,
+            title=self._clean_long_title("", topic.topic),
+            thumbnail_text=self._clean_thumbnail_text("", topic.topic),
+            description=self._clean_long_description("", topic.topic),
+            tags=[topic.topic, topic.bucket, "facts", "explainer", "documentary", "science", "education", "visual"],
+            sections=sections,
+            facts=self._fallback_long_facts(topic.topic, topic.bucket),
         )

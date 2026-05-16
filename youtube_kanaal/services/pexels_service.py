@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -74,6 +75,49 @@ class PexelsService:
                 details_path=response_path,
             )
         return selected
+
+    def fetch_broll_clips(
+        self,
+        *,
+        queries: list[str],
+        max_clips: int,
+        response_path: Path,
+    ) -> list[VideoClipAsset]:
+        if self.settings.mock_mode:
+            clips = self._mock_clips(max_clips * 12.0)[:max_clips]
+            write_json(response_path, [clip.model_dump(mode="json") for clip in clips])
+            return clips
+        if not self.settings.pexels_api_key:
+            raise ConfigurationError("PEXELS_API_KEY is required for stock footage downloads.")
+
+        raw_payloads: list[dict[str, object]] = []
+        candidates: list[VideoClipAsset] = []
+        for original_query in queries:
+            for query in self._expand_queries(original_query):
+                payload = self._search(query)
+                raw_payloads.append({"query": query, "original_query": original_query, "response": payload})
+                candidates.extend(self._parse_results(query, payload))
+        write_json(response_path, raw_payloads)
+
+        chosen: list[VideoClipAsset] = []
+        used_ids: set[str] = set()
+        for clip in self._prioritized_candidates(candidates, queries):
+            if clip.source_id in used_ids:
+                continue
+            if not self._prepare_clip_for_use(clip):
+                continue
+            chosen.append(clip)
+            used_ids.add(clip.source_id)
+            if len(chosen) >= max_clips:
+                break
+        if not chosen:
+            raise PipelineStageError(
+                stage="stock_video_download",
+                message="Pexels returned no usable long-form B-roll clips.",
+                probable_cause="Try a different topic, or inspect the saved API response.",
+                details_path=response_path,
+            )
+        return chosen
 
     @retry(
         stop=stop_after_attempt(3),
@@ -237,7 +281,8 @@ class PexelsService:
         for clip in self._prioritized_candidates(candidates, queries):
             if clip.source_id in used_ids:
                 continue
-            self._download_clip(clip)
+            if not self._prepare_clip_for_use(clip):
+                continue
             chosen.append(clip)
             used_ids.add(clip.source_id)
             cumulative += min(clip.duration_seconds, max(target_duration_seconds / desired_count, 4.0))
@@ -280,42 +325,40 @@ class PexelsService:
     )
     def _download_clip(self, clip: VideoClipAsset) -> None:
         clip.local_path.parent.mkdir(parents=True, exist_ok=True)
+        response = self.client.get(clip.download_url)
+        response.raise_for_status()
+        temp_path = clip.local_path.with_suffix(f"{clip.local_path.suffix}.part")
+        temp_path.write_bytes(response.content)
+        temp_path.replace(clip.local_path)
+
+    def _prepare_clip_for_use(self, clip: VideoClipAsset) -> bool:
+        clip.local_path.parent.mkdir(parents=True, exist_ok=True)
+        if clip.local_path.exists() and self._is_valid_clip_file(clip.local_path):
+            return True
         if clip.local_path.exists():
-            if self._clip_file_is_usable(clip.local_path):
-                return
             clip.local_path.unlink(missing_ok=True)
 
-        temporary_path = clip.local_path.with_name(f"{clip.local_path.name}.part")
-        for _ in range(2):
-            temporary_path.unlink(missing_ok=True)
-            response = self.client.get(clip.download_url)
-            response.raise_for_status()
-            temporary_path.write_bytes(response.content)
-            if self._clip_file_is_usable(temporary_path):
-                temporary_path.replace(clip.local_path)
-                return
-        temporary_path.unlink(missing_ok=True)
-        raise PipelineStageError(
-            stage="stock_video_download",
-            message="Downloaded Pexels clip is invalid or incomplete.",
-            probable_cause="The cached MP4 is empty or unreadable. The source download may have been interrupted.",
-            details_path=clip.local_path,
-        )
-
-    def _clip_file_is_usable(self, path: Path) -> bool:
-        if not path.exists():
-            return False
         try:
-            if path.stat().st_size <= 0:
-                return False
-        except OSError:
+            self._download_clip(clip)
+        except httpx.HTTPError:
+            return False
+
+        if self._is_valid_clip_file(clip.local_path):
+            return True
+
+        clip.local_path.unlink(missing_ok=True)
+        return False
+
+    def _is_valid_clip_file(self, path: Path) -> bool:
+        if not path.exists() or path.stat().st_size < 1024:
             return False
 
         ffprobe_binary = self._ffprobe_binary()
         if not command_exists(ffprobe_binary):
             return True
+
         try:
-            run_command(
+            result = run_command(
                 [
                     ffprobe_binary,
                     "-v",
@@ -323,22 +366,29 @@ class PexelsService:
                     "-select_streams",
                     "v:0",
                     "-show_entries",
-                    "stream=codec_type,width,height,duration",
+                    "stream=width,height,codec_name",
                     "-of",
                     "json",
                     str(path),
                 ],
-                timeout_seconds=60,
+                timeout_seconds=30,
                 stage="stock_video_download",
             )
         except PipelineStageError:
             return False
-        return True
+
+        payload = json.loads(result.stdout or "{}")
+        streams = payload.get("streams", [])
+        if not streams:
+            return False
+        stream = streams[0]
+        return bool(int(stream.get("width") or 0) > 0 and int(stream.get("height") or 0) > 0)
 
     def _ffprobe_binary(self) -> str:
         ffmpeg_path = Path(self.settings.ffmpeg_binary)
         if ffmpeg_path.exists():
-            return str(ffmpeg_path.with_name("ffprobe"))
+            suffix = "ffprobe.exe" if ffmpeg_path.suffix.lower() == ".exe" else "ffprobe"
+            return str(ffmpeg_path.with_name(suffix))
         return "ffprobe"
 
     def _mock_clips(self, target_duration_seconds: float) -> list[VideoClipAsset]:

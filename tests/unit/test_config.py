@@ -6,6 +6,14 @@ from pydantic import ValidationError
 from youtube_kanaal.config import Settings
 
 
+def test_settings_default_to_kokoro_narration() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.narration_engine == "kokoro"
+    assert settings.kokoro_voice == "af_heart"
+    assert settings.kokoro_speed == 1.05
+
+
 def test_settings_reject_invalid_duration_window() -> None:
     with pytest.raises(ValidationError):
         Settings(
@@ -22,3 +30,13 @@ def test_settings_expand_downloads_path(tmp_path) -> None:
 def test_settings_reject_invalid_schedule_times() -> None:
     with pytest.raises(ValidationError):
         Settings(scheduled_run_times="13:00,99:00")
+
+
+def test_settings_reject_invalid_narration_engine() -> None:
+    with pytest.raises(ValidationError):
+        Settings(narration_engine="clone")
+
+
+def test_settings_reject_invalid_xtts_reference_max_seconds() -> None:
+    with pytest.raises(ValidationError):
+        Settings(xtts_reference_max_seconds=2)

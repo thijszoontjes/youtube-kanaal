@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from datetime import date, datetime, time as dt_time, timedelta, timezone
+import os
+import subprocess
 import shutil
 import sys
 from pathlib import Path
 from typing import Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import typer
 from rich.console import Console
@@ -12,19 +16,25 @@ from rich.table import Table
 from youtube_kanaal.config import Settings, load_settings, project_root
 from youtube_kanaal.db import Database
 from youtube_kanaal.exceptions import PipelineStageError, YoutubeKanaalError
-from youtube_kanaal.models import BatchRequest, ShortRunRequest
-from youtube_kanaal.pipelines import ShortPipeline, validate_artifact_directory
+from youtube_kanaal.models import BatchRequest, LongRunRequest, ShortRunRequest
+from youtube_kanaal.models.content import TOPIC_CATALOG
+from youtube_kanaal.pipelines import LongPipeline, ShortPipeline, validate_artifact_directory
 from youtube_kanaal.services.doctor import DoctorService
+from youtube_kanaal.services.ffmpeg_service import FFmpegService
+from youtube_kanaal.services.narration_service import NarrationService
+from youtube_kanaal.services.online_runtime_service import OnlineRuntimeService
 from youtube_kanaal.services.pexels_service import PexelsService
+from youtube_kanaal.services.xtts_service import XTTSService
 from youtube_kanaal.services.youtube_service import YouTubeService
 from youtube_kanaal.utils.process import run_command
 from youtube_kanaal.utils.scheduling import (
     build_windows_task_action,
     build_windows_task_name,
+    build_linux_cron_block,
     parse_schedule_times,
 )
 
-app = typer.Typer(help="Local YouTube Shorts pipeline.", add_completion=False)
+app = typer.Typer(help="Local YouTube video pipeline.", add_completion=False)
 console = Console()
 
 
@@ -33,6 +43,14 @@ def _bootstrap(debug: bool = False, mock_mode: bool = False) -> tuple[Database, 
     database = Database(settings.database_path)
     database.initialize()
     pipeline = ShortPipeline(settings, database)
+    return database, pipeline
+
+
+def _bootstrap_long(debug: bool = False, mock_mode: bool = False) -> tuple[Database, LongPipeline]:
+    settings = load_settings(app_debug=debug, mock_mode=mock_mode)
+    database = Database(settings.database_path)
+    database.initialize()
+    pipeline = LongPipeline(settings, database)
     return database, pipeline
 
 
@@ -46,6 +64,35 @@ def _render_result(result) -> None:
     table.add_row("Output", str(result.output_path))
     table.add_row("Downloads copy", str(result.downloads_copy_path or "not copied"))
     table.add_row("Uploaded", "yes" if result.uploaded else "no")
+    if result.media_cleaned:
+        table.add_row("Local media cleanup", f"deleted {result.cleanup_deleted_bytes / 1024 / 1024:.2f} MB")
+    if result.privacy_status:
+        table.add_row("Privacy", result.privacy_status)
+    if result.scheduled_publish_at:
+        table.add_row("Scheduled publish", result.scheduled_publish_at.isoformat())
+    table.add_row("Run ID", result.run_id)
+    table.add_row("Log file", str(result.log_path))
+    console.print(table)
+
+
+def _render_long_result(result) -> None:
+    table = Table(title="Long-Form Video Completed")
+    table.add_column("Field")
+    table.add_column("Value")
+    table.add_row("Title", result.title)
+    table.add_row("Topic", result.topic)
+    table.add_row("Duration", f"{result.duration_seconds:.2f}s")
+    table.add_row("Video", str(result.output_path))
+    table.add_row("Thumbnail", str(result.thumbnail_path))
+    table.add_row("Metadata", str(result.metadata_path))
+    table.add_row("Upload status", str(result.upload_status_path))
+    table.add_row("Uploaded", "yes" if result.uploaded else "no")
+    if result.media_cleaned:
+        table.add_row("Local media cleanup", f"deleted {result.cleanup_deleted_bytes / 1024 / 1024:.2f} MB")
+    if result.scheduled_publish_at:
+        table.add_row("Scheduled publish", result.scheduled_publish_at.isoformat())
+    if result.youtube_video_id:
+        table.add_row("YouTube video ID", result.youtube_video_id)
     table.add_row("Run ID", result.run_id)
     table.add_row("Log file", str(result.log_path))
     console.print(table)
@@ -62,18 +109,176 @@ def _print_failure(error: Exception) -> None:
         console.print(f"[red]Pipeline failed:[/red] {error}")
 
 
-def _run_pipeline(request: ShortRunRequest) -> None:
+def _run_pipeline_result(request: ShortRunRequest):
     _, pipeline = _bootstrap(debug=request.debug, mock_mode=request.mock_mode)
     _preflight_pipeline_requirements(request, pipeline.settings)
     try:
-        result = pipeline.run(request)
+        return pipeline.run(request)
     except Exception as exc:
         _print_failure(exc)
         raise typer.Exit(code=1) from exc
+
+
+def _run_pipeline(request: ShortRunRequest) -> None:
+    result = _run_pipeline_result(request)
     _render_result(result)
 
 
+def _run_long_pipeline_result(request: LongRunRequest):
+    _, pipeline = _bootstrap_long(debug=request.debug, mock_mode=request.mock_mode)
+    _preflight_long_pipeline_requirements(request, pipeline.settings)
+    try:
+        return pipeline.run(request)
+    except Exception as exc:
+        _print_failure(exc)
+        raise typer.Exit(code=1) from exc
+
+
+def _run_long_pipeline(request: LongRunRequest) -> None:
+    result = _run_long_pipeline_result(request)
+    _render_long_result(result)
+
+
+def _run_scheduled_shorts_batch(
+    *,
+    publish_slots: list[datetime],
+    debug: bool,
+    mock_mode: bool,
+    upload: bool,
+) -> list[tuple[str, datetime, str | None]]:
+    scheduled_results: list[tuple[str, datetime, str | None]] = []
+    failures = 0
+    for index, publish_at in enumerate(publish_slots, start=1):
+        console.print(
+            f"[cyan]Running scheduled Short {index}/{len(publish_slots)} for {publish_at.isoformat()}[/cyan]"
+        )
+        try:
+            result = _run_pipeline_result(
+                ShortRunRequest(
+                    upload=upload,
+                    debug=debug,
+                    privacy_status="private" if upload else None,
+                    scheduled_publish_at=publish_at if upload else None,
+                    save_to_downloads=not upload,
+                    mock_mode=mock_mode,
+                )
+            )
+        except typer.Exit:
+            failures += 1
+            continue
+        _render_result(result)
+        scheduled_results.append((result.run_id, publish_at, result.youtube_video_id))
+    if failures:
+        raise typer.Exit(code=1)
+    return scheduled_results
+
+
+def _render_scheduled_uploads_table(
+    *,
+    title: str,
+    scheduled_results: list[tuple[str, datetime, str | None]],
+) -> None:
+    if not scheduled_results:
+        return
+    table = Table(title=title)
+    table.add_column("Run ID")
+    table.add_column("Local publish time")
+    table.add_column("YouTube video ID")
+    for run_id, publish_at, youtube_video_id in scheduled_results:
+        table.add_row(run_id, publish_at.isoformat(), youtube_video_id or "")
+    console.print(table)
+
+
+def _resolve_schedule_date(
+    *,
+    date_text: str | None,
+    timezone_name: str,
+) -> date:
+    schedule_timezone = _load_schedule_timezone(timezone_name)
+    if date_text:
+        try:
+            return date.fromisoformat(date_text)
+        except ValueError as exc:
+            raise typer.BadParameter("Date must use YYYY-MM-DD format.") from exc
+    return datetime.now(schedule_timezone).date() + timedelta(days=1)
+
+
+def _resolve_long_schedule_date(*, for_value: str, timezone_name: str) -> date:
+    normalized = for_value.strip().lower()
+    schedule_timezone = _load_schedule_timezone(timezone_name)
+    if normalized in {"tomorrow", "next-day", "next_day"}:
+        return datetime.now(schedule_timezone).date() + timedelta(days=1)
+    if normalized in {"today"}:
+        return datetime.now(schedule_timezone).date()
+    try:
+        return date.fromisoformat(for_value)
+    except ValueError as exc:
+        raise typer.BadParameter("--for must be 'tomorrow', 'today', or a YYYY-MM-DD date.") from exc
+
+
+def _build_publish_schedule(
+    *,
+    times: list[str],
+    target_date: date,
+    timezone_name: str,
+) -> list[datetime]:
+    schedule_timezone = _load_schedule_timezone(timezone_name)
+    publish_slots: list[datetime] = []
+    now_utc = datetime.now(timezone.utc)
+    for time_value in times:
+        hours, minutes = [int(part) for part in time_value.split(":", maxsplit=1)]
+        publish_at = datetime.combine(target_date, dt_time(hour=hours, minute=minutes), tzinfo=schedule_timezone)
+        if publish_at.astimezone(timezone.utc) <= now_utc:
+            raise typer.BadParameter(
+                f"Scheduled slot {publish_at.isoformat()} is not in the future."
+            )
+        publish_slots.append(publish_at)
+    return publish_slots
+
+
+def _load_schedule_timezone(timezone_name: str):
+    try:
+        return ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        if timezone_name.strip().upper() in {"UTC", "ETC/UTC"}:
+            return timezone.utc
+        local_timezone = datetime.now().astimezone().tzinfo
+        if local_timezone is not None:
+            return local_timezone
+        raise typer.BadParameter(
+            f"Timezone '{timezone_name}' is not available on this machine."
+        )
+
+
+def _resolve_download_copy_behavior(*, upload: bool, no_downloads: bool) -> bool:
+    if upload:
+        return False
+    return not no_downloads
+
+
 def _preflight_pipeline_requirements(request: ShortRunRequest, settings: Settings) -> None:
+    if request.mock_mode:
+        return
+
+    report = DoctorService(settings).run()
+    required_names = _pipeline_required_check_names(settings, upload=request.upload)
+    blocking = [
+        check
+        for check in report.checks
+        if check.name in required_names and check.status in {"fail", "warn"}
+    ]
+    if not blocking:
+        _print_narration_fallback_note(settings)
+        return
+
+    console.print("[red]Pipeline prerequisites are not ready.[/red]")
+    for check in blocking:
+        console.print(f"- {check.name}: {check.status} | {check.action or check.details}")
+    console.print("Run `python -m youtube_kanaal doctor` after fixing the items above.")
+    raise typer.Exit(code=1)
+
+
+def _preflight_long_pipeline_requirements(request: LongRunRequest, settings: Settings) -> None:
     if request.mock_mode:
         return
 
@@ -83,25 +288,77 @@ def _preflight_pipeline_requirements(request: ShortRunRequest, settings: Setting
         "FFmpeg",
         "Ollama reachable",
         "Ollama model",
-        "Piper",
-        "Piper voice model",
-        "whisper.cpp",
-        "whisper model path",
+        "Narration engine",
         "Pexels API key",
-        "Downloads folder",
     }
-    if request.upload:
-        required_names.add("YouTube OAuth client JSON")
-
+    required_names.update(_narration_required_check_names(settings))
     blocking = [
         check
         for check in report.checks
         if check.name in required_names and check.status in {"fail", "warn"}
     ]
     if not blocking:
+        _print_narration_fallback_note(settings)
         return
 
-    console.print("[red]Pipeline prerequisites are not ready.[/red]")
+    console.print("[red]Long-form pipeline prerequisites are not ready.[/red]")
+    for check in blocking:
+        console.print(f"- {check.name}: {check.status} | {check.action or check.details}")
+    console.print("Run `python -m youtube_kanaal doctor` after fixing the items above.")
+    raise typer.Exit(code=1)
+
+
+def _pipeline_required_check_names(settings: Settings, *, upload: bool) -> set[str]:
+    required_names = {
+        "Python version",
+        "FFmpeg",
+        "Ollama reachable",
+        "Ollama model",
+        "Narration engine",
+        "whisper.cpp",
+        "whisper model path",
+        "Pexels API key",
+        "Downloads folder",
+    }
+    required_names.update(_narration_required_check_names(settings))
+    if upload:
+        required_names.add("YouTube OAuth client JSON")
+    return required_names
+
+
+def _narration_required_check_names(settings: Settings) -> set[str]:
+    inspection = NarrationService(settings).inspect()
+    if inspection.resolved_engine == "kokoro":
+        return {"Kokoro"}
+    if inspection.resolved_engine == "xtts":
+        return {"XTTS runtime", "XTTS speaker samples"}
+    return {"Piper", "Piper voice model"}
+
+
+def _print_narration_fallback_note(settings: Settings) -> None:
+    inspection = NarrationService(settings).inspect()
+    if inspection.requested_engine == "kokoro" and inspection.resolved_engine == "piper" and inspection.fallback_reason:
+        console.print(f"[yellow]Using Piper fallback:[/yellow] {inspection.fallback_reason}")
+    if inspection.requested_engine == "xtts" and inspection.resolved_engine == "piper" and inspection.fallback_reason:
+        console.print(f"[yellow]Using Piper fallback:[/yellow] {inspection.fallback_reason}")
+
+
+def _preflight_narration_requirements(settings: Settings) -> None:
+    if settings.mock_mode:
+        return
+
+    report = DoctorService(settings).run()
+    required_names = {"FFmpeg", "Narration engine", *_narration_required_check_names(settings)}
+    blocking = [
+        check
+        for check in report.checks
+        if check.name in required_names and check.status in {"fail", "warn"}
+    ]
+    if not blocking:
+        _print_narration_fallback_note(settings)
+        return
+
+    console.print("[red]Narration prerequisites are not ready.[/red]")
     for check in blocking:
         console.print(f"- {check.name}: {check.status} | {check.action or check.details}")
     console.print("Run `python -m youtube_kanaal doctor` after fixing the items above.")
@@ -130,9 +387,14 @@ def _resolve_scheduled_python(python_executable: Path | None) -> Path:
             raise typer.BadParameter(f"Python executable not found: {resolved}")
         return resolved
 
-    repo_python = project_root() / ".venv" / "Scripts" / "python.exe"
-    if repo_python.exists():
-        return repo_python.resolve()
+    repo_root = project_root()
+    candidates = [
+        repo_root / ".venv" / "Scripts" / "python.exe",
+        repo_root / ".venv" / "bin" / "python",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
     return Path(sys.executable).resolve()
 
 
@@ -155,7 +417,7 @@ def make_short(
             preferred_topic=topic,
             preferred_bucket=bucket,
             privacy_status=privacy_status,
-            save_to_downloads=not no_downloads,
+            save_to_downloads=_resolve_download_copy_behavior(upload=upload, no_downloads=no_downloads),
             mock_mode=mock_mode,
         )
     )
@@ -179,6 +441,7 @@ def make_batch(
                 ShortRunRequest(
                     upload=batch.upload,
                     debug=batch.debug,
+                    save_to_downloads=not batch.upload,
                     mock_mode=batch.mock_mode,
                 )
             )
@@ -186,6 +449,198 @@ def make_batch(
             failures += 1
     if failures:
         raise typer.Exit(code=1)
+
+
+@app.command()
+def make_short_schedule(
+    times: str = typer.Option(
+        "10:00,13:00,15:00,19:00",
+        help="Comma-separated local publish times in HH:MM format.",
+    ),
+    date_text: Optional[str] = typer.Option(
+        None,
+        "--date",
+        help="Target local date in YYYY-MM-DD. Defaults to tomorrow in SCHEDULED_TIMEZONE.",
+    ),
+    debug: bool = typer.Option(False, help="Enable verbose logging."),
+    no_downloads: bool = typer.Option(False, help="Skip copying the final MP4s to Downloads."),
+    mock_mode: bool = typer.Option(False, help="Use deterministic mock services."),
+) -> None:
+    """Generate multiple Shorts and upload them as scheduled YouTube videos."""
+
+    settings = load_settings(app_debug=debug, mock_mode=mock_mode)
+    schedule_times = parse_schedule_times(times)
+    target_date = _resolve_schedule_date(
+        date_text=date_text,
+        timezone_name=settings.scheduled_timezone,
+    )
+    publish_slots = _build_publish_schedule(
+        times=schedule_times,
+        target_date=target_date,
+        timezone_name=settings.scheduled_timezone,
+    )
+
+    console.print(
+        f"Planning {len(publish_slots)} Shorts for {target_date.isoformat()} in {settings.scheduled_timezone}."
+    )
+    scheduled_results = _run_scheduled_shorts_batch(
+        publish_slots=publish_slots,
+        debug=debug,
+        mock_mode=mock_mode,
+        upload=True,
+    )
+    _render_scheduled_uploads_table(title="Scheduled Uploads", scheduled_results=scheduled_results)
+
+
+@app.command()
+def generate_and_schedule(
+    for_value: str = typer.Option(
+        "tomorrow",
+        "--for",
+        help="Publish date: tomorrow, today, or YYYY-MM-DD in SCHEDULED_TIMEZONE.",
+    ),
+    upload: bool = typer.Option(True, help="Upload and schedule on YouTube. Disable to build a local package only."),
+    dry_run: bool = typer.Option(False, help="Generate the full local package without upload."),
+    debug: bool = typer.Option(False, help="Enable verbose logging."),
+    topic: Optional[str] = typer.Option(None, help="Force a specific catalog topic."),
+    bucket: Optional[str] = typer.Option(None, help="Optional bucket for a forced topic."),
+    mock_mode: bool = typer.Option(False, help="Use deterministic mock services."),
+) -> None:
+    """Generate one English long-form video and schedule it for LONG_PUBLISH_TIME the next day by default."""
+
+    settings = load_settings(app_debug=debug, mock_mode=mock_mode)
+    target_date = _resolve_long_schedule_date(for_value=for_value, timezone_name=settings.scheduled_timezone)
+    publish_slots = _build_publish_schedule(
+        times=[settings.long_publish_time],
+        target_date=target_date,
+        timezone_name=settings.scheduled_timezone,
+    )
+    publish_at = publish_slots[0]
+    effective_upload = upload and not dry_run
+    console.print(
+        f"Planning one English long-form video for {publish_at.isoformat()} "
+        f"({settings.scheduled_timezone}); upload={'yes' if effective_upload else 'no'}."
+    )
+    _run_long_pipeline(
+        LongRunRequest(
+            upload=effective_upload,
+            dry_run=dry_run,
+            debug=debug,
+            preferred_topic=topic,
+            preferred_bucket=bucket,
+            privacy_status="private" if effective_upload else None,
+            scheduled_publish_at=publish_at if effective_upload else None,
+            save_to_downloads=False,
+            mock_mode=mock_mode,
+        )
+    )
+
+
+@app.command()
+def daily_video(
+    dry_run: bool = typer.Option(False, help="Generate locally without YouTube upload."),
+    debug: bool = typer.Option(False, help="Enable verbose logging."),
+    mock_mode: bool = typer.Option(False, help="Use deterministic mock services."),
+) -> None:
+    """Daily long-form entrypoint: generate and schedule tomorrow at LONG_PUBLISH_TIME."""
+
+    generate_and_schedule(for_value="tomorrow", upload=True, dry_run=dry_run, debug=debug, mock_mode=mock_mode)
+
+
+@app.command()
+def daily_content(
+    for_value: str = typer.Option(
+        "tomorrow",
+        "--for",
+        help="Publish date: tomorrow, today, or YYYY-MM-DD in SCHEDULED_TIMEZONE.",
+    ),
+    short_times: Optional[str] = typer.Option(
+        None,
+        help="Comma-separated local Short publish times in HH:MM format.",
+    ),
+    video_time: Optional[str] = typer.Option(
+        None,
+        help="Local long-form publish time in HH:MM. Defaults to 17:00.",
+    ),
+    dry_run: bool = typer.Option(False, help="Generate all local packages without YouTube upload."),
+    debug: bool = typer.Option(False, help="Enable verbose logging."),
+    mock_mode: bool = typer.Option(False, help="Use deterministic mock services."),
+) -> None:
+    """Generate and schedule 4 Shorts first, then 1 long-form video for the next day."""
+
+    settings = load_settings(app_debug=debug, mock_mode=mock_mode)
+    target_date = _resolve_long_schedule_date(for_value=for_value, timezone_name=settings.scheduled_timezone)
+    parsed_short_times = parse_schedule_times(short_times or settings.scheduled_run_times)
+    if short_times is None and len(parsed_short_times) != 4:
+        parsed_short_times = parse_schedule_times("10:00,13:00,15:00,19:00")
+    if len(parsed_short_times) != 4:
+        raise typer.BadParameter("--short-times must contain exactly 4 publish times.")
+    selected_video_time = video_time or "17:00"
+    parsed_video_time = parse_schedule_times(selected_video_time)
+    if len(parsed_video_time) != 1:
+        raise typer.BadParameter("--video-time must contain exactly one HH:MM value.")
+
+    short_publish_slots = _build_publish_schedule(
+        times=parsed_short_times,
+        target_date=target_date,
+        timezone_name=settings.scheduled_timezone,
+    )
+    video_publish_at = _build_publish_schedule(
+        times=parsed_video_time,
+        target_date=target_date,
+        timezone_name=settings.scheduled_timezone,
+    )[0]
+    effective_upload = not dry_run
+
+    console.print(
+        f"Planning 4 Shorts first, then 1 English long-form video for {target_date.isoformat()} "
+        f"in {settings.scheduled_timezone}; video={video_publish_at.isoformat()}; "
+        f"upload={'yes' if effective_upload else 'no'}."
+    )
+    short_results = _run_scheduled_shorts_batch(
+        publish_slots=short_publish_slots,
+        debug=debug,
+        mock_mode=mock_mode,
+        upload=effective_upload,
+    )
+    _render_scheduled_uploads_table(title="Scheduled Shorts", scheduled_results=short_results)
+
+    console.print(f"[cyan]Running long-form video for {video_publish_at.isoformat()}[/cyan]")
+    long_result = _run_long_pipeline_result(
+        LongRunRequest(
+            upload=effective_upload,
+            dry_run=dry_run,
+            debug=debug,
+            privacy_status="private" if effective_upload else None,
+            scheduled_publish_at=video_publish_at if effective_upload else None,
+            save_to_downloads=False,
+            mock_mode=mock_mode,
+        )
+    )
+    _render_long_result(long_result)
+
+
+@app.command()
+def list_topics(
+    bucket: Optional[str] = typer.Option(None, help="Filter the output to one bucket."),
+) -> None:
+    """List the curated topic catalog used by topic selection and forced topics."""
+
+    rows = list(TOPIC_CATALOG.items())
+    if bucket:
+        normalized_bucket = bucket.strip().lower()
+        rows = [(name, topics) for name, topics in rows if name == normalized_bucket]
+        if not rows:
+            available = ", ".join(TOPIC_CATALOG)
+            raise typer.BadParameter(f"Unknown bucket '{bucket}'. Available buckets: {available}")
+
+    table = Table(title="Topic Catalog")
+    table.add_column("Bucket")
+    table.add_column("Count", justify="right")
+    table.add_column("Topics")
+    for bucket_name, topics in rows:
+        table.add_row(bucket_name, str(len(topics)), ", ".join(topics))
+    console.print(table)
 
 
 @app.command()
@@ -202,7 +657,7 @@ def scheduled_run(
             upload=upload,
             debug=debug,
             privacy_status=privacy_status,
-            save_to_downloads=not no_downloads,
+            save_to_downloads=_resolve_download_copy_behavior(upload=upload, no_downloads=no_downloads),
             mock_mode=False,
         )
     )
@@ -275,6 +730,69 @@ def install_windows_schedule(
 
 
 @app.command()
+def install_linux_schedule(
+    times: Optional[str] = typer.Option(
+        None,
+        help="Comma-separated local times in HH:MM format. Defaults to SCHEDULED_RUN_TIMES.",
+    ),
+    timezone: Optional[str] = typer.Option(
+        None,
+        help="IANA timezone such as Europe/Amsterdam. Defaults to SCHEDULED_TIMEZONE.",
+    ),
+    upload: bool = typer.Option(True, help="Upload automatically after each scheduled render."),
+    debug: bool = typer.Option(False, help="Enable verbose logging for scheduled runs."),
+    privacy_status: Optional[str] = typer.Option(None, help="Optional privacy override for scheduled uploads."),
+    python_executable: Optional[Path] = typer.Option(None, help="Python executable to use for the scheduled jobs."),
+) -> None:
+    """Install Linux cron jobs for automated Shorts."""
+
+    if os.name == "nt":
+        raise typer.BadParameter("install-linux-schedule is only supported on Linux/macOS shells.")
+
+    settings = load_settings()
+    schedule_times = parse_schedule_times(times or settings.scheduled_run_times)
+    schedule_timezone = timezone or settings.scheduled_timezone
+    repo_root = project_root().resolve()
+    script_path = (repo_root / "scripts" / "run_scheduled_short.sh").resolve()
+    if not script_path.exists():
+        raise typer.BadParameter(f"Missing scheduler script: {script_path}")
+    python_path = _resolve_scheduled_python(python_executable)
+    log_path = (settings.logs_dir / "scheduled-cron.log").resolve()
+    marker = settings.scheduled_task_prefix
+    block = build_linux_cron_block(
+        marker=marker,
+        script_path=script_path,
+        repo_root=repo_root,
+        python_executable=python_path,
+        times=schedule_times,
+        timezone=schedule_timezone,
+        upload=upload,
+        debug=debug,
+        privacy_status=privacy_status,
+        log_path=log_path,
+    )
+
+    current_crontab = _read_current_crontab()
+    updated_crontab = _replace_managed_cron_block(current_crontab, marker=marker, replacement=block)
+    run_command(
+        ["crontab", "-"],
+        input_text=updated_crontab,
+        timeout_seconds=120,
+        stage="schedule_install",
+    )
+
+    table = Table(title="Linux Schedule Installed")
+    table.add_column("Time")
+    table.add_column("Timezone")
+    table.add_column("Upload")
+    table.add_column("Command")
+    for time_value in schedule_times:
+        table.add_row(time_value, schedule_timezone, "yes" if upload else "no", "scheduled-run")
+    console.print(table)
+    console.print(f"Cron logs are appended to {log_path}.")
+
+
+@app.command()
 def doctor(debug: bool = typer.Option(False, help="Enable verbose logging.")) -> None:
     """Run environment checks."""
 
@@ -291,6 +809,106 @@ def doctor(debug: bool = typer.Option(False, help="Enable verbose logging.")) ->
     console.print(table)
     if not report.all_ok():
         raise typer.Exit(code=1)
+
+
+@app.command()
+def prepare_online_runtime(debug: bool = typer.Option(False, help="Enable verbose logging.")) -> None:
+    """Write online secrets and voice sample files from environment variables."""
+
+    settings = load_settings(app_debug=debug)
+    service = OnlineRuntimeService(settings)
+    results = service.materialize_from_environment()
+    if not results:
+        console.print("No ONLINE_* environment variables were found. Nothing was written.")
+        return
+
+    table = Table(title="Online Runtime Prepared")
+    table.add_column("Kind")
+    table.add_column("Path")
+    table.add_column("Source")
+    for item in results:
+        table.add_row(item["kind"], item["path"], item["source_env"])
+    console.print(table)
+
+
+@app.command()
+def diagnose_voice(
+    debug: bool = typer.Option(False, help="Enable verbose logging."),
+    mock_mode: bool = typer.Option(False, help="Use deterministic mock audio."),
+) -> None:
+    """Inspect the terminal voice setup without rendering a full Short."""
+
+    settings = load_settings(app_debug=debug, mock_mode=mock_mode)
+    narration = NarrationService(settings)
+    inspection = narration.inspect()
+    xtts = XTTSService(settings)
+
+    table = Table(title="Voice Diagnostics")
+    table.add_column("Field")
+    table.add_column("Value")
+    table.add_row("Requested engine", inspection.requested_engine)
+    table.add_row("Resolved engine", inspection.resolved_engine)
+    table.add_row("Fallback reason", inspection.fallback_reason or "none")
+    table.add_row("Kokoro ready", "yes" if inspection.kokoro_ready else "no")
+    table.add_row("Kokoro details", inspection.kokoro_reason or "ready")
+    table.add_row("XTTS runtime ready", "yes" if inspection.xtts_runtime_ready else "no")
+    table.add_row("XTTS runtime details", inspection.xtts_runtime_reason or "ready")
+    table.add_row("Piper ready", "yes" if inspection.piper_ready else "no")
+    table.add_row("Piper details", inspection.piper_reason or "ready")
+    table.add_row("Reference clips", str(len(inspection.reference_sources)))
+    console.print(table)
+
+    source_details = xtts.describe_reference_sources()
+    if source_details:
+        source_table = Table(title="Reference Audio")
+        source_table.add_column("Name")
+        source_table.add_column("Path")
+        source_table.add_column("Ext")
+        source_table.add_column("Codec")
+        source_table.add_column("Hz")
+        source_table.add_column("Ch")
+        source_table.add_column("Duration")
+        for source in source_details:
+            source_table.add_row(
+                Path(str(source.get("source_path") or "")).name,
+                str(source.get("source_path") or ""),
+                str(source.get("source_extension") or ""),
+                str(source.get("codec_name") or source.get("probe_status") or ""),
+                str(source.get("sample_rate") or ""),
+                str(source.get("channels") or ""),
+                str(source.get("duration_seconds") or ""),
+            )
+        console.print(source_table)
+
+
+@app.command()
+def preview_voice(
+    text: str = typer.Argument(..., help="Text to speak with the active narration engine."),
+    output: Optional[Path] = typer.Option(None, help="Optional output WAV path."),
+    debug: bool = typer.Option(False, help="Enable verbose logging."),
+    mock_mode: bool = typer.Option(False, help="Use deterministic mock audio."),
+) -> None:
+    """Render a quick WAV preview of the active voice setup."""
+
+    settings = load_settings(app_debug=debug, mock_mode=mock_mode)
+    _preflight_narration_requirements(settings)
+    narration = NarrationService(settings)
+    active_engine = narration.resolve_engine()
+
+    preview_dir = settings.output_dir / "voice-preview"
+    raw_path = preview_dir / "preview_raw.wav"
+    final_path = output.expanduser().resolve() if output else preview_dir / "preview.wav"
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+
+    synthesis = narration.synthesize(text=text, output_path=raw_path)
+    FFmpegService(settings).normalize_audio(input_path=raw_path, output_path=final_path)
+    if synthesis.fallback_reason:
+        console.print(
+            f"Voice preview written to {final_path} using {synthesis.engine_used}. "
+            f"Fallback reason: {synthesis.fallback_reason}"
+        )
+        return
+    console.print(f"Voice preview written to {final_path} using {active_engine}.")
 
 
 @app.command()
@@ -388,6 +1006,7 @@ def retry_run(
             debug=debug,
             preferred_topic=existing.get("topic"),
             preferred_bucket=existing.get("bucket"),
+            save_to_downloads=not upload,
         )
     )
 
@@ -444,6 +1063,35 @@ def main() -> None:
     except YoutubeKanaalError as exc:
         _print_failure(exc)
         raise SystemExit(1) from exc
+
+
+def _read_current_crontab() -> str:
+    result = subprocess.run(
+        ["crontab", "-l"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    if result.returncode == 0:
+        return result.stdout
+    stderr = (result.stderr or "").lower()
+    if "no crontab" in stderr:
+        return ""
+    raise typer.BadParameter(f"Could not read the current crontab: {(result.stderr or result.stdout).strip()}")
+
+
+def _replace_managed_cron_block(current_crontab: str, *, marker: str, replacement: str) -> str:
+    start_marker = f"# >>> {marker} >>>"
+    end_marker = f"# <<< {marker} <<<"
+    if start_marker in current_crontab and end_marker in current_crontab:
+        before, remainder = current_crontab.split(start_marker, 1)
+        _, after = remainder.split(end_marker, 1)
+        current_crontab = before.rstrip() + "\n" + after.lstrip("\n")
+    base = current_crontab.rstrip()
+    if base:
+        return base + "\n\n" + replacement
+    return replacement
 
 
 if __name__ == "__main__":
