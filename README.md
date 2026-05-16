@@ -10,11 +10,15 @@ The normal daily command generates and schedules 4 Shorts first, then 1 English 
 
 ## alleen video upload voor vandaag
 ollama pull llama3.2:3b
+
+#short met datum upload
+.\.venv\Scripts\python -m youtube_kanaal make-short-schedule --date 2026-05-16 --times "13:00,14:00,15:00,19:00"
+
 $env:LONG_PUBLISH_TIME="13:30"
 .\.venv\Scripts\python -m youtube_kanaal generate-and-schedule --for today --upload
 
 #short met datum upload
-.\.venv\Scripts\python -m youtube_kanaal make-short-schedule --date 2026-05-14 --times "13:00,13:00,15:00,19:00"
+.\.venv\Scripts\python -m youtube_kanaal make-short-schedule --date 2026-05-14 --times "13:00,14:00,15:00,19:00"
 
 
 python -m youtube_kanaal daily-content --for today --short-times "16:00, 17:00, 19:00, 20:00" --video-time "17:00"  

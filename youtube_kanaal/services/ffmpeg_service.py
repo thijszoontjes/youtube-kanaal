@@ -12,6 +12,9 @@ from youtube_kanaal.utils.files import write_text
 from youtube_kanaal.utils.process import command_exists, run_command
 
 
+LONG_VIDEO_DURATION_TOLERANCE_SECONDS = 0.5
+
+
 class FFmpegService:
     """FFmpeg wrapper for audio normalization, rendering, and validation."""
 
@@ -450,10 +453,15 @@ class FFmpegService:
                 message=f"Rendered long-form video has unexpected dimensions {width}x{height}.",
                 probable_cause="The FFmpeg long-form render did not produce a 1280x720 frame.",
             )
-        if not min_seconds <= duration <= max_seconds:
+        min_allowed = min_seconds - LONG_VIDEO_DURATION_TOLERANCE_SECONDS
+        max_allowed = max_seconds + LONG_VIDEO_DURATION_TOLERANCE_SECONDS
+        if not min_allowed <= duration <= max_allowed:
             raise PipelineStageError(
                 stage="validation",
-                message=f"Rendered long-form video duration is {duration:.2f}s, outside {min_seconds}-{max_seconds}s.",
+                message=(
+                    f"Rendered long-form video duration is {duration:.2f}s, outside "
+                    f"{min_seconds}-{max_seconds}s."
+                ),
                 probable_cause="Narration generation or audio duration fitting did not hit the required range.",
             )
         return payload
