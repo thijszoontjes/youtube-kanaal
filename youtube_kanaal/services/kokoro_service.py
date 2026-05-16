@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import logging
+import warnings
 import wave
 from pathlib import Path
 from typing import Any
@@ -11,6 +13,7 @@ from youtube_kanaal.utils.process import command_exists
 from youtube_kanaal.utils.subtitles import estimate_runtime_from_text
 
 KOKORO_SAMPLE_RATE = 24_000
+KOKORO_REPO_ID = "hexgrad/Kokoro-82M"
 
 
 class KokoroService:
@@ -85,13 +88,14 @@ class KokoroService:
     def _generate_audio(self, text: str) -> object:
         pipeline = self._get_pipeline()
         chunks = []
-        generator = pipeline(
-            text,
-            voice=self.settings.kokoro_voice,
-            speed=self.settings.kokoro_speed,
-        )
-        for _, _, audio in generator:
-            chunks.append(audio)
+        with self._suppress_dependency_warnings():
+            generator = pipeline(
+                text,
+                voice=self.settings.kokoro_voice,
+                speed=self.settings.kokoro_speed,
+            )
+            for _, _, audio in generator:
+                chunks.append(audio)
         if not chunks:
             raise PipelineStageError(
                 stage="narration_generation",
@@ -104,10 +108,14 @@ class KokoroService:
         if self._pipeline is not None:
             return self._pipeline
         pipeline_cls = self._import_pipeline()
-        kwargs: dict[str, object] = {"lang_code": self.settings.kokoro_lang_code}
+        kwargs: dict[str, object] = {
+            "lang_code": self.settings.kokoro_lang_code,
+            "repo_id": KOKORO_REPO_ID,
+        }
         if self.settings.kokoro_device != "auto":
             kwargs["device"] = self.settings.kokoro_device
-        self._pipeline = pipeline_cls(**kwargs)
+        with self._suppress_dependency_warnings():
+            self._pipeline = pipeline_cls(**kwargs)
         return self._pipeline
 
     def _import_pipeline(self) -> type:
@@ -121,6 +129,21 @@ class KokoroService:
         except ImportError:
             return False
         return True
+
+    @contextmanager
+    def _suppress_dependency_warnings(self):
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=r"dropout option adds dropout after all but last recurrent layer.*",
+                category=UserWarning,
+            )
+            warnings.filterwarnings(
+                "ignore",
+                message=r"`torch\.nn\.utils\.weight_norm` is deprecated.*",
+                category=FutureWarning,
+            )
+            yield
 
     def _write_audio_wave(self, output_path: Path, audio_chunks: object) -> None:
         import numpy as np
