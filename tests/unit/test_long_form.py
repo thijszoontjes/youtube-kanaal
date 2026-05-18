@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from youtube_kanaal.models import GeneratedLongVideo, LongRunRequest, LongVideoSection
+from youtube_kanaal.config import Settings
+from youtube_kanaal.cli import _preflight_long_pipeline_requirements
+from youtube_kanaal.models import DoctorReport, GeneratedLongVideo, LongRunRequest, LongVideoSection
 
 
 def _section(index: int) -> LongVideoSection:
@@ -49,3 +51,22 @@ def test_long_run_request_dry_run_disables_upload() -> None:
     request = LongRunRequest(upload=True, dry_run=True)
 
     assert request.upload is False
+
+
+def test_long_preflight_does_not_require_instagram_config(monkeypatch) -> None:
+    class FakeDoctorService:
+        def __init__(self, settings: Settings) -> None:
+            self.settings = settings
+
+        def run(self) -> DoctorReport:
+            return DoctorReport(checks=[])
+
+    def fail_instagram_service(settings: Settings):
+        raise AssertionError("Long-form preflight should not check Instagram config.")
+
+    monkeypatch.setattr("youtube_kanaal.cli.DoctorService", FakeDoctorService)
+    monkeypatch.setattr("youtube_kanaal.cli.InstagramService", fail_instagram_service)
+    monkeypatch.setattr("youtube_kanaal.cli._narration_required_check_names", lambda settings: set())
+    monkeypatch.setattr("youtube_kanaal.cli._print_narration_fallback_note", lambda settings: None)
+
+    _preflight_long_pipeline_requirements(LongRunRequest(upload=True), Settings())
