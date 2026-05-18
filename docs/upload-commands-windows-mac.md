@@ -61,6 +61,32 @@ Deze command maakt 4 Shorts, plant ze op YouTube, en uploadt dezelfde video's me
 .\.venv\Scripts\python -m youtube_kanaal make-short-schedule-reels --date 2026-05-18 --times "10:00,13:00,15:00,19:00"
 ```
 
+### Automatisch starten als je Windows laptop aangaat
+
+Dit maakt een Windows Taakplanner-taak die bij aanmelden een PowerShell-terminal opent. Na 2 minuten delay doet hij:
+
+- `ollama pull llama3.2:3b`
+- 4 Shorts voor vandaag plannen
+- 1 lange video voor vandaag plannen
+
+Eenmalig installeren:
+
+```powershell
+.\scripts\install_windows_startup_youtube.ps1 -PublishFor "today" -ShortTimes "10:00,13:00,15:00,19:00" -VideoTime "17:00"
+```
+
+Meteen testen zonder opnieuw op te starten:
+
+```powershell
+schtasks /Run /TN "youtube-kanaal-startup-upload"
+```
+
+Later weer uitzetten:
+
+```powershell
+schtasks /Delete /TN "youtube-kanaal-startup-upload" /F
+```
+
 ## Mac
 
 Ga eerst naar de projectmap:
