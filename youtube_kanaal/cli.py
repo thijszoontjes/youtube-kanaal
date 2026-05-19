@@ -293,13 +293,6 @@ def _preflight_long_pipeline_requirements(request: LongRunRequest, settings: Set
     if request.mock_mode:
         return
 
-    if request.instagram_upload:
-        try:
-            InstagramService(settings).ensure_configured()
-        except PipelineStageError as exc:
-            _print_failure(exc)
-            raise typer.Exit(code=1) from exc
-
     report = DoctorService(settings).run()
     required_names = {
         "Python version",
