@@ -29,6 +29,7 @@ from youtube_kanaal.models import (
     VideoClipAsset,
 )
 from youtube_kanaal.services.ffmpeg_service import FFmpegService
+from youtube_kanaal.services.instagram_cover_service import InstagramCoverService
 from youtube_kanaal.services.instagram_service import InstagramService
 from youtube_kanaal.services.kokoro_service import KokoroService
 from youtube_kanaal.services.narration_service import NarrationService
@@ -122,6 +123,7 @@ class ShortPipeline:
         sound_design_service: SoundDesignService | None = None,
         youtube_service: YouTubeService | None = None,
         instagram_service: InstagramService | None = None,
+        instagram_cover_service: InstagramCoverService | None = None,
     ) -> None:
         self.settings = settings
         self.database = database
@@ -138,6 +140,7 @@ class ShortPipeline:
         self.sound_design = sound_design_service or SoundDesignService(settings)
         self.youtube = youtube_service or YouTubeService(settings)
         self.instagram = instagram_service or InstagramService(settings)
+        self.instagram_cover = instagram_cover_service or InstagramCoverService(settings)
 
     def run(self, request: ShortRunRequest) -> ShortRunResult:
         run_id = _new_run_id()
@@ -607,10 +610,26 @@ class ShortPipeline:
                 metadata = InstagramUploadMetadata(uploaded=False)
                 runtime.stage_summaries["instagram_upload"] = metadata.model_dump(mode="json")
                 return metadata
-            metadata = self.instagram.upload_reel(
+            cover_path = self.instagram_cover.generate_cover(
+                title=content.title,
+                topic=content.topic,
+                output_path=runtime.artifacts.metadata_dir / "instagram_cover.jpg",
+            )
+            instagram_video_path = self.instagram_cover.build_reel_with_cover(
                 video_path=final_video_path,
+                cover_path=cover_path,
+                output_path=runtime.artifacts.video_dir / f"{safe_slug(content.title)}-instagram-reel.mp4",
+            )
+            metadata = self.instagram.upload_reel(
+                video_path=instagram_video_path,
                 caption=content.upload_description(minimum_hashtags=10),
                 response_path=runtime.artifacts.responses_dir / "instagram_upload.json",
+            )
+            metadata = metadata.model_copy(
+                update={
+                    "cover_path": cover_path,
+                    "upload_video_path": instagram_video_path,
+                }
             )
             runtime.stage_summaries["instagram_upload"] = metadata.model_dump(mode="json")
             return metadata
@@ -722,7 +741,7 @@ class ShortPipeline:
                     asset_type="instagram_reel",
                     source_id=instagram_metadata.instagram_media_id,
                     source_url=instagram_metadata.permalink,
-                    local_path=str(final_video_path),
+                    local_path=str(instagram_metadata.upload_video_path or final_video_path),
                     metadata=instagram_metadata.model_dump(mode="json"),
                     created_at=completed_at,
                 )

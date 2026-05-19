@@ -34,6 +34,12 @@ python -m youtube_kanaal daily-content --for today --short-times "16:00, 17:00, 
 
 ollama pull llama3.2:3b 
 
+## alleen YouTube Shorts uploaden
+.\.venv\Scripts\python.exe -m youtube_kanaal make-short-schedule-youtube --date 2026-05-20 --times "14:00,15:00,15:30,19:00"
+
+## YouTube Shorts + Instagram Reels uploaden
+.\.venv\Scripts\python.exe -m youtube_kanaal make-short-schedule-reels --date 2026-05-20 --times "14:00,15:00,15:30,19:00"
+
 .\.venv\Scripts\python -m youtube_kanaal generate-and-schedule --for today --upload
 
 

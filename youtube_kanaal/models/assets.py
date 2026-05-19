@@ -69,6 +69,8 @@ class InstagramUploadMetadata(BaseModel):
     instagram_media_id: str | None = None
     container_id: str | None = None
     response_path: Path | None = None
+    cover_path: Path | None = None
+    upload_video_path: Path | None = None
     uploaded: bool = False
     permalink: str | None = None
     fallback_reason: str | None = None

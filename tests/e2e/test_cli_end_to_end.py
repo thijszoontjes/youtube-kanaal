@@ -190,6 +190,79 @@ def test_cli_make_short_schedule_creates_four_scheduled_uploads(cli_runner, conf
     assert scheduled_hours == [10, 13, 15, 19]
 
 
+def test_cli_make_short_schedule_reels_accepts_flexible_times(cli_runner, configured_env) -> None:
+    result = cli_runner.invoke(
+        app,
+        [
+            "make-short-schedule-reels",
+            "--date",
+            "2099-04-12",
+            "--times",
+            "19:00,20:00",
+            "--mock-mode",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "Planning 2 Shorts" in result.stdout
+    assert "Scheduled Shorts + Instagram Reels" in result.stdout
+
+    output_dir = Path(configured_env["output_dir"])
+    run_dirs = sorted(
+        [path for path in output_dir.iterdir() if path.is_dir()],
+        key=lambda path: path.stat().st_mtime,
+    )
+    assert len(run_dirs) == 2
+
+    scheduled_hours: list[int] = []
+    for run_dir in run_dirs:
+        metadata = json.loads((run_dir / "metadata" / "run_metadata.json").read_text(encoding="utf-8"))
+        assert metadata["upload"]["uploaded"] is True
+        assert metadata["instagram_upload"]["uploaded"] is True
+        assert metadata["instagram_upload"]["cover_path"].endswith("instagram_cover.jpg")
+        assert (run_dir / "metadata" / "instagram_cover.jpg").exists()
+        scheduled_hours.append(datetime.fromisoformat(metadata["upload"]["scheduled_publish_at"]).hour)
+
+    assert scheduled_hours == [19, 20]
+
+
+def test_cli_make_short_schedule_youtube_uploads_only_to_youtube(cli_runner, configured_env) -> None:
+    result = cli_runner.invoke(
+        app,
+        [
+            "make-short-schedule-youtube",
+            "--date",
+            "2099-04-12",
+            "--times",
+            "14:00,15:30",
+            "--mock-mode",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "Planning 2 YouTube Shorts" in result.stdout
+    assert "Scheduled YouTube Shorts" in result.stdout
+
+    output_dir = Path(configured_env["output_dir"])
+    run_dirs = sorted(
+        [path for path in output_dir.iterdir() if path.is_dir()],
+        key=lambda path: path.stat().st_mtime,
+    )
+    assert len(run_dirs) == 2
+
+    scheduled_times: list[str] = []
+    for run_dir in run_dirs:
+        metadata = json.loads((run_dir / "metadata" / "run_metadata.json").read_text(encoding="utf-8"))
+        assert metadata["upload"]["uploaded"] is True
+        assert metadata["instagram_upload"]["uploaded"] is False
+        scheduled_publish_at = metadata["upload"]["scheduled_publish_at"]
+        assert scheduled_publish_at is not None
+        scheduled_time = datetime.fromisoformat(scheduled_publish_at).strftime("%H:%M")
+        scheduled_times.append(scheduled_time)
+
+    assert scheduled_times == ["14:00", "15:30"]
+
+
 def test_cli_upload_instagram_reel_accepts_existing_video_in_mock_mode(cli_runner, configured_env) -> None:
     video_path = Path(configured_env["output_dir"]) / "test-reel.mp4"
     video_path.parent.mkdir(parents=True, exist_ok=True)

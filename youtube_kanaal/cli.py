@@ -511,6 +511,50 @@ def make_short_schedule(
 
 
 @app.command()
+def make_short_schedule_youtube(
+    times: Optional[str] = typer.Option(
+        None,
+        help="Comma-separated local YouTube publish times in HH:MM. Defaults to SCHEDULED_RUN_TIMES.",
+    ),
+    date_text: Optional[str] = typer.Option(
+        None,
+        "--date",
+        help="Target local YouTube publish date in YYYY-MM-DD. Defaults to tomorrow in SCHEDULED_TIMEZONE.",
+    ),
+    debug: bool = typer.Option(False, help="Enable verbose logging."),
+    mock_mode: bool = typer.Option(False, help="Use deterministic mock services."),
+) -> None:
+    """Generate Shorts and schedule them on YouTube only."""
+
+    settings = load_settings(app_debug=debug, mock_mode=mock_mode)
+    schedule_times = parse_schedule_times(times or settings.scheduled_run_times)
+    if not 1 <= len(schedule_times) <= 10:
+        raise typer.BadParameter("Times must contain between 1 and 10 HH:MM values.")
+    target_date = _resolve_schedule_date(
+        date_text=date_text,
+        timezone_name=settings.scheduled_timezone,
+    )
+    publish_slots = _build_publish_schedule(
+        times=schedule_times,
+        target_date=target_date,
+        timezone_name=settings.scheduled_timezone,
+    )
+
+    console.print(
+        f"Planning {len(schedule_times)} YouTube Shorts for {target_date.isoformat()} in "
+        f"{settings.scheduled_timezone}."
+    )
+    scheduled_results = _run_scheduled_shorts_batch(
+        publish_slots=publish_slots,
+        debug=debug,
+        mock_mode=mock_mode,
+        upload=True,
+        instagram_upload=False,
+    )
+    _render_scheduled_uploads_table(title="Scheduled YouTube Shorts", scheduled_results=scheduled_results)
+
+
+@app.command()
 def make_short_schedule_reels(
     times: Optional[str] = typer.Option(
         None,
@@ -524,7 +568,7 @@ def make_short_schedule_reels(
     debug: bool = typer.Option(False, help="Enable verbose logging."),
     mock_mode: bool = typer.Option(False, help="Use deterministic mock services."),
 ) -> None:
-    """Generate 4 Shorts, schedule them on YouTube, and publish matching Instagram Reels immediately."""
+    """Generate Shorts, schedule them on YouTube, and publish matching Instagram Reels immediately."""
 
     settings = load_settings(app_debug=debug, mock_mode=mock_mode)
     if not mock_mode:
@@ -535,8 +579,8 @@ def make_short_schedule_reels(
             raise typer.Exit(code=1) from exc
 
     schedule_times = parse_schedule_times(times or settings.scheduled_run_times)
-    if len(schedule_times) != 4:
-        raise typer.BadParameter("Times must contain exactly 4 HH:MM values.")
+    if not 1 <= len(schedule_times) <= 10:
+        raise typer.BadParameter("Times must contain between 1 and 10 HH:MM values.")
     target_date = _resolve_schedule_date(
         date_text=date_text,
         timezone_name=settings.scheduled_timezone,
@@ -548,7 +592,7 @@ def make_short_schedule_reels(
     )
 
     console.print(
-        f"Planning 4 Shorts for YouTube schedule on {target_date.isoformat()} in "
+        f"Planning {len(schedule_times)} Shorts for YouTube schedule on {target_date.isoformat()} in "
         f"{settings.scheduled_timezone}; Instagram Reels upload immediately."
     )
     scheduled_results = _run_scheduled_shorts_batch(
