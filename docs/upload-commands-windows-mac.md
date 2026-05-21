@@ -66,14 +66,19 @@ Deze command maakt 4 Shorts, plant ze op YouTube, en uploadt dezelfde video's me
 Dit maakt een Windows Taakplanner-taak die bij aanmelden een PowerShell-terminal opent. Na 2 minuten delay doet hij:
 
 - `ollama pull llama3.2:3b`
-- 4 Shorts voor vandaag plannen
-- 1 lange video voor vandaag plannen
+- 4 Shorts voor morgen op YouTube inplannen
+- 1 lange video voor morgen op YouTube inplannen
+- dezelfde Shorts meteen vandaag als Instagram Reels uploaden
 
 Eenmalig installeren:
 
 ```powershell
-.\scripts\install_windows_startup_youtube.ps1 -PublishFor "today" -ShortTimes "10:00,13:00,15:00,19:00" -VideoTime "17:00"
+.\scripts\install_windows_startup_youtube.ps1 -ShortTimes "10:00,13:00,15:00,19:00" -VideoTime "17:00"
 ```
+
+De standaard `-PublishFor` is `tomorrow`, zodat YouTube-planning altijd in de toekomst staat. Wil je Reels tijdelijk uitzetten, voeg `-NoInstagramReels` toe.
+
+Als Windows Taakplanner geen taak mag aanmaken, installeert het script automatisch een launcher in je eigen Windows Startup-map. Die route heeft geen adminrechten nodig.
 
 Meteen testen zonder opnieuw op te starten:
 

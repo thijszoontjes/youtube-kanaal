@@ -669,12 +669,24 @@ def daily_content(
         help="Local long-form publish time in HH:MM. Defaults to 17:00.",
     ),
     dry_run: bool = typer.Option(False, help="Generate all local packages without YouTube upload."),
+    instagram_reels: bool = typer.Option(
+        False,
+        help="Publish the generated Shorts to Instagram Reels immediately while scheduling YouTube for the future.",
+    ),
     debug: bool = typer.Option(False, help="Enable verbose logging."),
     mock_mode: bool = typer.Option(False, help="Use deterministic mock services."),
 ) -> None:
     """Generate and schedule 4 Shorts first, then 1 long-form video for the next day."""
 
     settings = load_settings(app_debug=debug, mock_mode=mock_mode)
+    effective_instagram_reels = instagram_reels and not dry_run
+    if effective_instagram_reels and not mock_mode:
+        try:
+            InstagramService(settings).ensure_configured()
+        except PipelineStageError as exc:
+            _print_failure(exc)
+            raise typer.Exit(code=1) from exc
+
     target_date = _resolve_long_schedule_date(for_value=for_value, timezone_name=settings.scheduled_timezone)
     parsed_short_times = parse_schedule_times(short_times or settings.scheduled_run_times)
     if short_times is None and len(parsed_short_times) != 4:
@@ -701,13 +713,15 @@ def daily_content(
     console.print(
         f"Planning 4 Shorts first, then 1 English long-form video for {target_date.isoformat()} "
         f"in {settings.scheduled_timezone}; video={video_publish_at.isoformat()}; "
-        f"upload={'yes' if effective_upload else 'no'}."
+        f"upload={'yes' if effective_upload else 'no'}; "
+        f"Instagram Reels={'today/immediate' if effective_instagram_reels else 'no'}."
     )
     short_results = _run_scheduled_shorts_batch(
         publish_slots=short_publish_slots,
         debug=debug,
         mock_mode=mock_mode,
         upload=effective_upload,
+        instagram_upload=effective_instagram_reels,
     )
     _render_scheduled_uploads_table(title="Scheduled Shorts", scheduled_results=short_results)
 

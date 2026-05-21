@@ -1,10 +1,11 @@
 param(
     [string]$RepoRoot = "",
     [string]$PythonExe = "",
-    [string]$PublishFor = "today",
+    [string]$PublishFor = "tomorrow",
     [string]$ShortTimes = "10:00,13:00,15:00,19:00",
     [string]$VideoTime = "17:00",
     [string]$OllamaModel = "llama3.2:3b",
+    [switch]$NoInstagramReels,
     [switch]$SkipOllamaPull,
     [switch]$DryRun,
     [switch]$Debug
@@ -33,9 +34,10 @@ Write-Host ""
 Write-Host "youtube-kanaal startup upload"
 Write-Host "Repo: $RepoRoot"
 Write-Host "Python: $PythonExe"
-Write-Host "Publish day: $PublishFor"
+Write-Host "YouTube publish day: $PublishFor"
 Write-Host "Short times: $ShortTimes"
 Write-Host "Long video time: $VideoTime"
+Write-Host "Instagram Reels: $(if ($NoInstagramReels) { 'no' } else { 'today/immediate' })"
 Write-Host ""
 
 Push-Location $RepoRoot
@@ -59,6 +61,9 @@ try {
         "--video-time",
         $VideoTime
     )
+    if (-not $NoInstagramReels) {
+        $arguments += "--instagram-reels"
+    }
     if ($DryRun) {
         $arguments += "--dry-run"
     }
