@@ -121,8 +121,9 @@ def build_long_content_generation_prompt(topic: TopicChoice, excluded_titles: li
         - Use controlled clickbait: the title should create curiosity without lying or overpromising.
         - Use full ALL CAPS for some titles, and use ALL CAPS emphasis words in others; do not make every title all caps.
         - Avoid bland title shapes like "X Explained" or "A Visual Guide to X".
-        - thumbnail_text must be short, punchy, ALL CAPS, and readable on mobile.
-        - Good thumbnail_text examples: "WAIT WHAT?", "HIDDEN TRUTH", "THIS IS WEIRD", "NOBODY SEES THIS".
+        - thumbnail_text must be short, punchy, ALL CAPS, mobile-readable, and clickbait-curious without lying.
+        - Make thumbnail_text visually different from the title; use 2-4 big words, not a sentence.
+        - Good thumbnail_text examples: "WAIT WHAT?", "HIDDEN TRUTH", "THIS IS WRONG", "NOBODY SEES THIS", "THEY HID THIS".
         - Every section needs 2-5 Pexels-friendly visual search queries.
         - Generate 8-20 tags without # symbols.
         - Facts must be complete sentences and distinct.

@@ -604,15 +604,29 @@ class OllamaService:
 
     def _clean_thumbnail_text(self, value: str, topic: str) -> str:
         cleaned = " ".join(value.upper().split()).strip()
-        bland_fragments = ("EXPLAINED", "VISUAL GUIDE", "FACTS ABOUT", "DETAILS")
-        if 4 <= len(cleaned) <= 34 and not any(fragment in cleaned for fragment in bland_fragments):
+        bland_fragments = (
+            "EXPLAINED",
+            "VISUAL GUIDE",
+            "FACTS ABOUT",
+            "DETAILS",
+            "GUIDE",
+            "EVERYTHING",
+            "INTRODUCTION",
+        )
+        word_count = len(cleaned.replace("?", "").replace("!", "").split())
+        if 4 <= len(cleaned) <= 34 and 1 <= word_count <= 5 and not any(fragment in cleaned for fragment in bland_fragments):
             return cleaned
         options = [
             "WAIT WHAT?",
             "HIDDEN TRUTH",
-            "THIS IS WEIRD",
+            "THIS IS WRONG",
             "NOBODY SEES THIS",
-            "DO NOT MISS THIS",
+            "THEY HID THIS",
+            "DON'T MISS THIS",
+            "IT GETS DARK",
+            "WHY IS THIS HERE?",
+            "NO ONE EXPLAINS THIS",
+            "THIS CHANGES IT",
         ]
         seed = self._variation_seed(topic, [])
         return options[seed % len(options)]

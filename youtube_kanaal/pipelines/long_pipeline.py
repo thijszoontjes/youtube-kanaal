@@ -287,7 +287,7 @@ class LongPipeline(ShortPipeline):
                 background_path=background_path,
                 output_path=thumbnail_path,
             )
-            runtime.stage_summaries["thumbnail_generation"] = {"path": str(output_path), "size": "1280x720"}
+            runtime.stage_summaries["thumbnail_generation"] = {"path": str(output_path), "size": "1920x1080"}
             return output_path
 
     def upload_long_if_requested(
@@ -432,7 +432,7 @@ class LongPipeline(ShortPipeline):
                 source_id=None,
                 source_url=None,
                 local_path=str(thumbnail_path),
-                metadata={"size": "1280x720"},
+                metadata={"size": "1920x1080"},
                 created_at=completed_at,
             )
             self.database.record_asset(
