@@ -13,7 +13,15 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 from youtube_kanaal.config import Settings
 from youtube_kanaal.exceptions import PipelineStageError
-from youtube_kanaal.models.content import GeneratedLongVideo, GeneratedShort, LongVideoSection, TOPIC_CATALOG, TopicChoice
+from youtube_kanaal.models.content import (
+    SHORT_MAX_WORDS,
+    SHORT_MIN_WORDS,
+    GeneratedLongVideo,
+    GeneratedShort,
+    LongVideoSection,
+    TOPIC_CATALOG,
+    TopicChoice,
+)
 from youtube_kanaal.prompts import (
     build_content_generation_prompt,
     build_long_content_generation_prompt,
@@ -384,7 +392,7 @@ class OllamaService:
         repaired_facts = list(repaired["facts"]) if isinstance(repaired["facts"], list) else []
         if not narration and repaired_facts:
             narration = self._build_narration(topic_value, repaired_facts)
-        elif repaired_facts and not 45 <= len(narration.split()) <= 90:
+        elif repaired_facts and not SHORT_MIN_WORDS <= len(narration.split()) <= SHORT_MAX_WORDS:
             narration = self._fit_narration_to_duration(narration, repaired_facts, topic_value)
         repaired["narration"] = narration
 
@@ -453,11 +461,11 @@ class OllamaService:
             kept: list[str] = []
             for sentence in sentences:
                 candidate = " ".join([*kept, sentence]).strip()
-                if len(candidate.split()) > 90:
+                if len(candidate.split()) > SHORT_MAX_WORDS:
                     break
                 kept.append(sentence)
             candidate = " ".join(kept).strip()
-            if len(candidate.split()) >= 45:
+            if len(candidate.split()) >= SHORT_MIN_WORDS:
                 return candidate
         return self._build_narration(topic, facts)
 
@@ -910,13 +918,16 @@ class OllamaService:
                 closers[(seed + 4) % len(closers)],
             ]
         ).strip()
-        if len(narration.split()) < 45:
+        if len(narration.split()) < SHORT_MIN_WORDS:
             extra_beats = [
                 "Even on its own, that would already be enough to make somebody stop scrolling for a second.",
                 "And honestly, once those details stack up, the whole thing feels a lot less ordinary.",
                 "Which is kind of wild, because each part sounds made up until you remember it's real.",
             ]
-            narration = f"{narration} {extra_beats[(seed + 5) % len(extra_beats)]}".strip()
+            extra_index = 0
+            while len(narration.split()) < SHORT_MIN_WORDS and extra_index < len(extra_beats):
+                narration = f"{narration} {extra_beats[(seed + 5 + extra_index) % len(extra_beats)]}".strip()
+                extra_index += 1
         return narration
 
     def _validate_short_quality(self, content: GeneratedShort, topic: TopicChoice) -> None:

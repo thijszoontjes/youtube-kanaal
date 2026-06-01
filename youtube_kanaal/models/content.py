@@ -324,6 +324,8 @@ _GENERIC_TITLE_HASHTAGS: tuple[str, ...] = (
     "#LearnOnYouTube",
     "#InterestingFacts",
 )
+SHORT_MIN_WORDS = 55
+SHORT_MAX_WORDS = 90
 _APP_PROMO_LINE = "Download my app SecureSets (Android only):"
 _APP_PROMO_URL = "https://play.google.com/store/apps/details?id=com.securesets.app&pli=1"
 _BUCKET_HASHTAGS: dict[str, tuple[str, ...]] = {
@@ -469,7 +471,7 @@ class GeneratedShort(BaseModel):
     @model_validator(mode="after")
     def _validate_duration(self) -> "GeneratedShort":
         word_count = len(self.narration.split())
-        if not 45 <= word_count <= 90:
+        if not SHORT_MIN_WORDS <= word_count <= SHORT_MAX_WORDS:
             raise ValueError("Narration should be roughly 20-35 seconds of speech.")
         if len(self.title) > 70:
             raise ValueError("Title is too long for a Short.")

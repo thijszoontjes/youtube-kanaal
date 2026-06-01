@@ -83,7 +83,8 @@ def test_generated_short_builds_upload_metadata_with_hashtags() -> None:
         narration=(
             "Here are 3 facts about Saturn. First, Saturn has famous rings made mostly of ice. "
             "Second, Saturn has many moons including Titan. Third, Saturn is so low in density that it would float in water. "
-            "That is why Saturn stands out in a fast visual Short made for science fans everywhere."
+            "That is why Saturn stands out in a fast visual Short made for science fans everywhere. "
+            "The scale is huge, but the details are easy to picture."
         ),
         facts=[
             "Saturn has famous rings made mostly of ice.",
@@ -93,7 +94,8 @@ def test_generated_short_builds_upload_metadata_with_hashtags() -> None:
         subtitle_text=(
             "Here are 3 facts about Saturn. First, Saturn has famous rings made mostly of ice. "
             "Second, Saturn has many moons including Titan. Third, Saturn is so low in density that it would float in water. "
-            "That is why Saturn stands out in a fast visual Short made for science fans everywhere."
+            "That is why Saturn stands out in a fast visual Short made for science fans everywhere. "
+            "The scale is huge, but the details are easy to picture."
         ),
     )
 
@@ -317,7 +319,8 @@ def test_ollama_service_quality_gate_rejects_mismatched_short_title(configured_e
             "The Titanic was not just unlucky; one design limit made the disaster worse. "
             "Its watertight compartments did not reach high enough to stop water spilling between sections. "
             "The ship also carried too few lifeboats for everyone aboard. "
-            "After it sank, maritime rules changed so passenger ships had to treat safety very differently."
+            "After it sank, maritime rules changed so passenger ships had to treat safety very differently. "
+            "That makes the disaster feel less random and more preventable."
         ),
         facts=[
             "The Titanic's watertight compartments did not extend high enough to contain flooding.",
@@ -328,7 +331,8 @@ def test_ollama_service_quality_gate_rejects_mismatched_short_title(configured_e
             "The Titanic was not just unlucky; one design limit made the disaster worse. "
             "Its watertight compartments did not reach high enough to stop water spilling between sections. "
             "The ship also carried too few lifeboats for everyone aboard. "
-            "After it sank, maritime rules changed so passenger ships had to treat safety very differently."
+            "After it sank, maritime rules changed so passenger ships had to treat safety very differently. "
+            "That makes the disaster feel less random and more preventable."
         ),
     )
 
@@ -354,7 +358,8 @@ def test_ollama_service_quality_gate_rejects_late_topic_mention(configured_env) 
             "Imagine a world where a ship looks impossible to sink. "
             "The ocean seems calm until the design starts working against itself. "
             "The Titanic's watertight compartments did not reach high enough to stop water spilling between sections. "
-            "That detail helped turn damage in one area into a disaster across the ship."
+            "That detail helped turn damage in one area into a disaster across the ship. "
+            "The problem was small enough to explain, but big enough to change everything."
         ),
         facts=[
             "The Titanic's watertight compartments did not extend high enough to contain flooding.",
@@ -365,7 +370,8 @@ def test_ollama_service_quality_gate_rejects_late_topic_mention(configured_env) 
             "Imagine a world where a ship looks impossible to sink. "
             "The ocean seems calm until the design starts working against itself. "
             "The Titanic's watertight compartments did not reach high enough to stop water spilling between sections. "
-            "That detail helped turn damage in one area into a disaster across the ship."
+            "That detail helped turn damage in one area into a disaster across the ship. "
+            "The problem was small enough to explain, but big enough to change everything."
         ),
     )
 

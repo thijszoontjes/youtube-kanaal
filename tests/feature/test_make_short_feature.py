@@ -122,7 +122,8 @@ def test_pipeline_builds_fact_first_visual_queries(configured_env) -> None:
         narration=(
             "Saturn looks calm from far away, but the details are wild. Its rings are mostly ice and rock. "
             "Titan is a moon with a thick atmosphere. Saturn has storms that can last for years. "
-            "That is a lot of motion hiding inside one planet, especially when the footage makes it feel so still."
+            "That is a lot of motion hiding inside one planet, especially when the footage makes it feel so still. "
+            "It is familiar from posters, but the real details are much stranger."
         ),
         facts=[
             "Saturn's rings are made mostly of ice and rock.",
@@ -132,7 +133,8 @@ def test_pipeline_builds_fact_first_visual_queries(configured_env) -> None:
         subtitle_text=(
             "Saturn looks calm from far away, but the details are wild. Its rings are mostly ice and rock. "
             "Titan is a moon with a thick atmosphere. Saturn has storms that can last for years. "
-            "That is a lot of motion hiding inside one planet, especially when the footage makes it feel so still."
+            "That is a lot of motion hiding inside one planet, especially when the footage makes it feel so still. "
+            "It is familiar from posters, but the real details are much stranger."
         ),
     )
 
@@ -167,7 +169,8 @@ def test_pipeline_builds_topic_specific_visual_queries_for_titanic(configured_en
             "The Titanic was not just unlucky; one design limit made the disaster worse. "
             "Its watertight compartments did not reach high enough to stop water spilling between sections. "
             "The ship also carried too few lifeboats for everyone aboard. "
-            "After it sank, maritime rules changed so passenger ships had to treat safety very differently."
+            "After it sank, maritime rules changed so passenger ships had to treat safety very differently. "
+            "That makes the disaster feel less random and more preventable."
         ),
         facts=[
             "The Titanic's watertight compartments did not extend high enough to contain flooding.",
@@ -178,7 +181,8 @@ def test_pipeline_builds_topic_specific_visual_queries_for_titanic(configured_en
             "The Titanic was not just unlucky; one design limit made the disaster worse. "
             "Its watertight compartments did not reach high enough to stop water spilling between sections. "
             "The ship also carried too few lifeboats for everyone aboard. "
-            "After it sank, maritime rules changed so passenger ships had to treat safety very differently."
+            "After it sank, maritime rules changed so passenger ships had to treat safety very differently. "
+            "That makes the disaster feel less random and more preventable."
         ),
     )
 

@@ -72,7 +72,7 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
         - Avoid stock endings or recap lines
         - Do not end with phrases like "That is why..." or "People remember..." or "it looks unusual on screen"
         - No bullet points, stage directions, or narrator-style labels inside the narration
-        - Narration length roughly 20-35 seconds (about 45-90 words)
+        - Narration length roughly 20-35 seconds (about 55-90 words)
         - Description must be 1-2 specific sentences about this exact Short; never leave it blank
         - The facts array must contain exactly 3 complete, concrete facts, not generic video-production statements
         - The facts must support the title and narration
