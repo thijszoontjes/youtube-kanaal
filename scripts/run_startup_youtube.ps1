@@ -1,6 +1,8 @@
 param(
     [string]$RepoRoot = "",
     [string]$PythonExe = "",
+    [string]$BranchName = "videos-verbeteringen",
+    [switch]$SkipPull,
     [switch]$Upload,
     [switch]$Debug,
     [string]$PrivacyStatus = ""
@@ -38,11 +40,39 @@ if ($PrivacyStatus) {
 Write-Host "youtube-kanaal startup run"
 Write-Host "Repo: $RepoRoot"
 Write-Host "Python: $PythonExe"
+Write-Host "Branch: $BranchName"
 Write-Host "Command: $PythonExe $($arguments -join ' ')"
 Write-Host ""
 
 Push-Location $RepoRoot
 try {
+    if ($BranchName) {
+        Write-Host "Switching to branch $BranchName..."
+        git fetch origin $BranchName
+        if ($LASTEXITCODE -ne 0) {
+            throw "git fetch failed for origin/$BranchName"
+        }
+
+        git rev-parse --verify $BranchName *> $null
+        if ($LASTEXITCODE -eq 0) {
+            git checkout $BranchName
+        } else {
+            git checkout -B $BranchName "origin/$BranchName"
+        }
+        if ($LASTEXITCODE -ne 0) {
+            throw "git checkout failed for $BranchName"
+        }
+
+        if (-not $SkipPull) {
+            Write-Host "Pulling latest code for $BranchName..."
+            git pull --ff-only origin $BranchName
+            if ($LASTEXITCODE -ne 0) {
+                throw "git pull --ff-only failed for origin/$BranchName"
+            }
+        }
+        Write-Host ""
+    }
+
     & $PythonExe @arguments
     $exitCode = $LASTEXITCODE
     Write-Host ""

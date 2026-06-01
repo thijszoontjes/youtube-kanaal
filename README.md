@@ -606,6 +606,7 @@ powershell -ExecutionPolicy Bypass -File scripts\install_windows_startup_youtube
 ```
 
 This creates a logon task named `youtube-kanaal-startup-upload` that opens PowerShell and runs `python -m youtube_kanaal scheduled-run --upload` through `scripts\run_startup_youtube.ps1`.
+The startup script checks out `videos-verbeteringen` and runs `git pull --ff-only origin videos-verbeteringen` before generating/uploading, so startup uses the latest pushed automation branch by default.
 
 Override the times if needed:
 

@@ -2,6 +2,8 @@ param(
     [string]$RepoRoot = "",
     [string]$PythonExe = "",
     [string]$TaskName = "youtube-kanaal-startup-upload",
+    [string]$BranchName = "videos-verbeteringen",
+    [switch]$SkipPull,
     [switch]$Upload,
     [switch]$Debug,
     [string]$PrivacyStatus = ""
@@ -34,8 +36,12 @@ $scriptArgs = @(
     "-ExecutionPolicy", "Bypass",
     "-File", "`"$startupScript`"",
     "-RepoRoot", "`"$RepoRoot`"",
-    "-PythonExe", "`"$PythonExe`""
+    "-PythonExe", "`"$PythonExe`"",
+    "-BranchName", "`"$BranchName`""
 )
+if ($SkipPull) {
+    $scriptArgs += "-SkipPull"
+}
 if ($Upload) {
     $scriptArgs += "-Upload"
 }
