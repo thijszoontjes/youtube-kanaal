@@ -72,6 +72,14 @@ def test_sound_design_service_builds_procedural_mix(monkeypatch, tmp_path: Path)
     assert calls[-1][-1].endswith("narration_soundscape.wav")
 
 
+def test_sound_design_service_uses_bucket_profile_hint(configured_env) -> None:
+    service = SoundDesignService(Settings())
+
+    assert service._select_music_profile("history").name == "calm_focus"
+    assert service._select_music_profile("gaming").name == "soft_lift"
+    assert service._select_music_profile("space").name == "quiet_motion"
+
+
 def test_sound_design_service_uses_single_custom_audio_file_when_configured(monkeypatch, tmp_path: Path) -> None:
     narration_path = tmp_path / "narration.wav"
     _write_wav(narration_path, 2.0)

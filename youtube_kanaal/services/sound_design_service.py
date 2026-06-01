@@ -72,6 +72,7 @@ class SoundDesignService:
         narration_path: Path,
         duration_seconds: float,
         working_dir: Path,
+        profile_hint: str | None = None,
         logger: logging.Logger | None = None,
     ) -> SoundDesignAsset:
         if not self.settings.sound_design_enabled:
@@ -127,7 +128,11 @@ class SoundDesignService:
         placed_stems: list[_PlacedStem] = []
         stem_paths: list[Path] = []
 
-        music_path, music_profile = self._render_background_music(sound_dir / "background_music.wav", duration_seconds)
+        music_path, music_profile = self._render_background_music(
+            sound_dir / "background_music.wav",
+            duration_seconds,
+            profile_hint=profile_hint,
+        )
         placed_stems.append(_PlacedStem(path=music_path, label=f"music_{music_profile.name}", offset_seconds=0.0))
         stem_paths.append(music_path)
 
@@ -274,8 +279,14 @@ class SoundDesignService:
             ),
         )
 
-    def _render_background_music(self, output_path: Path, duration_seconds: float) -> tuple[Path, _MusicProfile]:
-        profile = random.choice(_MUSIC_PROFILES)
+    def _render_background_music(
+        self,
+        output_path: Path,
+        duration_seconds: float,
+        *,
+        profile_hint: str | None = None,
+    ) -> tuple[Path, _MusicProfile]:
+        profile = self._select_music_profile(profile_hint)
         duration = max(duration_seconds, 0.25)
         fade_out_start = max(duration - 1.4, 0.0)
         detune = random.choice((-2.5, 0.0, 2.5))
@@ -330,6 +341,24 @@ class SoundDesignService:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         run_command(command, timeout_seconds=180, stage="sound_design")
         return output_path, profile
+
+    def _select_music_profile(self, profile_hint: str | None) -> _MusicProfile:
+        normalized = (profile_hint or "").strip().lower()
+        preferred = {
+            "history": "calm_focus",
+            "space": "quiet_motion",
+            "ocean": "warm_ambient",
+            "animals": "warm_ambient",
+            "sports": "soft_lift",
+            "gaming": "soft_lift",
+            "technology": "quiet_motion",
+            "weather": "quiet_motion",
+        }.get(normalized)
+        if preferred:
+            for profile in _MUSIC_PROFILES:
+                if profile.name == preferred:
+                    return profile
+        return random.choice(_MUSIC_PROFILES)
 
     def _render_whoosh(self, output_path: Path) -> None:
         self._render_effect(

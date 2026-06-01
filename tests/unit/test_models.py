@@ -99,12 +99,14 @@ def test_generated_short_builds_upload_metadata_with_hashtags() -> None:
 
     upload_title = short.upload_title()
     upload_description = short.upload_description()
+    promoted_description = short.upload_description(include_app_promo=True)
 
     assert len(short.upload_hashtags()) >= 10
     assert upload_title.count("#") >= 3
     assert "#Saturn" in upload_title
-    assert "Download my app SecureSets (Android only):" in upload_description
-    assert "https://play.google.com/store/apps/details?id=com.securesets.app&pli=1" in upload_description
+    assert "Download my app SecureSets (Android only):" not in upload_description
+    assert "Download my app SecureSets (Android only):" in promoted_description
+    assert "https://play.google.com/store/apps/details?id=com.securesets.app&pli=1" in promoted_description
     assert "#Space" in upload_description
 
 
@@ -295,3 +297,77 @@ def test_ollama_service_normalization_strips_stock_outro_phrases(configured_env)
     assert "people remember saturn because it looks so unusual on screen" not in normalized.narration.lower()
     assert normalized.narration.endswith("short videos.")
     assert normalized.subtitle_text == normalized.narration
+
+
+def test_ollama_service_quality_gate_rejects_mismatched_short_title(configured_env) -> None:
+    service = OllamaService(load_settings())
+    topic = TopicChoice(
+        bucket="history",
+        topic="the Titanic",
+        visual_queries=["shipwreck underwater", "iceberg ocean"],
+        search_terms=["the Titanic", "history"],
+    )
+    content = GeneratedShort(
+        bucket="history",
+        topic="the Titanic",
+        title="DEEP SEA VENTS SHOULD NOT EXIST",
+        description="A specific short about the Titanic sinking and the safety lessons that followed.",
+        hashtags=["#Titanic", "#History", "#Shipwreck"],
+        narration=(
+            "The Titanic was not just unlucky; one design limit made the disaster worse. "
+            "Its watertight compartments did not reach high enough to stop water spilling between sections. "
+            "The ship also carried too few lifeboats for everyone aboard. "
+            "After it sank, maritime rules changed so passenger ships had to treat safety very differently."
+        ),
+        facts=[
+            "The Titanic's watertight compartments did not extend high enough to contain flooding.",
+            "The Titanic carried too few lifeboats for every passenger and crew member.",
+            "The sinking led to major changes in maritime safety rules.",
+        ],
+        subtitle_text=(
+            "The Titanic was not just unlucky; one design limit made the disaster worse. "
+            "Its watertight compartments did not reach high enough to stop water spilling between sections. "
+            "The ship also carried too few lifeboats for everyone aboard. "
+            "After it sank, maritime rules changed so passenger ships had to treat safety very differently."
+        ),
+    )
+
+    with pytest.raises(ValueError, match="different catalog topic"):
+        service._validate_short_quality(content, topic)
+
+
+def test_ollama_service_quality_gate_rejects_late_topic_mention(configured_env) -> None:
+    service = OllamaService(load_settings())
+    topic = TopicChoice(
+        bucket="history",
+        topic="the Titanic",
+        visual_queries=["shipwreck underwater", "iceberg ocean"],
+        search_terms=["the Titanic", "history"],
+    )
+    content = GeneratedShort(
+        bucket="history",
+        topic="the Titanic",
+        title="The Titanic Detail Everyone Misses",
+        description="A specific short about one Titanic design detail and why it mattered during the sinking.",
+        hashtags=["#Titanic", "#History", "#Shipwreck"],
+        narration=(
+            "Imagine a world where a ship looks impossible to sink. "
+            "The ocean seems calm until the design starts working against itself. "
+            "The Titanic's watertight compartments did not reach high enough to stop water spilling between sections. "
+            "That detail helped turn damage in one area into a disaster across the ship."
+        ),
+        facts=[
+            "The Titanic's watertight compartments did not extend high enough to contain flooding.",
+            "The Titanic was marketed as unusually safe before its maiden voyage.",
+            "The sinking changed how ships handled lifeboats and radio watch rules.",
+        ],
+        subtitle_text=(
+            "Imagine a world where a ship looks impossible to sink. "
+            "The ocean seems calm until the design starts working against itself. "
+            "The Titanic's watertight compartments did not reach high enough to stop water spilling between sections. "
+            "That detail helped turn damage in one area into a disaster across the ship."
+        ),
+    )
+
+    with pytest.raises(ValueError, match="first two sentences"):
+        service._validate_short_quality(content, topic)

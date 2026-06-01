@@ -229,6 +229,8 @@ class PexelsService:
         else:
             bonus -= 1.2
 
+        bonus += self._historical_relevance_adjustment(query_tokens=query_tokens, haystack=haystack)
+
         space_terms = {"saturn", "planet", "space", "moon", "solar", "astronomy", "orbit", "galaxy", "star", "telescope"}
         space_hits = len(query_tokens & space_terms)
         if space_hits:
@@ -267,6 +269,31 @@ class PexelsService:
                 bonus -= 2.2
         return round(bonus, 2)
 
+    def _historical_relevance_adjustment(self, *, query_tokens: set[str], haystack: set[str]) -> float:
+        adjustment = 0.0
+        titanic_terms = {"titanic", "shipwreck", "ship", "ocean", "liner", "iceberg", "lifeboat", "wreck"}
+        if query_tokens & titanic_terms:
+            matching_terms = {"titanic", "shipwreck", "ship", "ocean", "liner", "iceberg", "lifeboat", "wreck", "sea"}
+            unrelated_terms = {
+                "colosseum",
+                "rome",
+                "roman",
+                "hamburg",
+                "fountain",
+                "fort",
+                "temple",
+                "castle",
+                "pagoda",
+                "warehouse",
+            }
+            if haystack & matching_terms:
+                adjustment += 2.0
+            if haystack & unrelated_terms:
+                adjustment -= 3.0
+        if {"museum", "artifact"} & query_tokens and {"museum", "artifact", "archive", "history"} & haystack:
+            adjustment += 1.2
+        return adjustment
+
     def _select_and_download(
         self,
         candidates: list[VideoClipAsset],
@@ -278,7 +305,8 @@ class PexelsService:
         used_ids: set[str] = set()
         cumulative = 0.0
         desired_count = ideal_clip_count(target_duration_seconds)
-        for clip in self._prioritized_candidates(candidates, queries):
+        viable_candidates = [clip for clip in candidates if clip.score >= 3.0] or candidates
+        for clip in self._prioritized_candidates(viable_candidates, queries):
             if clip.source_id in used_ids:
                 continue
             if not self._prepare_clip_for_use(clip):

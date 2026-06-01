@@ -49,6 +49,7 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
         - English only
         - Exactly 3 concise, accurate-sounding facts
         - Strong curiosity title, no emoji
+        - The title must match {topic.topic}; do not use another catalog topic or unrelated bait
         - Make the title feel clickable and a little clickbait, but do not make false claims
         - Do not use bland title shapes like "X Wonders", "X Explained", or "3 Facts About X"
         - Use full ALL CAPS for some titles, and use ALL CAPS emphasis words in others; do not make every title all caps
@@ -60,8 +61,9 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
           "SATURN IS HIDING SOMETHING WEIRD"
           "Do NOT Ignore This About Axolotls"
         - The narration should feel like natural spoken English, not a rigid script
-        - Open the narration with a surprising statement or a question
-        - Mention {topic.topic} early, but do not force a fixed opener
+        - Open with one specific tension, contradiction, or surprising claim about {topic.topic}
+        - The first sentence must mention {topic.topic} by name
+        - Do not open with "Did you know", "Imagine a world", "Have you ever wondered", or the exact title
         - Work the three facts into the narration naturally instead of mechanically listing "Fact 1, Fact 2, Fact 3"
         - Never use "Here are", "First", "Second", "Third", "Fact 1", "Fact 2", or "Fact 3" in the narration
         - Vary sentence length and rhythm
@@ -71,6 +73,9 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
         - Do not end with phrases like "That is why..." or "People remember..." or "it looks unusual on screen"
         - No bullet points, stage directions, or narrator-style labels inside the narration
         - Narration length roughly 20-35 seconds (about 45-90 words)
+        - Description must be 1-2 specific sentences about this exact Short; never leave it blank
+        - The facts array must contain exactly 3 complete, concrete facts, not generic video-production statements
+        - The facts must support the title and narration
         - No uncertainty phrases
         - No politics, religion, celebrity gossip, explicit content, dangerous advice, or medical claims
         - Avoid title similarity to these recent titles: {excluded}

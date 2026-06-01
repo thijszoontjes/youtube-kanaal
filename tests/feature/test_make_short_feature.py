@@ -146,6 +146,58 @@ def test_pipeline_builds_fact_first_visual_queries(configured_env) -> None:
     assert "Saturn generic topic search" not in queries
 
 
+def test_pipeline_builds_topic_specific_visual_queries_for_titanic(configured_env) -> None:
+    settings = load_settings(mock_mode=True)
+    database = Database(settings.database_path)
+    database.initialize()
+    pipeline = ShortPipeline(settings, database)
+    topic = TopicChoice(
+        bucket="history",
+        topic="the Titanic",
+        visual_queries=["the Titanic generic", "the Titanic history"],
+        search_terms=["the Titanic", "history"],
+    )
+    content = GeneratedShort(
+        bucket="history",
+        topic="the Titanic",
+        title="The Titanic Detail Everyone Misses",
+        description="A specific short about one Titanic design detail and why it mattered during the sinking.",
+        hashtags=["#Titanic", "#History", "#Shipwreck"],
+        narration=(
+            "The Titanic was not just unlucky; one design limit made the disaster worse. "
+            "Its watertight compartments did not reach high enough to stop water spilling between sections. "
+            "The ship also carried too few lifeboats for everyone aboard. "
+            "After it sank, maritime rules changed so passenger ships had to treat safety very differently."
+        ),
+        facts=[
+            "The Titanic's watertight compartments did not extend high enough to contain flooding.",
+            "The Titanic carried too few lifeboats for every passenger and crew member.",
+            "The sinking led to major changes in maritime safety rules.",
+        ],
+        subtitle_text=(
+            "The Titanic was not just unlucky; one design limit made the disaster worse. "
+            "Its watertight compartments did not reach high enough to stop water spilling between sections. "
+            "The ship also carried too few lifeboats for everyone aboard. "
+            "After it sank, maritime rules changed so passenger ships had to treat safety very differently."
+        ),
+    )
+
+    queries = pipeline._build_video_queries(topic, content)
+
+    assert queries[:3] == ["shipwreck underwater", "iceberg ocean", "old ocean liner"]
+    assert "the Titanic historical documentary" in queries
+
+
+def test_pipeline_detects_overused_recent_bucket(configured_env) -> None:
+    settings = load_settings(mock_mode=True)
+    database = Database(settings.database_path)
+    database.initialize()
+    pipeline = ShortPipeline(settings, database)
+
+    assert pipeline._bucket_is_overused("history", ["history", "history", "history", "space"])
+    assert not pipeline._bucket_is_overused("history", ["history", "space", "history"])
+
+
 def _build_generated_short(*, topic: TopicChoice, title: str) -> GeneratedShort:
     narration = (
         f"Here are 3 facts about {topic.topic}. "

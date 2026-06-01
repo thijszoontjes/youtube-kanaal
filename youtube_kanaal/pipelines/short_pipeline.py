@@ -41,6 +41,33 @@ from youtube_kanaal.utils.files import copy_collision_safe, ensure_directory, sa
 from youtube_kanaal.utils.similarity import is_near_duplicate, normalize_for_similarity
 
 
+TOPIC_SPECIFIC_VISUAL_QUERIES: dict[str, list[str]] = {
+    "the titanic": [
+        "shipwreck underwater",
+        "iceberg ocean",
+        "old ocean liner",
+        "lifeboat at sea",
+        "deep sea wreck",
+    ],
+    "apollo 11": [
+        "moon landing archive",
+        "astronaut on moon",
+        "rocket launch",
+        "mission control",
+    ],
+    "black holes": [
+        "black hole animation",
+        "galaxy space animation",
+        "stars orbit animation",
+    ],
+    "deep sea vents": [
+        "hydrothermal vent underwater",
+        "deep ocean underwater",
+        "underwater volcanic vent",
+    ],
+}
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
@@ -164,7 +191,7 @@ class ShortPipeline:
             visual_queries = self.generate_visual_queries(runtime, topic, content)
             narration = self.generate_narration(runtime, content)
             subtitles = self.generate_subtitles(runtime, content, narration)
-            sound_design = self.apply_sound_design(runtime, narration)
+            sound_design = self.apply_sound_design(runtime, narration, content)
             clips = self.download_stock_video(runtime, visual_queries, narration)
             plan = self.plan_assets(runtime, clips, narration)
             final_video_path = self.render_video(runtime, plan, sound_design.mixed_path, subtitles, content)
@@ -296,11 +323,16 @@ class ShortPipeline:
         additional_excluded_topics: list[str] | None = None,
     ) -> TopicChoice:
         recent_topics = self.database.recent_topics(limit=100)
+        recent_buckets = self.database.recent_buckets(limit=4)
         excluded_topics = list(dict.fromkeys([*recent_topics, *(additional_excluded_topics or [])]))
         with self._stage(
             runtime,
             "topic_selection",
-            {"recent_topics": len(recent_topics), "attempted_topics": len(additional_excluded_topics or [])},
+            {
+                "recent_topics": len(recent_topics),
+                "recent_buckets": recent_buckets,
+                "attempted_topics": len(additional_excluded_topics or []),
+            },
         ):
             if runtime.request.preferred_topic:
                 topic = self._preferred_topic(runtime.request.preferred_topic, runtime.request.preferred_bucket)
@@ -312,6 +344,8 @@ class ShortPipeline:
                 )
                 if is_near_duplicate(topic.topic, excluded_topics, self.settings.similarity_threshold):
                     topic = self._fallback_topic_excluding(excluded_topics)
+                if self._bucket_is_overused(topic.bucket, recent_buckets):
+                    topic = self._fallback_topic_excluding(excluded_topics, avoid_buckets={topic.bucket})
             runtime.stage_summaries["topic_selection"] = topic.model_dump(mode="json")
             return topic
 
@@ -330,7 +364,11 @@ class ShortPipeline:
             try:
                 content = self.generate_content(runtime, topic)
             except PipelineStageError as exc:
-                if runtime.request.preferred_topic or not self._is_duplicate_title_generation_error(exc):
+                retryable_generation_error = (
+                    self._is_duplicate_title_generation_error(exc)
+                    or self._is_quality_gate_generation_error(exc)
+                )
+                if runtime.request.preferred_topic or not retryable_generation_error:
                     raise
                 last_error = exc
                 runtime.logger.warning(
@@ -444,6 +482,7 @@ class ShortPipeline:
         self,
         runtime: PipelineRuntime,
         narration: NarrationAsset,
+        content: GeneratedShort,
     ) -> SoundDesignAsset:
         with self._stage(
             runtime,
@@ -455,6 +494,7 @@ class ShortPipeline:
                     narration_path=narration.normalized_path,
                     duration_seconds=narration.duration_seconds,
                     working_dir=runtime.artifacts.audio_dir,
+                    profile_hint=content.bucket,
                     logger=runtime.logger,
                 )
             except Exception as exc:
@@ -764,9 +804,17 @@ class ShortPipeline:
             probable_cause="Use a topic from the allowed buckets only.",
         )
 
-    def _fallback_topic_excluding(self, excluded_topics: list[str]) -> TopicChoice:
+    def _fallback_topic_excluding(
+        self,
+        excluded_topics: list[str],
+        *,
+        avoid_buckets: set[str] | None = None,
+    ) -> TopicChoice:
         excluded = {item.lower() for item in excluded_topics}
+        avoided = {bucket.lower() for bucket in (avoid_buckets or set())}
         for bucket, topics in self._topic_catalog_items():
+            if bucket.lower() in avoided:
+                continue
             for topic in topics:
                 if topic.lower() not in excluded:
                     return TopicChoice(
@@ -776,6 +824,12 @@ class ShortPipeline:
                         search_terms=[topic, f"{topic} {bucket}", bucket],
                     )
         return self._preferred_topic("axolotls", "animals")
+
+    def _bucket_is_overused(self, candidate_bucket: str, recent_buckets: list[str]) -> bool:
+        if len(recent_buckets) < 3:
+            return False
+        latest_three = [bucket.lower() for bucket in recent_buckets[:3]]
+        return all(bucket == candidate_bucket.lower() for bucket in latest_three)
 
     def _topic_catalog_items(self) -> list[tuple[str, list[str]]]:
         from youtube_kanaal.models.content import TOPIC_CATALOG
@@ -814,11 +868,22 @@ class ShortPipeline:
         )
         return "too similar to recent history" in details or "near-duplicate title" in details
 
+    def _is_quality_gate_generation_error(self, exc: PipelineStageError) -> bool:
+        if exc.stage != "content_generation":
+            return False
+        details = " ".join(
+            item.lower()
+            for item in (exc.message, exc.probable_cause or "")
+            if item
+        )
+        return "quality gate" in details or "weak or mismatched content" in details
+
     def _build_video_queries(self, topic: TopicChoice, content: GeneratedShort) -> list[str]:
         topic_text = topic.topic
         lowered_facts = " ".join(content.facts).lower()
         fact_queries = self._fact_visual_queries(topic, content)
-        queries: list[str] = list(fact_queries)
+        topic_specific_queries = TOPIC_SPECIFIC_VISUAL_QUERIES.get(topic_text.lower(), [])
+        queries: list[str] = [*topic_specific_queries, *fact_queries]
 
         if topic.bucket == "space":
             queries.extend(
@@ -904,9 +969,11 @@ class ShortPipeline:
         elif topic.bucket == "history":
             queries.extend(
                 [
-                    f"{topic_text} ruins",
-                    f"{topic_text} historical site",
-                    f"{topic_text} ancient architecture",
+                    f"{topic_text} archive",
+                    f"{topic_text} museum",
+                    f"{topic_text} historical documentary",
+                    "old map close up",
+                    "museum artifact close up",
                 ]
             )
         elif topic.bucket == "inventions":
@@ -976,7 +1043,7 @@ class ShortPipeline:
                 continue
             if normalized not in cleaned_queries:
                 cleaned_queries.append(normalized)
-        return cleaned_queries[:8]
+        return cleaned_queries[:12]
 
     def _is_marine_topic(self, topic: str, facts_text: str) -> bool:
         marine_terms = {

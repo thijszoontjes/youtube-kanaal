@@ -90,6 +90,32 @@ _TITLE_EMPHASIS_WORDS: tuple[str, ...] = (
     "wrong",
     "this",
 )
+_WEAK_SHORT_OPENERS: tuple[str, ...] = (
+    "did you know",
+    "imagine a world",
+    "have you ever wondered",
+    "what if i told you",
+)
+_GENERIC_REPAIR_FRAGMENTS: tuple[str, ...] = (
+    "visual youtube short",
+    "made locally",
+    "generated locally",
+    "fast visual explainer",
+    "shown clearly on screen",
+    "real-world context",
+    "three-point story",
+    "perfect for a short explainer",
+    "works so well in a fast visual short",
+)
+_LOW_SIGNAL_FACT_FRAGMENTS: tuple[str, ...] = (
+    "has details that make it useful",
+    "connects to",
+    "can be shown clearly",
+    "includes enough real-world context",
+    "visually striking",
+    "short explainer",
+)
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 
 class OllamaService:
@@ -152,13 +178,27 @@ class OllamaService:
             return content
         prompt = build_content_generation_prompt(topic, excluded_titles)
         write_text(prompt_path, prompt)
-        content = self._generate_model(
-            prompt=prompt,
+        last_quality_error: ValueError | None = None
+        for _ in range(max(1, self.settings.retry_attempts)):
+            content = self._generate_model(
+                prompt=prompt,
+                stage="content_generation",
+                prompt_output_path=response_path,
+                model_cls=GeneratedShort,
+            )
+            normalized = self._normalize_generated_short(content, topic)
+            try:
+                self._validate_short_quality(normalized, topic)
+            except ValueError as exc:
+                last_quality_error = exc
+                continue
+            return normalized
+        raise PipelineStageError(
             stage="content_generation",
-            prompt_output_path=response_path,
-            model_cls=GeneratedShort,
+            message="Generated Short did not pass the publishing quality gate.",
+            probable_cause=str(last_quality_error or "The model kept producing weak or mismatched content."),
+            details_path=response_path,
         )
-        return self._normalize_generated_short(content, topic)
 
     def generate_long_content(
         self,
@@ -736,30 +776,53 @@ class OllamaService:
         )
 
     def _fallback_title(self, topic: str, facts: list[str]) -> str:
-        topic_title = topic[:1].upper() + topic[1:]
+        topic_title = self._display_topic(topic)
+        topic_auxiliary = "Are" if self._looks_plural_topic(topic) else "Is"
         fact_text = " ".join(facts).lower()
         if "ocean" in fact_text or "underwater" in fact_text or "sea" in fact_text:
             candidates = [
                 f"{topic_title} Should Not Exist Like This",
                 f"The Ocean Secret Behind {topic_title}",
-                f"What {topic_title} Is Hiding",
+                f"What {topic_title} {topic_auxiliary} Hiding",
             ]
         elif "space" in fact_text or "planet" in fact_text or "moon" in fact_text:
             candidates = [
-                f"{topic_title} Is Hiding Something Weird",
+                f"{topic_title} {topic_auxiliary} Hiding Something Weird",
                 f"The Space Secret Everyone Misses About {topic_title}",
-                f"What {topic_title} Is Hiding",
+                f"What {topic_title} {topic_auxiliary} Hiding",
             ]
         else:
             candidates = [
                 f"Do Not Ignore This About {topic_title}",
-                f"What {topic_title} Is Hiding",
+                f"What {topic_title} {topic_auxiliary} Hiding",
                 f"Nobody Expects This About {topic_title}",
             ]
         for candidate in candidates:
             if 15 <= len(candidate) <= 70:
                 return candidate
         return f"The Weird Truth About {topic_title}"[:70].rstrip()
+
+    def _display_topic(self, topic: str) -> str:
+        cleaned = " ".join(topic.split()).strip()
+        if not cleaned:
+            return cleaned
+        if any(char.isupper() for char in cleaned[1:]):
+            return cleaned[:1].upper() + cleaned[1:]
+        small_words = {"a", "an", "and", "of", "the", "to"}
+        words = cleaned.split()
+        rendered = [
+            word if index > 0 and word.lower() in small_words else word[:1].upper() + word[1:]
+            for index, word in enumerate(words)
+        ]
+        return " ".join(rendered)
+
+    def _looks_plural_topic(self, topic: str) -> bool:
+        normalized = topic.strip().lower()
+        if normalized.startswith(("the ", "your ")):
+            return False
+        last_word = normalized.split()[-1] if normalized.split() else normalized
+        singular_s_endings = {"mars", "venus", "gps"}
+        return last_word.endswith("s") and last_word not in singular_s_endings
 
     def _clickable_title_score(self, title: str) -> int:
         lowered = title.lower()
@@ -855,6 +918,73 @@ class OllamaService:
             ]
             narration = f"{narration} {extra_beats[(seed + 5) % len(extra_beats)]}".strip()
         return narration
+
+    def _validate_short_quality(self, content: GeneratedShort, topic: TopicChoice) -> None:
+        problems: list[str] = []
+        if content.bucket != topic.bucket or content.topic.lower() != topic.topic.lower():
+            problems.append("topic or bucket drifted away from the selected catalog topic")
+        if self._contains_generic_repair_text(content.description):
+            problems.append("description is generic repair text instead of specific upload copy")
+        if self._title_mentions_different_catalog_topic(content.title, topic.topic):
+            problems.append("title mentions a different catalog topic")
+        if self._title_mentions_different_catalog_topic(content.title_hook or "", topic.topic):
+            problems.append("title hook mentions a different catalog topic")
+        if not self._mentions_topic_early(content.narration, topic.topic):
+            problems.append("narration does not mention the topic in the first two sentences")
+        opener = self._first_sentence(content.narration).lower()
+        if any(opener.startswith(prefix) for prefix in _WEAK_SHORT_OPENERS):
+            problems.append("narration starts with a weak generic opener")
+        if self._is_all_caps_sentence(self._first_sentence(content.narration)):
+            problems.append("narration starts by reading an all-caps title card")
+        if any(self._is_low_signal_fact(fact) for fact in content.facts):
+            problems.append("facts contain generic production filler")
+        if problems:
+            raise ValueError("; ".join(problems))
+
+    def _contains_generic_repair_text(self, value: str) -> bool:
+        lowered = value.lower()
+        return any(fragment in lowered for fragment in _GENERIC_REPAIR_FRAGMENTS)
+
+    def _is_low_signal_fact(self, fact: str) -> bool:
+        lowered = fact.lower()
+        return any(fragment in lowered for fragment in _LOW_SIGNAL_FACT_FRAGMENTS)
+
+    def _first_sentence(self, narration: str) -> str:
+        sentences = [sentence.strip() for sentence in _SENTENCE_SPLIT_RE.split(narration) if sentence.strip()]
+        return sentences[0] if sentences else narration.strip()
+
+    def _first_sentences(self, narration: str, count: int) -> str:
+        sentences = [sentence.strip() for sentence in _SENTENCE_SPLIT_RE.split(narration) if sentence.strip()]
+        return " ".join(sentences[:count]).strip() if sentences else narration.strip()
+
+    def _mentions_topic_early(self, narration: str, topic: str) -> bool:
+        early_text = " ".join(self._first_sentences(narration, 2).lower().split())
+        topic_tokens = self._important_topic_tokens(topic)
+        return bool(topic_tokens and any(token in _TOKEN_RE.findall(early_text) for token in topic_tokens))
+
+    def _important_topic_tokens(self, topic: str) -> set[str]:
+        stop_words = {"the", "a", "an", "your", "you", "and", "of", "in", "to"}
+        return {token for token in _TOKEN_RE.findall(topic.lower()) if len(token) > 2 and token not in stop_words}
+
+    def _title_mentions_different_catalog_topic(self, title: str, topic: str) -> bool:
+        normalized_title = " ".join(_TOKEN_RE.findall(title.lower()))
+        if not normalized_title:
+            return False
+        current = " ".join(_TOKEN_RE.findall(topic.lower()))
+        for candidate in chain.from_iterable(TOPIC_CATALOG.values()):
+            candidate_normalized = " ".join(_TOKEN_RE.findall(candidate.lower()))
+            if candidate_normalized == current or len(candidate_normalized) < 5:
+                continue
+            if f" {candidate_normalized} " in f" {normalized_title} ":
+                return True
+        return False
+
+    def _is_all_caps_sentence(self, sentence: str) -> bool:
+        letters = [char for char in sentence if char.isalpha()]
+        if len(letters) < 10:
+            return False
+        uppercase = sum(1 for char in letters if char.upper() == char)
+        return uppercase / len(letters) > 0.8
 
     def _fallback_topic(self, excluded_topics: list[str]) -> TopicChoice:
         excluded = {item.lower() for item in excluded_topics}

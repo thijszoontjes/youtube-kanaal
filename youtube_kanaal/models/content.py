@@ -498,9 +498,11 @@ class GeneratedShort(BaseModel):
         trimmed_title = self.title[:allowed_title_length].rstrip(" -|,")
         return f"{trimmed_title} {suffix}".strip()
 
-    def upload_description(self, minimum_hashtags: int = 10) -> str:
+    def upload_description(self, minimum_hashtags: int = 10, *, include_app_promo: bool = False) -> str:
         hashtags = " ".join(self.upload_hashtags(minimum=minimum_hashtags))
-        return f"{self.description}\n\n{_APP_PROMO_LINE}\n{_APP_PROMO_URL}\n\n{hashtags}".strip()
+        if include_app_promo:
+            return f"{self.description}\n\n{_APP_PROMO_LINE}\n{_APP_PROMO_URL}\n\n{hashtags}".strip()
+        return f"{self.description}\n\n{hashtags}".strip()
 
     def _expand_hashtags(self, base_hashtags: list[str]) -> list[str]:
         candidates: list[str] = []

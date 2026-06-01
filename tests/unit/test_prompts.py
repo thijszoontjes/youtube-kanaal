@@ -29,6 +29,9 @@ def test_content_prompt_contains_recent_titles() -> None:
     assert '"hook_text"' not in prompt
     assert "Do not write any separate on-screen title card or visual hook text" in prompt
     assert 'Never use "Here are", "First", "Second", "Third"' in prompt
-    assert "Open the narration with a surprising statement or a question" in prompt
+    assert "Open with one specific tension" in prompt
+    assert "The first sentence must mention axolotls by name" in prompt
+    assert 'Do not open with "Did you know", "Imagine a world"' in prompt
+    assert "The title must match axolotls" in prompt
     assert 'Do not end with phrases like "That is why..." or "People remember..."' in prompt
     assert "must open with" not in prompt

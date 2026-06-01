@@ -599,6 +599,14 @@ Install the three daily Windows tasks:
 python -m youtube_kanaal install-windows-schedule
 ```
 
+Install a visible Windows startup terminal run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install_windows_startup_youtube.ps1 -Upload
+```
+
+This creates a logon task named `youtube-kanaal-startup-upload` that opens PowerShell and runs `python -m youtube_kanaal scheduled-run --upload` through `scripts\run_startup_youtube.ps1`.
+
 Override the times if needed:
 
 ```bash

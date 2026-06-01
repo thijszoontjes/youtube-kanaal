@@ -272,6 +272,14 @@ class Database:
             ).fetchall()
         return [row["topic"] for row in rows]
 
+    def recent_buckets(self, limit: int = 20) -> list[str]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT bucket FROM topics ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [row["bucket"] for row in rows if row["bucket"]]
+
     def recent_titles(self, limit: int = 100) -> list[str]:
         with self.connect() as connection:
             rows = connection.execute(

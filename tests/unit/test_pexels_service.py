@@ -45,6 +45,21 @@ def test_pexels_service_space_bonus_penalizes_unrelated_human_clips(configured_e
     assert astronomy > unrelated
 
 
+def test_pexels_service_titanic_queries_penalize_unrelated_historical_sites(configured_env) -> None:
+    service = PexelsService(load_settings())
+
+    shipwreck = service._relevance_bonus(
+        query="the Titanic shipwreck underwater",
+        source_url="https://www.pexels.com/video/ocean-shipwreck-underwater-wreck-123/",
+    )
+    colosseum = service._relevance_bonus(
+        query="the Titanic shipwreck underwater",
+        source_url="https://www.pexels.com/video/explore-the-ancient-colosseum-in-rome-36398899/",
+    )
+
+    assert shipwreck > colosseum
+
+
 def test_pexels_service_prioritizes_one_clip_per_query_first(configured_env) -> None:
     service = PexelsService(load_settings())
     candidates = [
