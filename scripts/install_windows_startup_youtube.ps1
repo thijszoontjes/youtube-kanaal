@@ -4,6 +4,7 @@ param(
     [string]$TaskName = "youtube-kanaal-startup-upload",
     [string]$BranchName = "videos-verbeteringen",
     [switch]$SkipPull,
+    [switch]$SkipOllamaPull,
     [switch]$Upload,
     [switch]$Debug,
     [string]$PrivacyStatus = ""
@@ -41,6 +42,9 @@ $scriptArgs = @(
 )
 if ($SkipPull) {
     $scriptArgs += "-SkipPull"
+}
+if ($SkipOllamaPull) {
+    $scriptArgs += "-SkipOllamaPull"
 }
 if ($Upload) {
     $scriptArgs += "-Upload"
