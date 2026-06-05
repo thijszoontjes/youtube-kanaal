@@ -605,7 +605,8 @@ Install a visible Windows startup terminal run:
 powershell -ExecutionPolicy Bypass -File scripts\install_windows_startup_youtube.ps1 -Upload
 ```
 
-This creates a logon task named `youtube-kanaal-startup-upload` that opens PowerShell and runs `python -m youtube_kanaal scheduled-run --upload` through `scripts\run_startup_youtube.ps1`.
+This creates a logon task named `youtube-kanaal-startup-upload` that opens PowerShell and runs `python -m youtube_kanaal make-short-schedule --times "10:00,13:00,15:00,19:00"` through `scripts\run_startup_youtube.ps1`.
+That command generates and uploads 4 Shorts scheduled for tomorrow at 10:00, 13:00, 15:00, and 19:00 local time.
 The startup script checks out `videos-verbeteringen` and runs `git pull --ff-only origin videos-verbeteringen` before generating/uploading, so startup uses the latest pushed automation branch by default.
 
 Override the times if needed:

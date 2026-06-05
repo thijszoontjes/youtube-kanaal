@@ -3,6 +3,8 @@ param(
     [string]$PythonExe = "",
     [string]$TaskName = "youtube-kanaal-startup-upload",
     [string]$BranchName = "videos-verbeteringen",
+    [string]$ShortTimes = "10:00,13:00,15:00,19:00",
+    [string]$ScheduleDate = "",
     [switch]$SkipPull,
     [switch]$SkipOllamaPull,
     [switch]$Upload,
@@ -38,8 +40,13 @@ $scriptArgs = @(
     "-File", "`"$startupScript`"",
     "-RepoRoot", "`"$RepoRoot`"",
     "-PythonExe", "`"$PythonExe`"",
-    "-BranchName", "`"$BranchName`""
+    "-BranchName", "`"$BranchName`"",
+    "-ShortTimes", "`"$ShortTimes`""
 )
+if ($ScheduleDate) {
+    $scriptArgs += "-ScheduleDate"
+    $scriptArgs += "`"$ScheduleDate`""
+}
 if ($SkipPull) {
     $scriptArgs += "-SkipPull"
 }

@@ -2,6 +2,8 @@ param(
     [string]$RepoRoot = "",
     [string]$PythonExe = "",
     [string]$BranchName = "videos-verbeteringen",
+    [string]$ShortTimes = "10:00,13:00,15:00,19:00",
+    [string]$ScheduleDate = "",
     [switch]$SkipPull,
     [switch]$SkipOllamaPull,
     [switch]$Upload,
@@ -145,16 +147,19 @@ if (-not $PythonExe) {
     }
 }
 
-$arguments = @("-m", "youtube_kanaal", "scheduled-run")
-if ($Upload) {
-    $arguments += "--upload"
+$arguments = @("-m", "youtube_kanaal", "make-short-schedule", "--times", $ShortTimes)
+if ($ScheduleDate) {
+    $arguments += "--date"
+    $arguments += $ScheduleDate
 }
 if ($Debug) {
     $arguments += "--debug"
 }
 if ($PrivacyStatus) {
-    $arguments += "--privacy-status"
-    $arguments += $PrivacyStatus
+    Write-Warning "-PrivacyStatus is ignored for make-short-schedule because scheduled YouTube uploads must be private until publish time."
+}
+if ($Upload) {
+    Write-Host "-Upload was provided; make-short-schedule uploads scheduled Shorts by default."
 }
 
 Write-Host "youtube-kanaal startup run"
