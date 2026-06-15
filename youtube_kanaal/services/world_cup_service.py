@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import hashlib
 from pathlib import Path
 
 import httpx
@@ -134,44 +135,59 @@ class WorldCupService:
 
     def _build_completed_short(self, event: WorldCupEvent) -> GeneratedShort:
         match_date = self._display_date(event.kickoff)
-        score = f"{event.home.score}-{event.away.score}"
+        total_goals = event.home.score + event.away.score
+        margin = abs(event.home.score - event.away.score)
         if event.home.score == event.away.score:
+            score = f"{event.home.score}-{event.away.score}"
             result_text = f"{event.home.name} and {event.away.name} drew {score}"
-            title = f"{event.home.name} AND {event.away.name} FINISH {score}"
+            result_fact = f"On {match_date}, {result_text} in {event.stage}."
+            angle = "goal_draw" if total_goals >= 4 else self._completed_fallback_angle(event)
         else:
             winner = event.home if event.home.score > event.away.score else event.away
             loser = event.away if winner is event.home else event.home
             winner_score = f"{winner.score}-{loser.score}"
             result_text = f"{winner.name} beat {loser.name} {winner_score}"
-            title = f"{winner.name} BEAT {loser.name} {winner_score} AT THE WORLD CUP"
+            result_fact = f"On {match_date}, {result_text} in {event.stage}."
+            angle = self._winning_angle(event, winner=winner, margin=margin)
 
-        facts = [
-            f"On {match_date}, {result_text} in {event.stage}.",
-            self._stat_fact(event),
-            self._location_fact(event),
-        ]
-        narration = (
-            f"{event.topic} just added another result to the 2026 World Cup story. "
-            f"{facts[0]} {facts[1]} {facts[2]} "
-            "Those are the confirmed numbers from the match, and they show how the final score fits the game."
+        stat_fact = self._stat_fact(event)
+        location_fact = self._location_fact(event)
+        facts = [result_fact, stat_fact, location_fact]
+        title, narration = self._completed_story(
+            event,
+            angle=angle,
+            result_text=result_text,
+            total_goals=total_goals,
+            margin=margin,
+            facts=facts,
         )
         return self._package(event, title=title, narration=narration, facts=facts, status_label="result")
 
     def _build_live_short(self, event: WorldCupEvent) -> GeneratedShort:
         score = f"{event.home.score}-{event.away.score}"
+        total_goals = event.home.score + event.away.score
         facts = [
             f"{event.home.name} and {event.away.name} are currently at {score}.",
             f"The source lists the match status as {event.detail}.",
             self._location_fact(event),
         ]
-        narration = (
-            f"{event.topic} is live at the 2026 World Cup right now. "
-            f"{facts[0]} {facts[1]} {facts[2]} "
-            "This update uses the latest scoreboard snapshot, so the score can change after this Short is generated."
-        )
+        if total_goals >= 3:
+            title = f"{event.topic} IS TURNING INTO A GOAL FEST"
+            narration = (
+                f"Stop scrolling, because {event.topic} is turning into a World Cup goal fest. "
+                f"{facts[0]} That is already {total_goals} goals, and {facts[1].lower()} "
+                f"{facts[2]} This is a live scoreboard snapshot, so the story can still change."
+            )
+        else:
+            title = f"{event.topic}: THIS ONE IS STILL WIDE OPEN"
+            narration = (
+                f"{event.topic} is still wide open at the 2026 World Cup. "
+                f"{facts[0]} {facts[1]} {facts[2]} "
+                "Nothing beyond those confirmed live numbers is being predicted, and the score can still change."
+            )
         return self._package(
             event,
-            title=f"{event.home.name} VS {event.away.name} IS LIVE AT {score}",
+            title=title,
             narration=narration,
             facts=facts,
             status_label="live update",
@@ -184,18 +200,161 @@ class WorldCupService:
             f"The match is listed as {event.stage}.",
             self._location_fact(event),
         ]
-        narration = (
-            f"{event.topic} is one of the next confirmed games at the 2026 World Cup. "
-            f"{facts[0]} {facts[1]} {facts[2]} "
-            "That is the verified schedule information available before kickoff, without predictions or invented team news."
-        )
+        variant = self._variation_index(event, 3)
+        titles = [
+            f"{event.topic}: THE NEXT WORLD CUP MATCH TO WATCH",
+            f"DO NOT MISS {event.topic}",
+            f"{event.topic} HAS A DATE WITH THE WORLD CUP",
+        ]
+        narrations = [
+            (
+                f"Circle this one: {event.topic} is one of the next confirmed World Cup games. "
+                f"{facts[0]} {facts[1]} {facts[2]} "
+                "No fake prediction is needed here; the setting alone makes this a match worth watching."
+            ),
+            (
+                f"Do not miss {event.topic}, because the World Cup schedule has locked it in. "
+                f"{facts[0]} {facts[2]} {facts[1]} "
+                "Those are the verified details before kickoff, with no invented lineup news or score prediction."
+            ),
+            (
+                f"{event.topic} now has an official World Cup date and location. "
+                f"{facts[1]} {facts[0]} {facts[2]} "
+                "That is everything confirmed before kickoff, and it is enough to put this game on the watchlist."
+            ),
+        ]
         return self._package(
             event,
-            title=f"{event.home.name} VS {event.away.name}: WHAT TO KNOW",
-            narration=narration,
+            title=titles[variant],
+            narration=narrations[variant],
             facts=facts,
             status_label="match preview",
         )
+
+    def _winning_angle(self, event: WorldCupEvent, *, winner: WorldCupTeam, margin: int) -> str:
+        if margin >= 4:
+            return "blowout"
+        winner_possession = self._possession_value(winner.possession)
+        opponent = event.away if winner is event.home else event.home
+        opponent_possession = self._possession_value(opponent.possession)
+        if winner_possession is not None and opponent_possession is not None and winner_possession < opponent_possession:
+            return "less_ball"
+        return self._completed_fallback_angle(event)
+
+    def _completed_fallback_angle(self, event: WorldCupEvent) -> str:
+        if event.attendance and event.attendance >= 65000:
+            return "crowd"
+        return ["numbers", "stadium", "result"][self._variation_index(event, 3)]
+
+    def _completed_story(
+        self,
+        event: WorldCupEvent,
+        *,
+        angle: str,
+        result_text: str,
+        total_goals: int,
+        margin: int,
+        facts: list[str],
+    ) -> tuple[str, str]:
+        result_fact, stat_fact, location_fact = facts
+        winner = event.home if event.home.score > event.away.score else event.away
+        variant = self._variation_index(event, 2)
+        possession_twist = (
+            f"{winner.name} did it despite having less of the ball. "
+            if angle == "less_ball"
+            else ""
+        )
+        blowout_stories = [
+            (
+                f"THIS WORLD CUP SCORELINE IS BRUTAL: {result_text}",
+                (
+                    f"{event.topic} produced a scoreline that looks almost unreal. "
+                    f"{result_fact} The winning margin was {margin} goals, with {total_goals} scored in total. "
+                    f"{stat_fact} {location_fact} That is not just a win; that is a World Cup statement."
+                ),
+            ),
+            (
+                f"{winner.name} JUST SENT A WORLD CUP WARNING",
+                (
+                    f"This was not a normal win for {winner.name}; it was a warning. "
+                    f"{result_fact} The gap was {margin} goals and the match produced {total_goals} in total. "
+                    f"{location_fact} {stat_fact} The final score is the kind teams notice before their next game."
+                ),
+            ),
+        ]
+        less_ball_stories = [
+            (
+                f"{winner.name} WON WITHOUT CONTROLLING THE BALL",
+                (
+                    f"The strangest number from {event.topic} is not the final score. "
+                    f"{result_fact} {possession_twist}{stat_fact} {location_fact} "
+                    "The scoreboard is a reminder that possession can look convincing and still fail to decide the result."
+                ),
+            ),
+            (
+                f"POSSESSION LIED IN {event.topic}",
+                (
+                    f"Possession told one story in {event.topic}, but the scoreboard told another. "
+                    f"{stat_fact} Even so, {result_text} in {event.stage}. "
+                    f"{location_fact} {result_fact} Having more of the ball meant nothing when the final score arrived."
+                ),
+            ),
+        ]
+        stories = {
+            "blowout": blowout_stories[variant],
+            "less_ball": less_ball_stories[variant],
+            "goal_draw": (
+                f"THIS WORLD CUP DRAW HAD {total_goals} GOALS",
+                (
+                    f"{event.topic} refused to produce a winner, but it definitely produced drama. "
+                    f"{result_fact} The teams combined for {total_goals} goals without separating themselves. "
+                    f"{stat_fact} {location_fact} A draw can still feel completely chaotic."
+                ),
+            ),
+            "crowd": (
+                f"OVER {event.attendance:,} WATCHED {event.topic}",
+                (
+                    f"The crowd number behind {event.topic} is massive. "
+                    f"{location_fact} And they watched {result_text} in {event.stage}. "
+                    f"{stat_fact} {result_fact} That is a lot of people packed into one World Cup memory."
+                ),
+            ),
+            "stadium": (
+                f"{event.topic}: THE STADIUM SAW EVERYTHING",
+                (
+                    f"{event.topic} had a setting built for a World Cup moment. "
+                    f"{location_fact} {result_fact} {stat_fact} "
+                    f"The confirmed numbers say {total_goals} total goals, but the location gives the result its scale."
+                ),
+            ),
+            "result": (
+                f"{event.topic}: THE RESULT NOBODY CAN IGNORE",
+                (
+                    f"{event.topic} just left a result that matters. "
+                    f"{result_fact} {location_fact} {stat_fact} "
+                    f"The final score contained {total_goals} total goals, and every one of those numbers is now part of the tournament."
+                ),
+            ),
+            "numbers": (
+                f"THE NUMBERS BEHIND {event.topic}",
+                (
+                    f"One number does not tell the whole story of {event.topic}. "
+                    f"{result_fact} {stat_fact} {location_fact} "
+                    f"Put together, the score, possession and crowd make this much more interesting than a basic result graphic."
+                ),
+            ),
+        }
+        return stories[angle]
+
+    def _variation_index(self, event: WorldCupEvent, size: int) -> int:
+        digest = hashlib.sha256(f"{event.event_id}|{event.topic}".encode("utf-8")).digest()
+        return int.from_bytes(digest[:4], byteorder="big") % size
+
+    def _possession_value(self, value: str | None) -> float | None:
+        try:
+            return float(value) if value is not None else None
+        except ValueError:
+            return None
 
     def _package(
         self,

@@ -109,8 +109,33 @@ def test_world_cup_service_puts_winner_score_first_for_away_win(configured_env) 
 
     content = service.build_short(away_win)
 
-    assert "Türkiye BEAT Australia 3-0 AT THE WORLD CUP" == content.title
     assert "Türkiye beat Australia 3-0" in content.narration
+    assert "Australia beat Türkiye 0-3" not in content.narration
+
+
+def test_world_cup_service_varies_completed_match_angles(configured_env) -> None:
+    service = WorldCupService(load_settings())
+    base = service._parse_events(_scoreboard_payload())[0]
+    blowout = replace(
+        base,
+        event_id="760422",
+        home=replace(base.home, score=7, possession="64.6"),
+        away=replace(base.away, score=1, possession="35.4"),
+    )
+    high_scoring_draw = replace(
+        base,
+        event_id="760425",
+        home=replace(base.home, score=2, possession="59.8"),
+        away=replace(base.away, score=2, possession="40.2"),
+    )
+
+    packages = [service.build_short(event) for event in (base, blowout, high_scoring_draw)]
+
+    assert len({package.title for package in packages}) == 3
+    assert len({package.narration.split(".")[0] for package in packages}) == 3
+    assert any("less of the ball" in package.narration or "Possession told" in package.narration for package in packages)
+    assert any("winning margin" in package.narration or "The gap was" in package.narration for package in packages)
+    assert any("combined for 4 goals" in package.narration for package in packages)
 
 
 def test_world_cup_service_fails_closed_when_source_is_unavailable(configured_env, tmp_path) -> None:
