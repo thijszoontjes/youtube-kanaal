@@ -19,6 +19,7 @@ ALLOWED_BUCKETS: tuple[str, ...] = (
     "architecture",
     "gaming",
     "sports",
+    "world cup 2026",
     "vehicles",
     "technology",
 )
@@ -262,6 +263,9 @@ TOPIC_CATALOG: dict[str, list[str]] = {
         "skiing",
         "rowing",
     ],
+    "world cup 2026": [
+        "2026 FIFA World Cup",
+    ],
     "vehicles": [
         "supercars",
         "motorcycles",
@@ -341,6 +345,7 @@ _BUCKET_HASHTAGS: dict[str, tuple[str, ...]] = {
     "architecture": ("#Architecture", "#Design", "#Structures"),
     "gaming": ("#Gaming", "#GameFacts", "#Esports"),
     "sports": ("#Sports", "#AthleteLife", "#Action"),
+    "world cup 2026": ("#WorldCup2026", "#FIFAWorldCup", "#Football"),
     "vehicles": ("#Vehicles", "#Transport", "#Motion"),
     "technology": ("#Technology", "#FutureTech", "#Innovation"),
 }
@@ -385,7 +390,9 @@ class TopicChoice(BaseModel):
 
     @model_validator(mode="after")
     def _ensure_topic_matches_bucket(self) -> "TopicChoice":
-        if self.topic.lower() not in {topic.lower() for topic in TOPIC_CATALOG.get(self.bucket, [])}:
+        if self.bucket != "world cup 2026" and self.topic.lower() not in {
+            topic.lower() for topic in TOPIC_CATALOG.get(self.bucket, [])
+        }:
             raise ValueError("Topic must come from the curated catalog for its bucket.")
         if self.topic not in self.search_terms:
             self.search_terms.insert(0, self.topic)

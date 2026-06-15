@@ -217,6 +217,13 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("KEEP_UPLOADED_MEDIA"),
     )
     pexels_results_per_query: int = Field(default=12, validation_alias=AliasChoices("PEXELS_RESULTS_PER_QUERY"))
+    world_cup_2026_mode: bool = Field(default=True, validation_alias=AliasChoices("WORLD_CUP_2026_MODE"))
+    world_cup_scoreboard_url: str = Field(
+        default="https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard",
+        validation_alias=AliasChoices("WORLD_CUP_SCOREBOARD_URL"),
+    )
+    world_cup_past_days: int = Field(default=3, ge=0, le=14, validation_alias=AliasChoices("WORLD_CUP_PAST_DAYS"))
+    world_cup_future_days: int = Field(default=2, ge=0, le=14, validation_alias=AliasChoices("WORLD_CUP_FUTURE_DAYS"))
     similarity_threshold: float = Field(default=0.86, validation_alias=AliasChoices("SIMILARITY_THRESHOLD"))
     min_short_duration_seconds: int = Field(
         default=20,

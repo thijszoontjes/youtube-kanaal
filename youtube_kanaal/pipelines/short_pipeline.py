@@ -35,6 +35,7 @@ from youtube_kanaal.services.pexels_service import PexelsService
 from youtube_kanaal.services.piper_service import PiperService
 from youtube_kanaal.services.sound_design_service import SoundDesignService
 from youtube_kanaal.services.whisper_service import WhisperService
+from youtube_kanaal.services.world_cup_service import WorldCupService
 from youtube_kanaal.services.xtts_service import XTTSService
 from youtube_kanaal.services.youtube_service import YouTubeService
 from youtube_kanaal.utils.files import copy_collision_safe, ensure_directory, safe_slug, write_json
@@ -146,6 +147,7 @@ class ShortPipeline:
         ffmpeg_service: FFmpegService | None = None,
         sound_design_service: SoundDesignService | None = None,
         youtube_service: YouTubeService | None = None,
+        world_cup_service: WorldCupService | None = None,
     ) -> None:
         self.settings = settings
         self.database = database
@@ -161,6 +163,7 @@ class ShortPipeline:
         self.ffmpeg = ffmpeg_service or FFmpegService(settings)
         self.sound_design = sound_design_service or SoundDesignService(settings)
         self.youtube = youtube_service or YouTubeService(settings)
+        self.world_cup = world_cup_service or WorldCupService(settings)
 
     def run(self, request: ShortRunRequest) -> ShortRunResult:
         run_id = _new_run_id()
@@ -350,6 +353,9 @@ class ShortPipeline:
             return topic
 
     def select_topic_and_content(self, runtime: PipelineRuntime) -> tuple[TopicChoice, GeneratedShort]:
+        if self.settings.world_cup_2026_mode and not runtime.request.mock_mode:
+            return self.select_world_cup_topic_and_content(runtime)
+
         attempted_topics: list[str] = []
         recent_topics = self.database.recent_topics(limit=100)
         max_topic_attempts = max(
@@ -868,6 +874,30 @@ class ShortPipeline:
         )
         return "too similar to recent history" in details or "near-duplicate title" in details
 
+    def select_world_cup_topic_and_content(self, runtime: PipelineRuntime) -> tuple[TopicChoice, GeneratedShort]:
+        recent_topics = self.database.recent_topics(limit=100)
+        with self._stage(runtime, "world_cup_data", {"recent_topics": len(recent_topics)}):
+            event = self.world_cup.fetch_relevant_event(
+                excluded_topics=recent_topics,
+                response_path=runtime.artifacts.responses_dir / "world_cup_scoreboard.json",
+            )
+            topic = self.world_cup.topic_choice(event)
+            content = self.world_cup.build_short(event)
+            runtime.stage_summaries["world_cup_data"] = {
+                "event_id": event.event_id,
+                "source_url": event.source_url,
+                "kickoff": event.kickoff.isoformat(),
+                "state": event.state,
+                "completed": event.completed,
+                "topic": event.topic,
+            }
+            runtime.stage_summaries["topic_selection"] = topic.model_dump(mode="json")
+            runtime.stage_summaries["content_generation"] = {
+                **content.model_dump(mode="json"),
+                "grounded_source_url": event.source_url,
+            }
+            return topic, content
+
     def _is_quality_gate_generation_error(self, exc: PipelineStageError) -> bool:
         if exc.stage != "content_generation":
             return False
@@ -1000,6 +1030,16 @@ class ShortPipeline:
                     f"{topic_text} athlete training",
                     f"{topic_text} slow motion",
                     "stadium crowd action",
+                ]
+            )
+        elif topic.bucket == "world cup 2026":
+            queries.extend(
+                [
+                    *topic.visual_queries,
+                    "international football match",
+                    "soccer stadium crowd",
+                    "football fans celebration",
+                    "soccer ball stadium",
                 ]
             )
         elif topic.bucket == "vehicles":
@@ -1163,6 +1203,7 @@ class ShortPipeline:
             "inventions": ["machine close up", "technology detail", "invention detail"],
             "gaming": ["gaming setup", "esports close up", "game controller"],
             "sports": ["sport action", "athlete training", "slow motion sport"],
+            "world cup 2026": ["football match", "soccer stadium crowd", "football fans"],
             "vehicles": ["cinematic motion", "driving close up", "transport action"],
             "technology": ["technology close up", "lab close up", "innovation b-roll"],
         }

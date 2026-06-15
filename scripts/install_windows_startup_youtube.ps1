@@ -2,7 +2,7 @@ param(
     [string]$RepoRoot = "",
     [string]$PythonExe = "",
     [string]$TaskName = "youtube-kanaal-startup-upload",
-    [string]$BranchName = "videos-verbeteringen",
+    [string]$BranchName = "wk-2026-shorts",
     [string]$ShortTimes = "10:00,13:00,15:00,19:00",
     [string]$ScheduleDate = "",
     [switch]$SkipPull,
