@@ -73,6 +73,7 @@ class SoundDesignService:
         duration_seconds: float,
         working_dir: Path,
         profile_hint: str | None = None,
+        beat_cues: list[dict[str, object]] | None = None,
         logger: logging.Logger | None = None,
     ) -> SoundDesignAsset:
         if not self.settings.sound_design_enabled:
@@ -124,7 +125,8 @@ class SoundDesignService:
                 },
             )
 
-        transition_hits = self._transition_offsets(duration_seconds)
+        sound_cues = self._sound_cues(duration_seconds, beat_cues)
+        transition_hits = [float(cue["offset_seconds"]) for cue in sound_cues]
         placed_stems: list[_PlacedStem] = []
         stem_paths: list[Path] = []
 
@@ -133,7 +135,14 @@ class SoundDesignService:
             duration_seconds,
             profile_hint=profile_hint,
         )
-        placed_stems.append(_PlacedStem(path=music_path, label=f"music_{music_profile.name}", offset_seconds=0.0))
+        placed_stems.append(
+            _PlacedStem(
+                path=music_path,
+                label=f"music_{music_profile.name}",
+                offset_seconds=0.0,
+                audio_filter=self._music_duck_filter(sound_cues),
+            )
+        )
         stem_paths.append(music_path)
 
         room_tone_path = sound_dir / "room_tone.wav"
@@ -141,24 +150,40 @@ class SoundDesignService:
         placed_stems.append(_PlacedStem(path=room_tone_path, label="room", offset_seconds=0.0))
         stem_paths.append(room_tone_path)
 
-        for index, offset in enumerate(transition_hits, start=1):
-            whoosh_path = sound_dir / f"whoosh_{index:02d}.wav"
-            self._render_whoosh(whoosh_path)
-            whoosh_offset = max(offset - 0.08, 0.0)
-            placed_stems.append(_PlacedStem(path=whoosh_path, label=f"whoosh_{index:02d}", offset_seconds=whoosh_offset))
-            stem_paths.append(whoosh_path)
-
-            low_hit_path = sound_dir / f"low_hit_{index:02d}.wav"
-            self._render_low_hit(low_hit_path)
-            placed_stems.append(_PlacedStem(path=low_hit_path, label=f"low_hit_{index:02d}", offset_seconds=offset))
-            stem_paths.append(low_hit_path)
-
-        riser_duration = min(3.0, max(duration_seconds * 0.14, 1.8))
-        riser_start = max(duration_seconds - riser_duration - 0.35, 0.6)
-        riser_path = sound_dir / "riser.wav"
-        self._render_riser(riser_path, riser_duration)
-        placed_stems.append(_PlacedStem(path=riser_path, label="riser", offset_seconds=riser_start))
-        stem_paths.append(riser_path)
+        for index, cue in enumerate(sound_cues, start=1):
+            offset = float(cue["offset_seconds"])
+            cue_type = str(cue.get("sfx", "none"))
+            if cue_type == "whoosh":
+                whoosh_path = sound_dir / f"whoosh_{index:02d}.wav"
+                self._render_whoosh(whoosh_path)
+                placed_stems.append(
+                    _PlacedStem(path=whoosh_path, label=f"whoosh_{index:02d}", offset_seconds=max(offset - 0.08, 0.0))
+                )
+                stem_paths.append(whoosh_path)
+            elif cue_type == "tick":
+                tick_path = sound_dir / f"tick_{index:02d}.wav"
+                self._render_tick(tick_path)
+                placed_stems.append(_PlacedStem(path=tick_path, label=f"tick_{index:02d}", offset_seconds=offset))
+                stem_paths.append(tick_path)
+            elif cue_type == "riser":
+                riser_duration = min(1.5, max(offset, 0.75))
+                riser_path = sound_dir / ("riser.wav" if beat_cues is None else f"riser_{index:02d}.wav")
+                self._render_riser(riser_path, riser_duration)
+                placed_stems.append(
+                    _PlacedStem(
+                        path=riser_path,
+                        label=f"riser_{index:02d}",
+                        offset_seconds=max(offset - riser_duration, 0.0),
+                    )
+                )
+                stem_paths.append(riser_path)
+            elif cue_type == "impact":
+                low_hit_path = sound_dir / f"low_hit_{index:02d}.wav"
+                self._render_low_hit(low_hit_path)
+                placed_stems.append(
+                    _PlacedStem(path=low_hit_path, label=f"low_hit_{index:02d}", offset_seconds=max(offset, 0.12))
+                )
+                stem_paths.append(low_hit_path)
 
         mix_path = working_dir / "narration_soundscape.wav"
         self._mix_stems(
@@ -261,6 +286,49 @@ class SoundDesignService:
                 deduped.append(offset)
         return deduped
 
+    def _sound_cues(
+        self,
+        duration_seconds: float,
+        beat_cues: list[dict[str, object]] | None,
+    ) -> list[dict[str, object]]:
+        if beat_cues is not None:
+            return [
+                {
+                    "offset_seconds": min(max(float(cue.get("offset_seconds", 0.0) or 0.0), 0.0), duration_seconds),
+                    "sfx": str(cue.get("sfx", "none")),
+                    "beat_type": str(cue.get("beat_type", "evidence")),
+                }
+                for cue in beat_cues
+                if str(cue.get("sfx", "none")) != "none"
+            ]
+        cues: list[dict[str, object]] = []
+        for offset in self._transition_offsets(duration_seconds):
+            cues.append({"offset_seconds": offset, "sfx": "whoosh", "beat_type": "transition"})
+            cues.append({"offset_seconds": offset, "sfx": "impact", "beat_type": "transition"})
+        riser_duration = min(3.0, max(duration_seconds * 0.14, 1.8))
+        cues.append(
+            {
+                "offset_seconds": max(duration_seconds - 0.35, riser_duration),
+                "sfx": "riser",
+                "beat_type": "payoff",
+            }
+        )
+        return cues
+
+    def _music_duck_filter(self, sound_cues: list[dict[str, object]]) -> str | None:
+        silence_offsets = [
+            float(cue["offset_seconds"])
+            for cue in sound_cues
+            if str(cue.get("sfx", "")) == "silence"
+        ]
+        if not silence_offsets:
+            return None
+        filters = [
+            f"volume=enable='between(t,{max(offset - 0.14, 0.0):.2f},{offset + 0.42:.2f})':volume=0.18"
+            for offset in silence_offsets
+        ]
+        return ",".join(filters)
+
     def _random_offset(self, duration_seconds: float) -> float:
         if duration_seconds <= 0.15:
             return 0.0
@@ -350,6 +418,7 @@ class SoundDesignService:
             "ocean": "warm_ambient",
             "animals": "warm_ambient",
             "sports": "soft_lift",
+            "world cup 2026": "soft_lift",
             "gaming": "soft_lift",
             "technology": "quiet_motion",
             "weather": "quiet_motion",
@@ -382,6 +451,18 @@ class SoundDesignService:
                 "volume=-28dB,"
                 "afade=t=in:st=0:d=0.01,"
                 "afade=t=out:st=0.10:d=0.25"
+            ),
+        )
+
+    def _render_tick(self, output_path: Path) -> None:
+        self._render_effect(
+            output_path=output_path,
+            source_filter="sine=frequency=940:sample_rate=48000:duration=0.10",
+            audio_filter=(
+                "highpass=f=600,"
+                "lowpass=f=2400,"
+                "volume=-25dB,"
+                "afade=t=out:st=0.02:d=0.08"
             ),
         )
 

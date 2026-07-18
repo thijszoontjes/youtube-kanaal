@@ -145,3 +145,27 @@ Here are 3 facts
     assert "Dialogue:" in ass_text
     assert "\\1c&H006BFF7C" in ass_text
     assert "\\pos(540,1280)" in ass_text
+
+
+def test_build_ass_from_srt_text_adds_short_story_overlays() -> None:
+    ass_text = build_ass_from_srt_text(
+        """1
+00:00:00,000 --> 00:00:02,000
+Octopuses disappear here
+""",
+        font_name="Arial",
+        font_size=72,
+        margin_v=640,
+        outline=5,
+        primary_color="&H00FFFFFF",
+        highlight_color="&H006BFF7C",
+        outline_color="&H00000000",
+        back_color="&H64000000",
+        beat_overlays=[
+            {"start_seconds": 0.0, "end_seconds": 1.2, "text": "NOW YOU SEE IT", "beat_type": "hook"}
+        ],
+    )
+
+    assert "Style: Overlay" in ass_text
+    assert "NOW YOU SEE IT" in ass_text
+    assert "\\pos(540,280)" in ass_text

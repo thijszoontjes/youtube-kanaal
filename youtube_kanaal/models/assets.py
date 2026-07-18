@@ -50,6 +50,11 @@ class AssetPlanSegment(BaseModel):
     clip_path: Path
     duration_seconds: float = Field(ge=0.5)
     reason: str
+    start_offset_seconds: float = Field(default=0.0, ge=0)
+    beat_type: str = "evidence"
+    energy: str = "medium"
+    transition: str = "cut"
+    on_screen_text: str = ""
 
 
 class AssetPlan(BaseModel):

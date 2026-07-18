@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 
@@ -15,11 +16,62 @@ from youtube_kanaal.utils.process import command_exists, run_command
 from youtube_kanaal.utils.subtitles import ideal_clip_count
 
 
+logger = logging.getLogger(__name__)
+
+
 class PexelsService:
     """Pexels API adapter for searching and caching stock footage."""
 
     _BOOLEAN_SPLIT_RE = re.compile(r"\s+\b(?:or|and)\b\s+|\s*\|\|\s*|\s*\|\s*")
     _QUERY_CLEAN_RE = re.compile(r"[^a-zA-Z0-9\s&'\-]")
+    _SEARCH_FATAL_STATUS_CODES = {401, 403}
+    _GENERIC_QUERY_TOKENS = {
+        "action",
+        "animation",
+        "broll",
+        "cinematic",
+        "city",
+        "close",
+        "crowd",
+        "detail",
+        "documentary",
+        "drone",
+        "footage",
+        "landscape",
+        "macro",
+        "match",
+        "motion",
+        "nature",
+        "ocean",
+        "people",
+        "scene",
+        "slow",
+        "sport",
+        "stadium",
+        "street",
+        "technology",
+        "underwater",
+        "vertical",
+        "video",
+        "wildlife",
+    }
+    _SEARCH_FALLBACK_QUERIES = [
+        "cinematic vertical footage",
+        "nature landscape vertical",
+        "city street vertical",
+        "people daily life vertical",
+    ]
+    _TOPICAL_FALLBACKS = {
+        "football": ["football match", "soccer stadium", "soccer ball"],
+        "soccer": ["soccer match", "soccer stadium", "soccer ball"],
+        "match": ["sports match", "stadium crowd", "athletes training"],
+    }
+    _SUBJECT_ALIASES = {
+        "octopus": {"octopus", "octopuses", "pulpa", "pulp", "poulpe"},
+    }
+    _CONFLICTING_SUBJECT_CONTEXT = {
+        "octopus": {"cooked", "cooking", "dish", "food", "grilled", "kitchen", "recipe"},
+    }
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -58,13 +110,7 @@ class PexelsService:
         if not self.settings.pexels_api_key:
             raise ConfigurationError("PEXELS_API_KEY is required for stock footage downloads.")
 
-        raw_payloads: list[dict[str, object]] = []
-        candidates: list[VideoClipAsset] = []
-        for original_query in queries:
-            for query in self._expand_queries(original_query):
-                payload = self._search(query)
-                raw_payloads.append({"query": query, "original_query": original_query, "response": payload})
-                candidates.extend(self._parse_results(query, payload))
+        raw_payloads, candidates = self._collect_candidates(queries)
         write_json(response_path, raw_payloads)
         selected = self._select_and_download(candidates, target_duration_seconds, queries=queries)
         if not selected:
@@ -90,13 +136,7 @@ class PexelsService:
         if not self.settings.pexels_api_key:
             raise ConfigurationError("PEXELS_API_KEY is required for stock footage downloads.")
 
-        raw_payloads: list[dict[str, object]] = []
-        candidates: list[VideoClipAsset] = []
-        for original_query in queries:
-            for query in self._expand_queries(original_query):
-                payload = self._search(query)
-                raw_payloads.append({"query": query, "original_query": original_query, "response": payload})
-                candidates.extend(self._parse_results(query, payload))
+        raw_payloads, candidates = self._collect_candidates(queries)
         write_json(response_path, raw_payloads)
 
         chosen: list[VideoClipAsset] = []
@@ -136,6 +176,169 @@ class PexelsService:
         )
         response.raise_for_status()
         return response.json()
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=8),
+        retry=retry_if_exception_type(httpx.HTTPError),
+        reraise=True,
+    )
+    def _search_unrestricted(self, query: str) -> dict[str, object]:
+        """Search every orientation when portrait-only results miss the main subject."""
+
+        response = self.client.get(
+            "/videos/search",
+            params={
+                "query": query,
+                "per_page": self.settings.pexels_results_per_query,
+            },
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def _collect_candidates(self, queries: list[str]) -> tuple[list[dict[str, object]], list[VideoClipAsset]]:
+        raw_payloads: list[dict[str, object]] = []
+        candidates: list[VideoClipAsset] = []
+        searched_queries: set[str] = set()
+
+        for original_query in queries:
+            expanded_queries = self._expand_queries(original_query)
+            for query in expanded_queries:
+                searched_queries.add(query)
+                self._search_and_collect(
+                    query=query,
+                    original_query=original_query,
+                    raw_payloads=raw_payloads,
+                    candidates=candidates,
+                    fallback=False,
+                )
+
+        if not candidates:
+            for query in self._fallback_queries(queries):
+                if query in searched_queries:
+                    continue
+                searched_queries.add(query)
+                self._search_and_collect(
+                    query=query,
+                    original_query=query,
+                    raw_payloads=raw_payloads,
+                    candidates=candidates,
+                    fallback=True,
+                )
+
+        required_subjects = self._dominant_subject_tokens(queries)
+        matching_ids = {
+            clip.source_id
+            for clip in candidates
+            if self._matches_required_subject(clip, required_subjects)
+        }
+        if required_subjects and len(matching_ids) < 5:
+            for query in queries[:5]:
+                try:
+                    payload = self._search_unrestricted(query)
+                except httpx.HTTPStatusError as exc:
+                    if self._is_fatal_search_error(exc):
+                        raise
+                    raw_payloads.append(
+                        {
+                            "query": query,
+                            "original_query": query,
+                            "fallback": True,
+                            "orientation": "any",
+                            "error": self._search_error_payload(exc),
+                        }
+                    )
+                    continue
+                except httpx.HTTPError as exc:
+                    raw_payloads.append(
+                        {
+                            "query": query,
+                            "original_query": query,
+                            "fallback": True,
+                            "orientation": "any",
+                            "error": self._search_error_payload(exc),
+                        }
+                    )
+                    continue
+                raw_payloads.append(
+                    {
+                        "query": query,
+                        "original_query": query,
+                        "fallback": True,
+                        "orientation": "any",
+                        "response": payload,
+                    }
+                )
+                candidates.extend(self._parse_results(query, payload))
+                matching_ids = {
+                    clip.source_id
+                    for clip in candidates
+                    if self._matches_required_subject(clip, required_subjects)
+                }
+                if len(matching_ids) >= 5:
+                    break
+
+        return raw_payloads, candidates
+
+    def _search_and_collect(
+        self,
+        *,
+        query: str,
+        original_query: str,
+        raw_payloads: list[dict[str, object]],
+        candidates: list[VideoClipAsset],
+        fallback: bool,
+    ) -> None:
+        try:
+            payload = self._search(query)
+        except httpx.HTTPStatusError as exc:
+            if self._is_fatal_search_error(exc):
+                raise
+            raw_payloads.append(
+                {
+                    "query": query,
+                    "original_query": original_query,
+                    "fallback": fallback,
+                    "error": self._search_error_payload(exc),
+                }
+            )
+            logger.warning("Pexels search failed; trying remaining queries", extra={"query": query, "error": str(exc)})
+            return
+        except httpx.HTTPError as exc:
+            raw_payloads.append(
+                {
+                    "query": query,
+                    "original_query": original_query,
+                    "fallback": fallback,
+                    "error": self._search_error_payload(exc),
+                }
+            )
+            logger.warning("Pexels search failed; trying remaining queries", extra={"query": query, "error": str(exc)})
+            return
+
+        raw_payloads.append(
+            {"query": query, "original_query": original_query, "fallback": fallback, "response": payload}
+        )
+        candidates.extend(self._parse_results(query, payload))
+
+    def _is_fatal_search_error(self, exc: httpx.HTTPStatusError) -> bool:
+        return exc.response.status_code in self._SEARCH_FATAL_STATUS_CODES
+
+    def _search_error_payload(self, exc: httpx.HTTPError) -> dict[str, object]:
+        payload: dict[str, object] = {"type": exc.__class__.__name__, "message": str(exc)}
+        if isinstance(exc, httpx.HTTPStatusError):
+            payload["status_code"] = exc.response.status_code
+            payload["url"] = str(exc.request.url)
+        return payload
+
+    def _fallback_queries(self, queries: list[str]) -> list[str]:
+        fallback_queries: list[str] = []
+        query_text = " ".join(queries).lower()
+        for keyword, candidates in self._TOPICAL_FALLBACKS.items():
+            if keyword in query_text:
+                fallback_queries.extend(candidates)
+        fallback_queries.extend(self._SEARCH_FALLBACK_QUERIES)
+        return list(dict.fromkeys(fallback_queries))
 
     def _expand_queries(self, query: str) -> list[str]:
         parts = self._BOOLEAN_SPLIT_RE.split(query.strip())
@@ -229,6 +432,19 @@ class PexelsService:
         else:
             bonus -= 1.2
 
+        subject_tokens = query_tokens - self._GENERIC_QUERY_TOKENS
+        subject_overlap = sum(
+            1
+            for token in subject_tokens
+            if any(self._tokens_match(token, candidate) for candidate in haystack)
+        )
+        if subject_tokens and subject_overlap == 0:
+            bonus -= 5.0
+        elif subject_overlap >= 2:
+            bonus += 1.8
+        elif subject_overlap == 1:
+            bonus += 0.7
+
         bonus += self._historical_relevance_adjustment(query_tokens=query_tokens, haystack=haystack)
 
         space_terms = {"saturn", "planet", "space", "moon", "solar", "astronomy", "orbit", "galaxy", "star", "telescope"}
@@ -269,6 +485,62 @@ class PexelsService:
                 bonus -= 2.2
         return round(bonus, 2)
 
+    def _tokens_match(self, left: str, right: str) -> bool:
+        if left == right:
+            return True
+        left_alias = self._canonical_subject_token(left)
+        right_alias = self._canonical_subject_token(right)
+        if left_alias == right_alias:
+            return True
+        left_stem = self._token_stem(left)
+        right_stem = self._token_stem(right)
+        return len(left_stem) >= 4 and left_stem == right_stem
+
+    def _canonical_subject_token(self, token: str) -> str:
+        normalized = token.lower()
+        for canonical, aliases in self._SUBJECT_ALIASES.items():
+            if normalized in aliases:
+                return canonical
+        return self._token_stem(normalized)
+
+    def _token_stem(self, token: str) -> str:
+        if token.endswith("es") and len(token) > 5:
+            return token[:-2]
+        return token.rstrip("s")
+
+    def _dominant_subject_tokens(self, queries: list[str]) -> set[str]:
+        counts: dict[str, int] = {}
+        for query in queries:
+            seen_in_query: set[str] = set()
+            for token in re.findall(r"[a-z0-9]+", query.lower()):
+                if len(token) <= 2 or token in self._GENERIC_QUERY_TOKENS:
+                    continue
+                canonical = self._canonical_subject_token(token)
+                if canonical in seen_in_query:
+                    continue
+                counts[canonical] = counts.get(canonical, 0) + 1
+                seen_in_query.add(canonical)
+        if not counts:
+            return set()
+        highest = max(counts.values())
+        minimum_repetition = max(2, (len(queries) + 3) // 4)
+        if highest < minimum_repetition:
+            return set()
+        return {token for token, count in counts.items() if count == highest}
+
+    def _matches_required_subject(self, clip: VideoClipAsset, required_subjects: set[str]) -> bool:
+        if not required_subjects:
+            return True
+        source_tokens = set(re.findall(r"[a-z0-9]+", clip.source_url.lower()))
+        for subject in required_subjects:
+            if not any(self._tokens_match(subject, candidate) for candidate in source_tokens):
+                continue
+            conflicting = self._CONFLICTING_SUBJECT_CONTEXT.get(subject, set())
+            if source_tokens & conflicting:
+                return False
+            return True
+        return False
+
     def _historical_relevance_adjustment(self, *, query_tokens: set[str], haystack: set[str]) -> float:
         adjustment = 0.0
         titanic_terms = {"titanic", "shipwreck", "ship", "ocean", "liner", "iceberg", "lifeboat", "wreck"}
@@ -305,7 +577,12 @@ class PexelsService:
         used_ids: set[str] = set()
         cumulative = 0.0
         desired_count = ideal_clip_count(target_duration_seconds)
-        viable_candidates = [clip for clip in candidates if clip.score >= 3.0] or candidates
+        required_subjects = self._dominant_subject_tokens(queries)
+        viable_candidates = [
+            clip
+            for clip in candidates
+            if clip.score >= 4.0 and self._matches_required_subject(clip, required_subjects)
+        ]
         for clip in self._prioritized_candidates(viable_candidates, queries):
             if clip.source_id in used_ids:
                 continue

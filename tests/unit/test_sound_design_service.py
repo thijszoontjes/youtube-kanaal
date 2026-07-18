@@ -78,6 +78,23 @@ def test_sound_design_service_uses_bucket_profile_hint(configured_env) -> None:
     assert service._select_music_profile("history").name == "calm_focus"
     assert service._select_music_profile("gaming").name == "soft_lift"
     assert service._select_music_profile("space").name == "quiet_motion"
+    assert service._select_music_profile("world cup 2026").name == "soft_lift"
+
+
+def test_sound_design_service_uses_story_beat_cues_instead_of_fixed_percentages() -> None:
+    service = SoundDesignService(Settings())
+
+    cues = service._sound_cues(
+        24.0,
+        [
+            {"offset_seconds": 0.0, "sfx": "impact", "beat_type": "hook"},
+            {"offset_seconds": 8.4, "sfx": "tick", "beat_type": "evidence"},
+            {"offset_seconds": 19.2, "sfx": "silence", "beat_type": "payoff"},
+        ],
+    )
+
+    assert [cue["offset_seconds"] for cue in cues] == [0.0, 8.4, 19.2]
+    assert service._music_duck_filter(cues) is not None
 
 
 def test_sound_design_service_uses_single_custom_audio_file_when_configured(monkeypatch, tmp_path: Path) -> None:

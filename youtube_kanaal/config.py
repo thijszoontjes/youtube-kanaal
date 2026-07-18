@@ -217,7 +217,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("KEEP_UPLOADED_MEDIA"),
     )
     pexels_results_per_query: int = Field(default=12, validation_alias=AliasChoices("PEXELS_RESULTS_PER_QUERY"))
-    world_cup_2026_mode: bool = Field(default=True, validation_alias=AliasChoices("WORLD_CUP_2026_MODE"))
+    world_cup_2026_mode: bool = Field(default=False, validation_alias=AliasChoices("WORLD_CUP_2026_MODE"))
     world_cup_scoreboard_url: str = Field(
         default="https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard",
         validation_alias=AliasChoices("WORLD_CUP_SCOREBOARD_URL"),
@@ -249,7 +249,7 @@ class Settings(BaseSettings):
     thumbnail_accent_color: str = Field(default="#6BFF7C", validation_alias=AliasChoices("THUMBNAIL_ACCENT_COLOR"))
     thumbnail_text_color: str = Field(default="#FFFFFF", validation_alias=AliasChoices("THUMBNAIL_TEXT_COLOR"))
     subtitle_font_name: str = Field(default="Arial", validation_alias=AliasChoices("SUBTITLE_FONT_NAME"))
-    subtitle_font_size: int = Field(default=48, validation_alias=AliasChoices("SUBTITLE_FONT_SIZE"))
+    subtitle_font_size: int = Field(default=72, validation_alias=AliasChoices("SUBTITLE_FONT_SIZE"))
     subtitle_margin_v: int = Field(default=640, validation_alias=AliasChoices("SUBTITLE_MARGIN_V"))
     subtitle_outline: int = Field(default=5, validation_alias=AliasChoices("SUBTITLE_OUTLINE"))
     subtitle_primary_color: str = Field(default="&H00FFFFFF", validation_alias=AliasChoices("SUBTITLE_PRIMARY_COLOR"))

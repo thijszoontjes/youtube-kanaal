@@ -196,7 +196,7 @@ class ShortPipeline:
             subtitles = self.generate_subtitles(runtime, content, narration)
             sound_design = self.apply_sound_design(runtime, narration, content)
             clips = self.download_stock_video(runtime, visual_queries, narration)
-            plan = self.plan_assets(runtime, clips, narration)
+            plan = self.plan_assets(runtime, clips, narration, content)
             final_video_path = self.render_video(runtime, plan, sound_design.mixed_path, subtitles, content)
             validation_payload = self.validate_output(runtime, final_video_path)
             downloads_copy = self.export_to_downloads(runtime, final_video_path, content)
@@ -353,7 +353,14 @@ class ShortPipeline:
             return topic
 
     def select_topic_and_content(self, runtime: PipelineRuntime) -> tuple[TopicChoice, GeneratedShort]:
-        if self.settings.world_cup_2026_mode and not runtime.request.mock_mode:
+        if runtime.request.content_path is not None:
+            return self.load_reviewed_content(runtime, runtime.request.content_path)
+
+        if (
+            self.settings.world_cup_2026_mode
+            and not runtime.request.mock_mode
+            and not runtime.request.preferred_topic
+        ):
             return self.select_world_cup_topic_and_content(runtime)
 
         attempted_topics: list[str] = []
@@ -399,6 +406,53 @@ class ShortPipeline:
             probable_cause="Ollama kept producing titles that were too similar to recent history.",
         )
 
+    def load_reviewed_content(
+        self,
+        runtime: PipelineRuntime,
+        content_path: Path,
+    ) -> tuple[TopicChoice, GeneratedShort]:
+        with self._stage(
+            runtime,
+            "content_generation",
+            {"source": "reviewed_json", "content_path": str(content_path)},
+        ):
+            try:
+                content = GeneratedShort.model_validate_json(content_path.read_text(encoding="utf-8"))
+                topic = self._preferred_topic(content.topic, content.bucket)
+                self.ollama.validate_short_content(content, topic)
+            except PipelineStageError:
+                raise
+            except (OSError, ValueError) as exc:
+                raise PipelineStageError(
+                    stage="content_generation",
+                    message="Reviewed Short JSON is invalid.",
+                    probable_cause=str(exc),
+                    details_path=content_path,
+                ) from exc
+
+            visual_queries = [beat.visual_query for beat in content.beats if beat.visual_query]
+            if len(visual_queries) >= 2:
+                topic = topic.model_copy(
+                    update={
+                        "visual_queries": visual_queries[:5],
+                        "search_terms": [content.topic, *visual_queries[:5]][:6],
+                    }
+                )
+            write_json(
+                runtime.artifacts.responses_dir / "content_generation.json",
+                content.model_dump(mode="json"),
+            )
+            runtime.stage_summaries["topic_selection"] = {
+                **topic.model_dump(mode="json"),
+                "source": "reviewed_json",
+            }
+            runtime.stage_summaries["content_generation"] = {
+                **content.model_dump(mode="json"),
+                "source": "reviewed_json",
+                "content_path": str(content_path),
+            }
+            return topic, content
+
     def generate_content(self, runtime: PipelineRuntime, topic: TopicChoice) -> GeneratedShort:
         recent_titles = self.database.recent_titles(limit=100)
         with self._stage(runtime, "content_generation", {"topic": topic.topic, "recent_titles": len(recent_titles)}):
@@ -436,6 +490,7 @@ class ShortPipeline:
             synthesis = self.narration.synthesize(
                 text=content.narration,
                 output_path=raw_path,
+                beats=[beat.model_dump(mode="json") for beat in content.beats],
                 logger=runtime.logger,
             )
             self.ffmpeg.normalize_audio(input_path=raw_path, output_path=normalized_path)
@@ -466,6 +521,7 @@ class ShortPipeline:
                 subtitle_text=content.subtitle_text,
                 output_base_path=runtime.artifacts.subtitles_dir / "captions",
                 duration_seconds=narration.duration_seconds,
+                beat_overlays=content.beat_overlays(narration.duration_seconds),
             )
             runtime.stage_summaries["subtitle_generation"] = subtitles.model_dump(mode="json")
             return subtitles
@@ -501,6 +557,7 @@ class ShortPipeline:
                     duration_seconds=narration.duration_seconds,
                     working_dir=runtime.artifacts.audio_dir,
                     profile_hint=content.bucket,
+                    beat_cues=content.beat_sound_cues(narration.duration_seconds),
                     logger=runtime.logger,
                 )
             except Exception as exc:
@@ -544,18 +601,46 @@ class ShortPipeline:
         runtime: PipelineRuntime,
         clips: list[VideoClipAsset],
         narration: NarrationAsset,
+        content: GeneratedShort,
     ) -> AssetPlan:
         with self._stage(runtime, "asset_planning", {"clip_count": len(clips), "duration": narration.duration_seconds}):
-            segment_duration = narration.duration_seconds / max(len(clips), 1)
-            plan = AssetPlan(
-                segments=[
+            beats = content.beats
+            planned_count = max(len(beats), 1)
+            beat_weights = [
+                max(len(beat.narration.split()) * beat.duration_weight, 1.0)
+                for beat in beats
+            ] or [1.0]
+            total_weight = sum(beat_weights)
+            durations = [narration.duration_seconds * (weight / total_weight) for weight in beat_weights]
+            if durations:
+                durations[-1] += narration.duration_seconds - sum(durations)
+            segments: list[AssetPlanSegment] = []
+            for index in range(planned_count):
+                clip = clips[index % len(clips)]
+                beat = beats[index] if beats else None
+                duration = max(0.65, durations[index] if index < len(durations) else narration.duration_seconds)
+                available_offset = max(clip.duration_seconds - duration - 0.2, 0.0)
+                if available_offset:
+                    offset_ratio = 0.18 if index == 0 else 0.24 + (0.13 * (index % 3))
+                    start_offset = min(max(available_offset * offset_ratio, 0.35), available_offset)
+                else:
+                    start_offset = 0.0
+                segments.append(
                     AssetPlanSegment(
                         clip_path=clip.local_path,
-                        duration_seconds=max(2.0, min(segment_duration, clip.duration_seconds)),
-                        reason=f"Selected for query: {clip.query}",
+                        duration_seconds=min(duration, max(clip.duration_seconds - start_offset, 0.65)),
+                        start_offset_seconds=round(start_offset, 2),
+                        beat_type=beat.beat_type if beat else "evidence",
+                        energy=beat.energy if beat else "medium",
+                        transition=beat.transition if beat else "cut",
+                        on_screen_text=beat.on_screen_text if beat else "",
+                        reason=(
+                            f"{beat.beat_type if beat else 'evidence'} beat; selected for query: {clip.query}"
+                        ),
                     )
-                    for clip in clips
-                ],
+                )
+            plan = AssetPlan(
+                segments=segments,
                 total_duration_seconds=narration.duration_seconds,
             )
             runtime.stage_summaries["asset_planning"] = plan.model_dump(mode="json")
@@ -876,13 +961,19 @@ class ShortPipeline:
 
     def select_world_cup_topic_and_content(self, runtime: PipelineRuntime) -> tuple[TopicChoice, GeneratedShort]:
         recent_topics = self.database.recent_topics(limit=100)
-        with self._stage(runtime, "world_cup_data", {"recent_topics": len(recent_topics)}):
+        recent_titles = self.database.recent_titles(limit=100)
+        with self._stage(
+            runtime,
+            "world_cup_data",
+            {"recent_topics": len(recent_topics), "recent_titles": len(recent_titles)},
+        ):
             event = self.world_cup.fetch_relevant_event(
                 excluded_topics=recent_topics,
+                excluded_titles=recent_titles,
                 response_path=runtime.artifacts.responses_dir / "world_cup_scoreboard.json",
             )
             topic = self.world_cup.topic_choice(event)
-            content = self.world_cup.build_short(event)
+            content = self.world_cup.build_short(event, excluded_titles=recent_titles)
             runtime.stage_summaries["world_cup_data"] = {
                 "event_id": event.event_id,
                 "source_url": event.source_url,
@@ -913,7 +1004,8 @@ class ShortPipeline:
         lowered_facts = " ".join(content.facts).lower()
         fact_queries = self._fact_visual_queries(topic, content)
         topic_specific_queries = TOPIC_SPECIFIC_VISUAL_QUERIES.get(topic_text.lower(), [])
-        queries: list[str] = [*topic_specific_queries, *fact_queries]
+        beat_queries = [beat.visual_query for beat in content.beats] if content.beat_plan_source == "generated" else []
+        queries: list[str] = [*beat_queries, *topic_specific_queries, *fact_queries]
 
         if topic.bucket == "space":
             queries.extend(

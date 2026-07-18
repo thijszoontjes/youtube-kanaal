@@ -29,6 +29,7 @@ class WhisperService:
         subtitle_text: str,
         output_base_path: Path,
         duration_seconds: float,
+        beat_overlays: list[dict[str, object]] | None = None,
     ) -> SubtitleAsset:
         output_base_path.parent.mkdir(parents=True, exist_ok=True)
         srt_path = output_base_path.with_suffix(".srt")
@@ -83,13 +84,14 @@ class WhisperService:
             build_ass_from_srt_text(
                 normalized_srt_text,
                 font_name=self.settings.subtitle_font_name,
-                font_size=self.settings.subtitle_font_size,
+                font_size=max(self.settings.subtitle_font_size, 72),
                 margin_v=self.settings.subtitle_margin_v,
                 outline=self.settings.subtitle_outline,
                 primary_color=self.settings.subtitle_primary_color,
                 highlight_color=self.settings.subtitle_highlight_color,
                 outline_color=self.settings.subtitle_outline_color,
                 back_color=self.settings.subtitle_back_color,
+                beat_overlays=beat_overlays,
             ),
         )
         return SubtitleAsset(srt_path=srt_path, vtt_path=vtt_path if vtt_path.exists() else None, ass_path=ass_path)

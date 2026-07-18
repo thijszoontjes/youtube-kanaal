@@ -174,13 +174,17 @@ class FFmpegService:
             segment_filter = self._segment_filter(
                 duration_seconds=segment.duration_seconds,
                 variant=index,
+                energy=segment.energy,
+                transition=segment.transition,
+                is_first=index == 1,
+                is_last=index == len(plan.segments),
             )
             run_command(
                 [
                     self.settings.ffmpeg_binary,
                     "-y",
                     "-ss",
-                    "0",
+                    f"{segment.start_offset_seconds:.2f}",
                     "-t",
                     f"{segment.duration_seconds:.2f}",
                     "-i",
@@ -530,25 +534,55 @@ class FFmpegService:
             f"force_style='{style}'"
         )
 
-    def _segment_filter(self, *, duration_seconds: float, variant: int) -> str:
+    def _segment_filter(
+        self,
+        *,
+        duration_seconds: float,
+        variant: int,
+        energy: str = "medium",
+        transition: str = "cut",
+        is_first: bool = False,
+        is_last: bool = False,
+    ) -> str:
+        energy_key = energy if energy in {"low", "medium", "high"} else "medium"
+        scale_sizes = {
+            "low": (1100, 1956),
+            "medium": (1140, 2027),
+            "high": (1188, 2112),
+        }
+        frequency = {"low": 0.48, "medium": 0.82, "high": 1.35}[energy_key]
+        amplitude_x = {"low": 10, "medium": 24, "high": 42}[energy_key]
+        amplitude_y = {"low": 8, "medium": 18, "high": 30}[energy_key]
+        scale_width, scale_height = scale_sizes[energy_key]
+        if transition == "punch":
+            scale_width += 52
+            scale_height += 92
         x_expr = (
-            "(in_w-out_w)/2+42*sin(t*1.10)"
+            f"(in_w-out_w)/2+{amplitude_x}*sin(t*{frequency:.2f})"
             if variant % 2
-            else "(in_w-out_w)/2-38*sin(t*0.95)"
+            else f"(in_w-out_w)/2-{amplitude_x}*sin(t*{frequency * 0.91:.2f})"
         )
         y_expr = (
-            "(in_h-out_h)/2+28*cos(t*0.82)"
+            f"(in_h-out_h)/2+{amplitude_y}*cos(t*{frequency * 0.77:.2f})"
             if variant % 2
-            else "(in_h-out_h)/2+34*sin(t*0.74)"
+            else f"(in_h-out_h)/2+{amplitude_y}*sin(t*{frequency * 0.69:.2f})"
         )
         fade_out_start = max(duration_seconds - 0.18, 0.0)
+        fades: list[str] = []
+        if is_first:
+            fades.append("fade=t=in:st=0:d=0.08")
+        if is_last:
+            fades.append(f"fade=t=out:st={fade_out_start:.2f}:d=0.12")
+        fade_filter = ",".join(fades)
+        if fade_filter:
+            fade_filter += ","
         return (
-            "scale=1080:1920:force_original_aspect_ratio=increase,"
+            f"scale={scale_width}:{scale_height}:force_original_aspect_ratio=increase,"
             f"crop=1080:1920:x='{x_expr}':y='{y_expr}',"
-            "eq=saturation=1.24:contrast=1.12:brightness=0.03:gamma=0.98,"
-            "unsharp=5:5:0.75:3:3:0.0,"
+            "eq=saturation=1.12:contrast=1.07:brightness=0.015:gamma=0.99,"
+            "unsharp=5:5:0.55:3:3:0.0,"
             "fps=30,"
-            f"fade=t=in:st=0:d=0.14,fade=t=out:st={fade_out_start:.2f}:d=0.14,"
+            f"{fade_filter}"
             "format=yuv420p"
         )
 

@@ -12,6 +12,7 @@ from youtube_kanaal.models.content import (
     GeneratedLongVideo,
     GeneratedShort,
     LongVideoSection,
+    ShortBeat,
     TopicChoice,
     TOPIC_CATALOG,
 )
@@ -46,6 +47,7 @@ __all__ = [
     "RunStatus",
     "ShortRunRequest",
     "ShortRunResult",
+    "ShortBeat",
     "SoundDesignAsset",
     "SubtitleAsset",
     "TopicChoice",

@@ -146,12 +146,16 @@ class NarrationService:
         *,
         text: str,
         output_path: Path,
+        beats: list[dict[str, object]] | None = None,
         logger: logging.Logger | None = None,
     ) -> NarrationSynthesisResult:
         inspection = self.inspect(logger=logger)
         if inspection.resolved_engine == "kokoro":
             try:
-                self.kokoro.synthesize(text=text, output_path=output_path, logger=logger)
+                if beats and hasattr(self.kokoro, "synthesize_beats"):
+                    self.kokoro.synthesize_beats(beats=beats, output_path=output_path, logger=logger)
+                else:
+                    self.kokoro.synthesize(text=text, output_path=output_path, logger=logger)
                 return NarrationSynthesisResult(output_path=output_path, inspection=inspection)
             except Exception as exc:
                 if self.settings.kokoro_fallback_to_piper and inspection.piper_ready:

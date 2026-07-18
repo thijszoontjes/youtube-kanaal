@@ -123,6 +123,15 @@ _LOW_SIGNAL_FACT_FRAGMENTS: tuple[str, ...] = (
     "visually striking",
     "short explainer",
 )
+_ADMINISTRATIVE_NARRATION_FRAGMENTS: tuple[str, ...] = (
+    "verified details",
+    "no invented",
+    "generated locally",
+    "this short",
+    "stock footage",
+    "visual youtube",
+    "facts array",
+)
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 
@@ -196,7 +205,7 @@ class OllamaService:
             )
             normalized = self._normalize_generated_short(content, topic)
             try:
-                self._validate_short_quality(normalized, topic)
+                self.validate_short_content(normalized, topic)
             except ValueError as exc:
                 last_quality_error = exc
                 continue
@@ -207,6 +216,11 @@ class OllamaService:
             probable_cause=str(last_quality_error or "The model kept producing weak or mismatched content."),
             details_path=response_path,
         )
+
+    def validate_short_content(self, content: GeneratedShort, topic: TopicChoice) -> None:
+        """Apply the same publishing gate to generated and reviewed scripts."""
+
+        self._validate_short_quality(content, topic)
 
     def generate_long_content(
         self,
@@ -372,7 +386,10 @@ class OllamaService:
         hashtags = repaired.get("hashtags")
         cleaned_hashtags = []
         if isinstance(hashtags, list):
-            cleaned_hashtags = [str(tag).strip() for tag in hashtags if str(tag).strip()]
+            for tag in hashtags:
+                words = _TOKEN_RE.findall(str(tag))
+                if words:
+                    cleaned_hashtags.append("#" + "".join(word.capitalize() for word in words))
         cleaned_hashtags.extend(["#shorts", "#facts", f"#{topic_value.title().replace(' ', '')}"])
         repaired["hashtags"] = list(dict.fromkeys(cleaned_hashtags))[:8]
 
@@ -387,6 +404,40 @@ class OllamaService:
         if len(cleaned_facts) < 3:
             cleaned_facts.extend(self._fallback_facts(topic_value, bucket_value))
         repaired["facts"] = self._dedupe_preserving_order(cleaned_facts)[:3]
+
+        raw_beats = repaired.get("beats")
+        cleaned_beats: list[dict[str, object]] = []
+        allowed_types = ("hook", "setup", "evidence", "escalation", "payoff", "loop")
+        default_types = ("hook", "setup", "evidence", "escalation", "payoff", "loop")
+        if isinstance(raw_beats, list):
+            for index, raw_beat in enumerate(raw_beats[:7]):
+                if not isinstance(raw_beat, dict):
+                    continue
+                narration_text = self._clean_narration(str(raw_beat.get("narration", "")))
+                if not narration_text:
+                    continue
+                raw_type = str(raw_beat.get("beat_type", "")).strip().lower()
+                beat_type = raw_type if raw_type in allowed_types else default_types[min(index, len(default_types) - 1)]
+                if index == 0:
+                    beat_type = "hook"
+                overlay_words = str(raw_beat.get("on_screen_text", "")).strip().split()[:5]
+                overlay = " ".join(overlay_words)
+                if len(overlay) > 42:
+                    overlay = overlay[:42].rsplit(" ", 1)[0].strip()
+                visual_query = " ".join(str(raw_beat.get("visual_query", "")).split()).strip()
+                cleaned_beats.append(
+                    {
+                        "beat_type": beat_type,
+                        "narration": narration_text,
+                        "on_screen_text": overlay,
+                        "visual_query": visual_query or f"{topic_value} close up",
+                        "energy": str(raw_beat.get("energy", "medium")) if str(raw_beat.get("energy", "medium")) in {"low", "medium", "high"} else "medium",
+                        "transition": str(raw_beat.get("transition", "cut")) if str(raw_beat.get("transition", "cut")) in {"cut", "punch", "hold"} else "cut",
+                        "sfx": str(raw_beat.get("sfx", "none")) if str(raw_beat.get("sfx", "none")) in {"none", "impact", "whoosh", "tick", "riser", "silence"} else "none",
+                        "duration_weight": min(max(float(raw_beat.get("duration_weight", 1.0) or 1.0), 0.45), 2.5),
+                    }
+                )
+        repaired["beats"] = cleaned_beats if len(cleaned_beats) >= 5 else []
 
         narration = raw_narration
         repaired_facts = list(repaired["facts"]) if isinstance(repaired["facts"], list) else []
@@ -504,6 +555,8 @@ class OllamaService:
             candidate_payload = dict(base_payload)
             candidate_payload["narration"] = narration
             candidate_payload["subtitle_text"] = narration
+            if narration != content.narration:
+                candidate_payload["beats"] = []
             try:
                 return GeneratedShort.model_validate(candidate_payload)
             except _VALIDATION_ERROR_TYPES:
@@ -949,6 +1002,20 @@ class OllamaService:
             problems.append("narration starts by reading an all-caps title card")
         if any(self._is_low_signal_fact(fact) for fact in content.facts):
             problems.append("facts contain generic production filler")
+        if len(content.beats) < 5:
+            problems.append("story plan has fewer than five beats")
+        elif content.beats[0].beat_type != "hook":
+            problems.append("story plan does not begin with a hook")
+        elif content.beats[-1].beat_type not in {"payoff", "loop"}:
+            problems.append("story plan does not end with a payoff or loop")
+        if any(fragment in content.narration.lower() for fragment in _ADMINISTRATIVE_NARRATION_FRAGMENTS):
+            problems.append("narration contains internal production or verification language")
+        if content.beats and not content.beats[0].on_screen_text:
+            problems.append("hook is missing visual promise text")
+        if self._uppercase_letter_ratio(content.narration) > 0.55:
+            problems.append("narration uses too much all-caps text for natural speech")
+        if not self._facts_supported_by_narration(content):
+            problems.append("facts are not actually supported by the narration")
         if problems:
             raise ValueError("; ".join(problems))
 
@@ -996,6 +1063,25 @@ class OllamaService:
             return False
         uppercase = sum(1 for char in letters if char.upper() == char)
         return uppercase / len(letters) > 0.8
+
+    def _uppercase_letter_ratio(self, text: str) -> float:
+        letters = [char for char in text if char.isalpha()]
+        if not letters:
+            return 0.0
+        return sum(1 for char in letters if char.isupper()) / len(letters)
+
+    def _facts_supported_by_narration(self, content: GeneratedShort) -> bool:
+        narration_tokens = set(_TOKEN_RE.findall(content.narration.lower()))
+        stop_words = {"about", "after", "again", "because", "from", "have", "into", "that", "their", "there", "these", "they", "this", "those", "with", "would"}
+        for fact in content.facts:
+            fact_tokens = {
+                token
+                for token in _TOKEN_RE.findall(fact.lower())
+                if len(token) >= 4 and token not in stop_words
+            }
+            if fact_tokens and len(fact_tokens & narration_tokens) < min(2, len(fact_tokens)):
+                return False
+        return True
 
     def _fallback_topic(self, excluded_topics: list[str]) -> TopicChoice:
         excluded = {item.lower() for item in excluded_topics}

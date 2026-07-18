@@ -123,6 +123,7 @@ def build_ass_from_srt_text(
     margin_r: int = 96,
     alignment: int = 2,
     style_name: str = "Shorts",
+    beat_overlays: list[dict[str, object]] | None = None,
 ) -> str:
     cues = parse_srt_text(srt_text)
     lines = [
@@ -144,6 +145,11 @@ def build_ass_from_srt_text(
             f"{outline_color},{back_color},-1,0,0,0,100,100,0,0,1,{outline},0,"
             f"{alignment},{margin_l},{margin_r},{margin_v},1"
         ),
+        (
+            f"Style: Overlay,{font_name},{max(int(font_size * 1.35), 78)},{primary_color},{highlight_color},"
+            f"{outline_color},{back_color},-1,0,0,0,100,100,1.5,0,1,{max(outline, 5)},0,"
+            "8,72,72,210,1"
+        ),
         "",
         "[Events]",
         "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text",
@@ -157,6 +163,20 @@ def build_ass_from_srt_text(
                 primary_color=primary_color,
                 highlight_color=highlight_color,
                 y_position=max(240, 1920 - margin_v),
+            )
+        )
+    for overlay in beat_overlays or []:
+        text = _escape_ass_text(str(overlay.get("text", "")).strip().upper())
+        if not text:
+            continue
+        start_seconds = float(overlay.get("start_seconds", 0.0) or 0.0)
+        end_seconds = float(overlay.get("end_seconds", start_seconds + 1.0) or (start_seconds + 1.0))
+        beat_type = str(overlay.get("beat_type", "evidence"))
+        y_position = 280 if beat_type == "hook" else 340
+        lines.append(
+            (
+                f"Dialogue: 1,{_format_ass_timestamp(start_seconds)},{_format_ass_timestamp(end_seconds)},"
+                f"Overlay,,0,0,0,,{{\\an8\\pos(540,{y_position})\\fad(55,90)\\t(0,140,\\fscx106\\fscy106)}}{text}"
             )
         )
     return "\n".join(lines).strip() + "\n"
@@ -632,39 +652,31 @@ def _build_ass_events_for_cue(
     if not word_positions:
         return []
 
-    total_duration = max(cue.end_seconds - cue.start_seconds, 0.3)
-    weights = [
-        max(len(line_groups[line_index][word_index].strip(".,:;!?")), 1)
-        for line_index, word_index in word_positions
+    stop_words = {"about", "after", "again", "because", "could", "from", "have", "into", "that", "their", "there", "these", "they", "this", "those", "with", "would", "your"}
+    ranked_positions = sorted(
+        word_positions,
+        key=lambda position: (
+            line_groups[position[0]][position[1]].strip(".,:;!?").lower() not in stop_words,
+            any(char.isdigit() for char in line_groups[position[0]][position[1]]),
+            len(line_groups[position[0]][position[1]].strip(".,:;!?")),
+        ),
+        reverse=True,
+    )
+    highlight_line, highlight_word = ranked_positions[0]
+    event_text = _render_ass_highlighted_text(
+        line_groups,
+        highlight_line=highlight_line,
+        highlight_word=highlight_word,
+        primary_color=primary_color,
+        highlight_color=highlight_color,
+        y_position=y_position,
+    )
+    return [
+        (
+            f"Dialogue: 0,{_format_ass_timestamp(cue.start_seconds)},{_format_ass_timestamp(cue.end_seconds)},"
+            f"{style_name},,0,0,0,,{{\\fad(45,65)}}{event_text}"
+        )
     ]
-    total_weight = sum(weights)
-    cursor = cue.start_seconds
-    events: list[str] = []
-
-    for index, (line_index, word_index) in enumerate(word_positions):
-        if index == len(word_positions) - 1:
-            next_cursor = cue.end_seconds
-        else:
-            proportional = total_duration * (weights[index] / total_weight)
-            next_cursor = cursor + max(proportional, 0.06)
-        if next_cursor > cue.end_seconds:
-            next_cursor = cue.end_seconds
-        event_text = _render_ass_highlighted_text(
-            line_groups,
-            highlight_line=line_index,
-            highlight_word=word_index,
-            primary_color=primary_color,
-            highlight_color=highlight_color,
-            y_position=y_position,
-        )
-        events.append(
-            (
-                f"Dialogue: 0,{_format_ass_timestamp(cursor)},{_format_ass_timestamp(next_cursor)},"
-                f"{style_name},,0,0,0,,{event_text}"
-            )
-        )
-        cursor = next_cursor
-    return events
 
 
 def _render_ass_highlighted_text(

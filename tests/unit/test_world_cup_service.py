@@ -98,6 +98,44 @@ def test_world_cup_service_skips_recent_match_topics(configured_env, tmp_path) -
     assert event.topic == "Brazil vs Morocco"
 
 
+def test_world_cup_service_reuses_least_recent_match_when_all_topics_are_used(configured_env, tmp_path) -> None:
+    payload = _scoreboard_payload()
+    second = _scoreboard_payload(event_id="760422", date_value="2026-06-13T04:00Z")["events"][0]
+    second["competitions"][0]["competitors"][0]["team"]["displayName"] = "Brazil"
+    second["competitions"][0]["competitors"][1]["team"]["displayName"] = "Morocco"
+    payload["events"].append(second)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload, request=request)
+
+    service = WorldCupService(
+        load_settings(world_cup_past_days=0, world_cup_future_days=0),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    event = service.fetch_relevant_event(
+        excluded_topics=["Brazil vs Morocco", "Australia vs TÃ¼rkiye"],
+        response_path=tmp_path / "scoreboard.json",
+        now=datetime(2026, 6, 14, 12, tzinfo=timezone.utc),
+    )
+
+    assert event.topic == "Australia vs Türkiye"
+
+
+def test_world_cup_service_uses_fresh_upcoming_title(configured_env) -> None:
+    payload = _scoreboard_payload(date_value="2026-07-14T19:00Z")
+    competition = payload["events"][0]["competitions"][0]
+    competition["status"] = {"type": {"state": "pre", "completed": False, "detail": "Scheduled"}}
+    competition["altGameNote"] = "FIFA World Cup, Semifinals"
+
+    service = WorldCupService(load_settings())
+    event = service._parse_events(payload)[0]
+    first = service.build_short(event)
+    second = service.build_short(event, excluded_titles=[first.title])
+
+    assert second.title != first.title
+    assert "FIFA World Cup, Semifinals" in second.narration
+
+
 def test_world_cup_service_puts_winner_score_first_for_away_win(configured_env) -> None:
     service = WorldCupService(load_settings())
     event = service._parse_events(_scoreboard_payload())[0]

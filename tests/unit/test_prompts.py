@@ -27,10 +27,11 @@ def test_content_prompt_contains_recent_titles() -> None:
     assert "Use full ALL CAPS for some titles" in prompt
     assert "Do NOT Ignore This About Axolotls" in prompt
     assert '"hook_text"' not in prompt
-    assert "Do not write any separate on-screen title card or visual hook text" in prompt
+    assert "Every beat needs short on_screen_text" in prompt
+    assert '"beat_type": "hook"' in prompt
     assert 'Never use "Here are", "First", "Second", "Third"' in prompt
-    assert "Open with one specific tension" in prompt
-    assert "The first sentence must mention axolotls by name" in prompt
+    assert "open a precise information gap" in prompt
+    assert "name or unmistakably identify axolotls" in prompt
     assert 'Do not open with "Did you know", "Imagine a world"' in prompt
     assert "The title must match axolotls" in prompt
     assert 'Do not end with phrases like "That is why..." or "People remember..."' in prompt

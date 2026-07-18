@@ -11,6 +11,7 @@ from youtube_kanaal.config import Settings
 from youtube_kanaal.exceptions import PipelineStageError
 from youtube_kanaal.models import GeneratedShort, TopicChoice
 from youtube_kanaal.utils.files import write_json
+from youtube_kanaal.utils.similarity import is_near_duplicate
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,7 @@ class WorldCupService:
         self,
         *,
         excluded_topics: list[str],
+        excluded_titles: list[str] | None = None,
         response_path: Path,
         now: datetime | None = None,
     ) -> WorldCupEvent:
@@ -81,37 +83,80 @@ class WorldCupService:
 
         write_json(response_path, {"fetched_at": current.isoformat(), "responses": raw_responses})
         excluded = {topic.lower() for topic in excluded_topics}
-        candidates = [event for event in events if event.topic.lower() not in excluded]
-        if not candidates:
-            raise PipelineStageError(
-                stage="world_cup_data",
-                message="No unused 2026 World Cup matches were available in the configured date window.",
-                probable_cause="Increase WORLD_CUP_PAST_DAYS/WORLD_CUP_FUTURE_DAYS or clear recent topic history.",
-                details_path=response_path,
+        ranked_events = self._rank_events(events)
+        candidates = [event for event in ranked_events if event.topic.lower() not in excluded]
+        if candidates:
+            return self._select_event_with_fresh_title(
+                candidates,
+                excluded_titles=excluded_titles or [],
             )
 
+        reused_candidates = self._rank_reused_events(ranked_events, excluded_topics)
+        if reused_candidates:
+            return self._select_event_with_fresh_title(
+                reused_candidates,
+                excluded_titles=excluded_titles or [],
+            )
+
+        if not ranked_events:
+            raise PipelineStageError(
+                stage="world_cup_data",
+                message="No 2026 World Cup matches were available in the configured date window.",
+                probable_cause="Increase WORLD_CUP_PAST_DAYS/WORLD_CUP_FUTURE_DAYS.",
+                details_path=response_path,
+            )
+        return ranked_events[0]
+
+    def _rank_events(self, events: list[WorldCupEvent]) -> list[WorldCupEvent]:
         completed = sorted(
-            (event for event in candidates if event.completed),
+            (event for event in events if event.completed),
             key=lambda event: event.kickoff,
             reverse=True,
         )
         live = sorted(
-            (event for event in candidates if event.state == "in"),
+            (event for event in events if event.state == "in"),
             key=lambda event: event.kickoff,
             reverse=True,
         )
         upcoming = sorted(
-            (event for event in candidates if event.state == "pre"),
+            (event for event in events if event.state == "pre"),
             key=lambda event: event.kickoff,
         )
-        selected = [*completed, *live, *upcoming]
-        if not selected:
+        ranked = [*completed, *live, *upcoming]
+        if not ranked and events:
             raise PipelineStageError(
                 stage="world_cup_data",
                 message="The World Cup source returned no usable completed, live, or upcoming matches.",
-                details_path=response_path,
             )
-        return selected[0]
+        return ranked
+
+    def _rank_reused_events(
+        self,
+        ranked_events: list[WorldCupEvent],
+        excluded_topics: list[str],
+    ) -> list[WorldCupEvent]:
+        topic_age: dict[str, int] = {}
+        for index, topic in enumerate(excluded_topics):
+            topic_age.setdefault(topic.lower(), index)
+        return sorted(
+            ranked_events,
+            key=lambda event: topic_age.get(event.topic.lower(), -1),
+            reverse=True,
+        )
+
+    def _select_event_with_fresh_title(
+        self,
+        candidates: list[WorldCupEvent],
+        *,
+        excluded_titles: list[str],
+    ) -> WorldCupEvent:
+        if not excluded_titles:
+            return candidates[0]
+        for event in candidates:
+            content = self.build_short(event, excluded_titles=excluded_titles)
+            if not is_near_duplicate(content.title, excluded_titles, self.settings.similarity_threshold):
+                return event
+        return candidates[0]
 
     def topic_choice(self, event: WorldCupEvent) -> TopicChoice:
         return TopicChoice(
@@ -126,14 +171,14 @@ class WorldCupService:
             search_terms=[event.topic, event.home.name, event.away.name, "2026 World Cup"],
         )
 
-    def build_short(self, event: WorldCupEvent) -> GeneratedShort:
+    def build_short(self, event: WorldCupEvent, *, excluded_titles: list[str] | None = None) -> GeneratedShort:
         if event.completed:
-            return self._build_completed_short(event)
+            return self._build_completed_short(event, excluded_titles=excluded_titles or [])
         if event.state == "in":
             return self._build_live_short(event)
-        return self._build_upcoming_short(event)
+        return self._build_upcoming_short(event, excluded_titles=excluded_titles or [])
 
-    def _build_completed_short(self, event: WorldCupEvent) -> GeneratedShort:
+    def _build_completed_short(self, event: WorldCupEvent, *, excluded_titles: list[str]) -> GeneratedShort:
         match_date = self._display_date(event.kickoff)
         total_goals = event.home.score + event.away.score
         margin = abs(event.home.score - event.away.score)
@@ -141,27 +186,30 @@ class WorldCupService:
             score = f"{event.home.score}-{event.away.score}"
             result_text = f"{event.home.name} and {event.away.name} drew {score}"
             result_fact = f"On {match_date}, {result_text} in {event.stage}."
-            angle = "goal_draw" if total_goals >= 4 else self._completed_fallback_angle(event)
+            preferred_angle = "goal_draw" if total_goals >= 4 else self._completed_fallback_angle(event)
         else:
             winner = event.home if event.home.score > event.away.score else event.away
             loser = event.away if winner is event.home else event.home
             winner_score = f"{winner.score}-{loser.score}"
             result_text = f"{winner.name} beat {loser.name} {winner_score}"
             result_fact = f"On {match_date}, {result_text} in {event.stage}."
-            angle = self._winning_angle(event, winner=winner, margin=margin)
+            preferred_angle = self._winning_angle(event, winner=winner, margin=margin)
 
         stat_fact = self._stat_fact(event)
         location_fact = self._location_fact(event)
         facts = [result_fact, stat_fact, location_fact]
-        title, narration = self._completed_story(
-            event,
-            angle=angle,
-            result_text=result_text,
-            total_goals=total_goals,
-            margin=margin,
-            facts=facts,
-        )
-        return self._package(event, title=title, narration=narration, facts=facts, status_label="result")
+        packages = []
+        for angle in self._completed_angle_options(event, preferred_angle=preferred_angle, margin=margin, total_goals=total_goals):
+            title, narration = self._completed_story(
+                event,
+                angle=angle,
+                result_text=result_text,
+                total_goals=total_goals,
+                margin=margin,
+                facts=facts,
+            )
+            packages.append(self._package(event, title=title, narration=narration, facts=facts, status_label="result"))
+        return self._first_fresh_package(packages, excluded_titles)
 
     def _build_live_short(self, event: WorldCupEvent) -> GeneratedShort:
         score = f"{event.home.score}-{event.away.score}"
@@ -193,43 +241,64 @@ class WorldCupService:
             status_label="live update",
         )
 
-    def _build_upcoming_short(self, event: WorldCupEvent) -> GeneratedShort:
+    def _build_upcoming_short(self, event: WorldCupEvent, *, excluded_titles: list[str]) -> GeneratedShort:
         kickoff = f"{self._display_date(event.kickoff, include_year=False)} at {event.kickoff:%H:%M} UTC"
         facts = [
             f"{event.home.name} will face {event.away.name} on {kickoff}.",
             f"The match is listed as {event.stage}.",
             self._location_fact(event),
         ]
-        variant = self._variation_index(event, 3)
-        titles = [
-            f"{event.topic}: THE NEXT WORLD CUP MATCH TO WATCH",
-            f"DO NOT MISS {event.topic}",
-            f"{event.topic} HAS A DATE WITH THE WORLD CUP",
+        stories = [
+            (
+                f"{event.topic}: THE NEXT WORLD CUP MATCH TO WATCH",
+                (
+                    f"Circle this one: {event.topic} is one of the next confirmed World Cup games. "
+                    f"{facts[0]} {facts[1]} {facts[2]} "
+                    "No fake prediction is needed here; the setting alone makes this a match worth watching."
+                ),
+            ),
+            (
+                f"DO NOT MISS {event.topic}",
+                (
+                    f"Do not miss {event.topic}, because the World Cup schedule has locked it in. "
+                    f"{facts[0]} {facts[2]} {facts[1]} "
+                    "Those are the verified details before kickoff, with no invented lineup news or score prediction."
+                ),
+            ),
+            (
+                f"{event.topic} HAS A DATE WITH THE WORLD CUP",
+                (
+                    f"{event.topic} now has an official World Cup date and location. "
+                    f"{facts[1]} {facts[0]} {facts[2]} "
+                    "That is everything confirmed before kickoff, and it is enough to put this game on the watchlist."
+                ),
+            ),
+            (
+                f"{event.home.name} vs {event.away.name}: SEMIFINAL DETAILS",
+                (
+                    f"{event.topic} is not a rumor; it is on the World Cup board. "
+                    f"{facts[1]} {facts[0]} {facts[2]} "
+                    "Before the first whistle, those confirmed details are the story. "
+                    "The reason this matters is simple: once the semifinal stage arrives, every confirmed detail sets up the pressure."
+                ),
+            ),
+            (
+                f"WHERE {event.topic} WILL HAPPEN",
+                (
+                    f"The location matters for {event.topic}. "
+                    f"{facts[2]} {facts[0]} {facts[1]} "
+                    "This is a verified schedule snapshot, not a prediction. "
+                    "That makes the match easy to track now, before any lineup rumor or score guess starts taking over."
+                ),
+            ),
         ]
-        narrations = [
-            (
-                f"Circle this one: {event.topic} is one of the next confirmed World Cup games. "
-                f"{facts[0]} {facts[1]} {facts[2]} "
-                "No fake prediction is needed here; the setting alone makes this a match worth watching."
-            ),
-            (
-                f"Do not miss {event.topic}, because the World Cup schedule has locked it in. "
-                f"{facts[0]} {facts[2]} {facts[1]} "
-                "Those are the verified details before kickoff, with no invented lineup news or score prediction."
-            ),
-            (
-                f"{event.topic} now has an official World Cup date and location. "
-                f"{facts[1]} {facts[0]} {facts[2]} "
-                "That is everything confirmed before kickoff, and it is enough to put this game on the watchlist."
-            ),
+        start = self._variation_index(event, len(stories))
+        ordered_stories = [*stories[start:], *stories[:start]]
+        packages = [
+            self._package(event, title=title, narration=narration, facts=facts, status_label="match preview")
+            for title, narration in ordered_stories
         ]
-        return self._package(
-            event,
-            title=titles[variant],
-            narration=narrations[variant],
-            facts=facts,
-            status_label="match preview",
-        )
+        return self._first_fresh_package(packages, excluded_titles)
 
     def _winning_angle(self, event: WorldCupEvent, *, winner: WorldCupTeam, margin: int) -> str:
         if margin >= 4:
@@ -245,6 +314,24 @@ class WorldCupService:
         if event.attendance and event.attendance >= 65000:
             return "crowd"
         return ["numbers", "stadium", "result"][self._variation_index(event, 3)]
+
+    def _completed_angle_options(
+        self,
+        event: WorldCupEvent,
+        *,
+        preferred_angle: str,
+        margin: int,
+        total_goals: int,
+    ) -> list[str]:
+        options = [preferred_angle]
+        if margin >= 4:
+            options.append("blowout")
+        if total_goals >= 4 and event.home.score == event.away.score:
+            options.append("goal_draw")
+        if event.attendance:
+            options.append("crowd")
+        options.extend(["numbers", "stadium", "result"])
+        return list(dict.fromkeys(options))
 
     def _completed_story(
         self,
@@ -349,6 +436,21 @@ class WorldCupService:
     def _variation_index(self, event: WorldCupEvent, size: int) -> int:
         digest = hashlib.sha256(f"{event.event_id}|{event.topic}".encode("utf-8")).digest()
         return int.from_bytes(digest[:4], byteorder="big") % size
+
+    def _first_fresh_package(
+        self,
+        packages: list[GeneratedShort],
+        excluded_titles: list[str],
+    ) -> GeneratedShort:
+        if not packages:
+            raise PipelineStageError(
+                stage="world_cup_data",
+                message="The World Cup event could not be converted into usable Short content.",
+            )
+        for package in packages:
+            if not is_near_duplicate(package.title, excluded_titles, self.settings.similarity_threshold):
+                return package
+        return packages[0]
 
     def _possession_value(self, value: str | None) -> float | None:
         try:

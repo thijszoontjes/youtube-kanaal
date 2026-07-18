@@ -9,10 +9,9 @@ Local, terminal-first YouTube automation for English Shorts and daily long-form 
 The normal daily command generates and schedules 4 Shorts first, then 1 English long-form video. Shorts use `SCHEDULED_RUN_TIMES` (`10:00,13:00,15:00,19:00` by default), and the long-form video publishes at `17:00` in `SCHEDULED_TIMEZONE`.
 
 ## alleen video upload voor vandaag
-ollama pull llama3.2:3b
-
+v
 #short met datum upload
-.\.venv\Scripts\python -m youtube_kanaal make-short-schedule --date 2026-05-16 --times "13:00,14:00,15:00,19:00"
+.\.venv\Scripts\python -m youtube_kanaal make-short-schedule --date 2026-06-06 --times "13:00,14:00,15:00,19:00"
 
 $env:LONG_PUBLISH_TIME="13:30"
 .\.venv\Scripts\python -m youtube_kanaal generate-and-schedule --for today --upload
@@ -607,7 +606,7 @@ powershell -ExecutionPolicy Bypass -File scripts\install_windows_startup_youtube
 
 This creates a logon task named `youtube-kanaal-startup-upload` that opens PowerShell and runs `python -m youtube_kanaal make-short-schedule --times "10:00,13:00,15:00,19:00"` through `scripts\run_startup_youtube.ps1`.
 That command generates and uploads 4 Shorts scheduled for tomorrow at 10:00, 13:00, 15:00, and 19:00 local time.
-The startup script checks out `videos-verbeteringen` and runs `git pull --ff-only origin videos-verbeteringen` before generating/uploading, so startup uses the latest pushed automation branch by default.
+The startup script checks out `algemene-videos-verbeteringen` and runs `git pull --ff-only origin algemene-videos-verbeteringen` before generating/uploading, so startup uses the latest pushed automation branch by default.
 
 Override the times if needed:
 

@@ -85,14 +85,77 @@ class KokoroService:
             )
         return output_path
 
-    def _generate_audio(self, text: str) -> object:
+    def synthesize_beats(
+        self,
+        *,
+        beats: list[dict[str, object]],
+        output_path: Path,
+        logger: logging.Logger | None = None,
+    ) -> Path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        combined_text = " ".join(str(beat.get("narration", "")).strip() for beat in beats).strip()
+        if self.settings.mock_mode:
+            self._write_mock_wave(output_path, estimate_runtime_from_text(combined_text))
+            self._validate_output(output_path)
+            return output_path
+
+        import numpy as np
+
+        speed_factors = {
+            "hook": 1.07,
+            "setup": 0.98,
+            "evidence": 1.0,
+            "escalation": 1.045,
+            "payoff": 0.965,
+            "loop": 1.02,
+        }
+        pause_seconds = {
+            "hook": 0.055,
+            "setup": 0.075,
+            "evidence": 0.065,
+            "escalation": 0.09,
+            "payoff": 0.15,
+            "loop": 0.045,
+        }
+        chunks: list[object] = []
+        for index, beat in enumerate(beats):
+            narration = str(beat.get("narration", "")).strip()
+            if not narration:
+                continue
+            beat_type = str(beat.get("beat_type", "evidence"))
+            speed = self.settings.kokoro_speed * speed_factors.get(beat_type, 1.0)
+            chunks.extend(self._generate_audio(narration, speed=speed))
+            if index < len(beats) - 1:
+                next_type = str(beats[index + 1].get("beat_type", "evidence"))
+                pause = pause_seconds.get(next_type, 0.07)
+                chunks.append(np.zeros(int(KOKORO_SAMPLE_RATE * pause), dtype=np.float32))
+        if not chunks:
+            raise PipelineStageError(
+                stage="narration_generation",
+                message="Kokoro received an empty story beat plan.",
+            )
+        self._write_audio_wave(output_path, chunks)
+        self._validate_output(output_path)
+        if logger:
+            logger.info(
+                "kokoro_beat_synthesis: finish",
+                extra={
+                    "stage": "narration_generation",
+                    "engine": "kokoro",
+                    "beat_count": len(beats),
+                    "output_path": str(output_path),
+                },
+            )
+        return output_path
+
+    def _generate_audio(self, text: str, *, speed: float | None = None) -> object:
         pipeline = self._get_pipeline()
         chunks = []
         with self._suppress_dependency_warnings():
             generator = pipeline(
                 text,
                 voice=self.settings.kokoro_voice,
-                speed=self.settings.kokoro_speed,
+                speed=speed if speed is not None else self.settings.kokoro_speed,
             )
             for _, _, audio in generator:
                 chunks.append(audio)

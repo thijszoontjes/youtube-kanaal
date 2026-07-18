@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -263,9 +263,6 @@ TOPIC_CATALOG: dict[str, list[str]] = {
         "skiing",
         "rowing",
     ],
-    "world cup 2026": [
-        "2026 FIFA World Cup",
-    ],
     "vehicles": [
         "supercars",
         "motorcycles",
@@ -399,6 +396,22 @@ class TopicChoice(BaseModel):
         return self
 
 
+class ShortBeat(BaseModel):
+    beat_type: Literal["hook", "setup", "evidence", "escalation", "payoff", "loop"]
+    narration: str = Field(min_length=3, max_length=220)
+    on_screen_text: str = Field(default="", max_length=42)
+    visual_query: str = Field(min_length=3, max_length=120)
+    energy: Literal["low", "medium", "high"] = "medium"
+    transition: Literal["cut", "punch", "hold"] = "cut"
+    sfx: Literal["none", "impact", "whoosh", "tick", "riser", "silence"] = "none"
+    duration_weight: float = Field(default=1.0, ge=0.45, le=2.5)
+
+    @field_validator("narration", "on_screen_text", "visual_query")
+    @classmethod
+    def _clean_beat_text(cls, value: str) -> str:
+        return _WHITESPACE_RE.sub(" ", value.strip())
+
+
 class GeneratedShort(BaseModel):
     bucket: str
     topic: str
@@ -409,6 +422,8 @@ class GeneratedShort(BaseModel):
     narration: str = Field(min_length=80, max_length=700)
     facts: list[str] = Field(min_length=3, max_length=3)
     subtitle_text: str = Field(min_length=20, max_length=700)
+    beats: list[ShortBeat] = Field(default_factory=list, max_length=7)
+    beat_plan_source: Literal["generated", "derived"] = "generated"
 
     banned_phrases: ClassVar[tuple[str, ...]] = _BANNED_PHRASES
 
@@ -477,6 +492,12 @@ class GeneratedShort(BaseModel):
 
     @model_validator(mode="after")
     def _validate_duration(self) -> "GeneratedShort":
+        if not self.beats:
+            self.beats = self._derive_beats()
+            self.beat_plan_source = "derived"
+        else:
+            self.narration = " ".join(beat.narration for beat in self.beats).strip()
+            self.subtitle_text = self.narration
         word_count = len(self.narration.split())
         if not SHORT_MIN_WORDS <= word_count <= SHORT_MAX_WORDS:
             raise ValueError("Narration should be roughly 20-35 seconds of speech.")
@@ -484,6 +505,77 @@ class GeneratedShort(BaseModel):
             raise ValueError("Title is too long for a Short.")
         self.hashtags = self._expand_hashtags(self.hashtags)
         return self
+
+    def _derive_beats(self) -> list[ShortBeat]:
+        sentences = [
+            sentence.strip()
+            for sentence in re.split(r"(?<=[.!?])\s+", self.narration)
+            if sentence.strip()
+        ]
+        if not sentences:
+            sentences = [self.narration]
+        beat_types = ["hook", "setup", "evidence", "escalation", "payoff"]
+        beats: list[ShortBeat] = []
+        for index, sentence in enumerate(sentences[:7]):
+            if index == 0:
+                beat_type = "hook"
+            elif index == len(sentences[:7]) - 1:
+                beat_type = "payoff"
+            else:
+                beat_type = beat_types[min(index, len(beat_types) - 2)]
+            meaningful_words = [
+                word.strip(".,:;!?()[]\"")
+                for word in sentence.split()
+                if len(word.strip(".,:;!?()[]\"")) >= 4
+            ]
+            overlay_words = meaningful_words[:4] or sentence.split()[:4]
+            visual_detail = " ".join(meaningful_words[:3])
+            beats.append(
+                ShortBeat(
+                    beat_type=beat_type,
+                    narration=sentence,
+                    on_screen_text=" ".join(overlay_words).upper()[:42],
+                    visual_query=" ".join(part for part in [self.topic, visual_detail, "close up"] if part),
+                    energy="high" if beat_type in {"hook", "payoff"} else "medium",
+                    transition="punch" if beat_type == "hook" else "cut",
+                    sfx="impact" if beat_type == "hook" else ("silence" if beat_type == "payoff" else "none"),
+                    duration_weight=min(max(len(sentence.split()) / 12, 0.55), 2.5),
+                )
+            )
+        return beats
+
+    def beat_sound_cues(self, duration_seconds: float) -> list[dict[str, object]]:
+        if not self.beats:
+            return []
+        weighted_words = [max(len(beat.narration.split()) * beat.duration_weight, 1.0) for beat in self.beats]
+        total_weight = sum(weighted_words)
+        cursor = 0.0
+        cues: list[dict[str, object]] = []
+        for beat, weight in zip(self.beats, weighted_words):
+            cues.append({"offset_seconds": round(cursor, 2), "sfx": beat.sfx, "beat_type": beat.beat_type})
+            cursor += duration_seconds * (weight / total_weight)
+        return cues
+
+    def beat_overlays(self, duration_seconds: float) -> list[dict[str, object]]:
+        if not self.beats:
+            return []
+        weights = [max(len(beat.narration.split()) * beat.duration_weight, 1.0) for beat in self.beats]
+        total_weight = sum(weights)
+        cursor = 0.0
+        overlays: list[dict[str, object]] = []
+        for beat, weight in zip(self.beats, weights):
+            beat_duration = duration_seconds * (weight / total_weight)
+            if beat.on_screen_text and beat.beat_type in {"hook", "escalation", "payoff"}:
+                overlays.append(
+                    {
+                        "start_seconds": round(cursor, 2),
+                        "end_seconds": round(min(cursor + min(beat_duration, 1.55), duration_seconds), 2),
+                        "text": beat.on_screen_text,
+                        "beat_type": beat.beat_type,
+                    }
+                )
+            cursor += beat_duration
+        return overlays
 
     def estimated_duration_seconds(self) -> float:
         return round(len(self.narration.split()) / 2.6, 2)

@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from youtube_kanaal.config import load_settings
-from youtube_kanaal.models.content import GeneratedShort, TopicChoice
+from youtube_kanaal.models.content import GeneratedShort, ShortBeat, TopicChoice
 from youtube_kanaal.services.ollama_service import OllamaService
 
 
@@ -29,6 +29,36 @@ def test_topic_choice_accepts_new_gaming_catalog_topic() -> None:
     assert topic.bucket == "gaming"
     assert topic.topic == "Fortnite"
     assert topic.search_terms[0] == "Fortnite"
+
+
+def test_generated_short_uses_story_beats_as_narration_source() -> None:
+    beats = [
+        ShortBeat(beat_type="hook", narration="Octopuses can vanish without leaving the place where they are hiding.", on_screen_text="NOW YOU SEE IT", visual_query="octopus camouflage underwater", energy="high", transition="punch", sfx="impact"),
+        ShortBeat(beat_type="setup", narration="Their skin contains tiny organs that can change color in a fraction of a second.", on_screen_text="COLOR INSTANTLY", visual_query="octopus skin color change macro"),
+        ShortBeat(beat_type="evidence", narration="Other skin structures bend light and can make the surface look smoother or rougher.", on_screen_text="CHANGES TEXTURE", visual_query="octopus skin texture close up", sfx="tick"),
+        ShortBeat(beat_type="escalation", narration="That means the disguise copies both the colors and the physical texture of nearby rocks.", on_screen_text="COPIES THE ROCK", visual_query="octopus mimics rock underwater", energy="high", transition="punch", sfx="riser"),
+        ShortBeat(beat_type="payoff", narration="The octopus never became invisible; it made your brain decide that nothing was there.", on_screen_text="YOUR BRAIN MISSED IT", visual_query="camouflaged octopus reveal underwater", energy="high", sfx="silence"),
+    ]
+    content = GeneratedShort(
+        bucket="animals",
+        topic="octopuses",
+        title="Octopuses Can Hack What Your Eyes See",
+        description="A visual explanation of how octopus camouflage changes color, texture, and what the viewer perceives.",
+        hashtags=["#Octopus", "#Wildlife", "#Ocean"],
+        narration="This deliberately long placeholder narration is replaced by the complete beat narration during model validation and should never survive.",
+        facts=[
+            "Octopus skin contains organs that rapidly change color.",
+            "Octopuses can change the apparent texture of their skin.",
+            "Their camouflage can match both the color and texture of nearby rocks.",
+        ],
+        subtitle_text="This deliberately long placeholder narration is replaced by the complete beat narration during model validation and should never survive.",
+        beats=beats,
+    )
+
+    assert content.narration == " ".join(beat.narration for beat in beats)
+    assert content.subtitle_text == content.narration
+    assert [cue["sfx"] for cue in content.beat_sound_cues(24.0)] == ["impact", "none", "tick", "riser", "silence"]
+    assert [overlay["beat_type"] for overlay in content.beat_overlays(24.0)] == ["hook", "escalation", "payoff"]
 
 
 def test_generated_short_requires_three_distinct_facts() -> None:

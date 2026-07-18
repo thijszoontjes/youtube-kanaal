@@ -261,7 +261,11 @@ def _preflight_pipeline_requirements(request: ShortRunRequest, settings: Setting
         return
 
     report = DoctorService(settings).run()
-    required_names = _pipeline_required_check_names(settings, upload=request.upload)
+    required_names = _pipeline_required_check_names(
+        settings,
+        upload=request.upload,
+        require_ollama=request.content_path is None,
+    )
     blocking = [
         check
         for check in report.checks
@@ -308,18 +312,23 @@ def _preflight_long_pipeline_requirements(request: LongRunRequest, settings: Set
     raise typer.Exit(code=1)
 
 
-def _pipeline_required_check_names(settings: Settings, *, upload: bool) -> set[str]:
+def _pipeline_required_check_names(
+    settings: Settings,
+    *,
+    upload: bool,
+    require_ollama: bool = True,
+) -> set[str]:
     required_names = {
         "Python version",
         "FFmpeg",
-        "Ollama reachable",
-        "Ollama model",
         "Narration engine",
         "whisper.cpp",
         "whisper model path",
         "Pexels API key",
         "Downloads folder",
     }
+    if require_ollama:
+        required_names.update({"Ollama reachable", "Ollama model"})
     required_names.update(_narration_required_check_names(settings))
     if upload:
         required_names.add("YouTube OAuth client JSON")
@@ -407,6 +416,11 @@ def make_short(
     privacy_status: Optional[str] = typer.Option(None, help="YouTube privacy status."),
     no_downloads: bool = typer.Option(False, help="Skip copying the final MP4 to Downloads."),
     mock_mode: bool = typer.Option(False, help="Use deterministic mock services."),
+    content_file: Optional[Path] = typer.Option(
+        None,
+        "--content-file",
+        help="Use a reviewed Short JSON file instead of generating the script with Ollama.",
+    ),
 ) -> None:
     """Generate one short."""
 
@@ -419,6 +433,7 @@ def make_short(
             privacy_status=privacy_status,
             save_to_downloads=_resolve_download_copy_behavior(upload=upload, no_downloads=no_downloads),
             mock_mode=mock_mode,
+            content_path=content_file,
         )
     )
 

@@ -1,7 +1,7 @@
 param(
     [string]$RepoRoot = "",
     [string]$PythonExe = "",
-    [string]$BranchName = "wk-2026-shorts",
+    [string]$BranchName = "algemene-videos-verbeteringen",
     [string]$ShortTimes = "10:00,13:00,15:00,19:00",
     [string]$ScheduleDate = "",
     [switch]$SkipPull,

@@ -20,7 +20,9 @@ def build_topic_selection_prompt(excluded_topics: list[str]) -> str:
         Constraints:
         - Choose from the catalog only.
         - Avoid recent topics: {excluded_line}
-        - Pick something visually rich and broad enough for stock footage.
+        - Pick a topic with one clear surprise, contradiction, mystery, comparison, or visible transformation.
+        - The topic must be recognizable in the first second and have literal visual proof available as stock footage.
+        - Reject topics that would require generic unrelated b-roll to explain.
         - visual_queries are fallback topic searches only; final stock footage queries are generated later from the finished facts.
         - Return strict JSON only.
 
@@ -39,7 +41,7 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
     excluded = ", ".join(excluded_titles[-20:]) if excluded_titles else "None"
     return dedent(
         f"""
-        Write a YouTube Shorts package for a spoken "3 facts about X" video that sounds human, natural, and unscripted.
+        Write a YouTube Shorts package that feels like one fast, satisfying mini-story told by a curious human.
 
         Topic:
         - Bucket: {topic.bucket}
@@ -47,7 +49,7 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
 
         Constraints:
         - English only
-        - Exactly 3 concise, accurate-sounding facts
+        - Exactly 3 concise, concrete facts that act as evidence inside one story; never present them as a list
         - Strong curiosity title, no emoji
         - The title must match {topic.topic}; do not use another catalog topic or unrelated bait
         - Make the title feel clickable and a little clickbait, but do not make false claims
@@ -60,15 +62,20 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
           "This Lives 3,000 Meters Down"
           "SATURN IS HIDING SOMETHING WEIRD"
           "Do NOT Ignore This About Axolotls"
-        - The narration should feel like natural spoken English, not a rigid script
-        - Open with one specific tension, contradiction, or surprising claim about {topic.topic}
-        - The first sentence must mention {topic.topic} by name
+        - Build one promise through 5-7 beats: hook, setup, evidence, escalation, payoff, and optionally a loop
+        - The hook must work in the first second: name or unmistakably identify {topic.topic}, open a precise information gap, and promise a payoff
+        - Make each later beat change how the viewer understands the previous beat
+        - The payoff must directly answer or reframe the hook; never end with a recap, disclaimer, or production comment
+        - The narration should feel like natural spoken English, with contractions, purposeful rhythm, and varied sentence length
+        - Spoken narration must use normal sentence capitalization; never write narration in ALL CAPS
+        - Do not fake stutters, mistakes, self-corrections, or filler words to imitate a human
+        - Put a short pause before the strongest reveal by ending the previous beat cleanly
         - Do not open with "Did you know", "Imagine a world", "Have you ever wondered", or the exact title
         - Work the three facts into the narration naturally instead of mechanically listing "Fact 1, Fact 2, Fact 3"
         - Never use "Here are", "First", "Second", "Third", "Fact 1", "Fact 2", or "Fact 3" in the narration
         - Vary sentence length and rhythm
         - Slightly informal phrasing is good, but keep it clean and easy to follow
-        - End with impact, not a summary
+        - End with impact or a clean loop, not a summary
         - Avoid stock endings or recap lines
         - Do not end with phrases like "That is why..." or "People remember..." or "it looks unusual on screen"
         - No bullet points, stage directions, or narrator-style labels inside the narration
@@ -76,13 +83,19 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
         - Description must be 1-2 specific sentences about this exact Short; never leave it blank
         - The facts array must contain exactly 3 complete, concrete facts, not generic video-production statements
         - The facts must support the title and narration
+        - Every fact must be explicitly stated or clearly paraphrased in the narration
         - No uncertainty phrases
         - No politics, religion, celebrity gossip, explicit content, dangerous advice, or medical claims
         - Avoid title similarity to these recent titles: {excluded}
         - Every JSON field must be filled; never use "" or [] for required fields
         - The facts array must contain exactly 3 complete sentences copied or summarized from the narration
         - Subtitle text must exactly match the spoken narration
-        - Do not write any separate on-screen title card or visual hook text
+        - Every beat needs a literal, Pexels-friendly visual_query describing what must be visible, not a vague mood
+        - Every beat needs short on_screen_text of 2-5 words and at most 32 characters; use it only for the key claim, number, contrast, or payoff
+        - visual_query must prioritize the exact subject and action before style words
+        - energy controls delivery and editing; transition and sfx must support meaning rather than decorate every cut
+        - narration must exactly equal all beat narration fields joined with single spaces
+        - subtitle_text must exactly match narration
         - Generate at least 10 relevant hashtags
         - Hashtags should start with #
         - Return strict JSON only
@@ -97,7 +110,59 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
           "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5", "#tag6", "#tag7", "#tag8", "#tag9", "#tag10"],
           "narration": "<full narration>",
           "facts": ["<fact 1>", "<fact 2>", "<fact 3>"],
-          "subtitle_text": "<subtitle version of narration>"
+          "subtitle_text": "<exact narration>",
+          "beats": [
+            {{
+              "beat_type": "hook",
+              "narration": "<spoken hook phrase>",
+              "on_screen_text": "<2-5 word visual promise>",
+              "visual_query": "<literal subject and action>",
+              "energy": "high",
+              "transition": "punch",
+              "sfx": "impact",
+              "duration_weight": 0.7
+            }},
+            {{
+              "beat_type": "setup",
+              "narration": "<spoken context phrase>",
+              "on_screen_text": "<2-5 context words>",
+              "visual_query": "<literal subject and action>",
+              "energy": "medium",
+              "transition": "cut",
+              "sfx": "none",
+              "duration_weight": 1.0
+            }},
+            {{
+              "beat_type": "evidence",
+              "narration": "<spoken proof phrase>",
+              "on_screen_text": "<2-5 proof words>",
+              "visual_query": "<literal proof subject and action>",
+              "energy": "medium",
+              "transition": "cut",
+              "sfx": "tick",
+              "duration_weight": 1.0
+            }},
+            {{
+              "beat_type": "escalation",
+              "narration": "<spoken escalation phrase>",
+              "on_screen_text": "<2-5 escalation words>",
+              "visual_query": "<literal escalation subject and action>",
+              "energy": "high",
+              "transition": "punch",
+              "sfx": "riser",
+              "duration_weight": 1.0
+            }},
+            {{
+              "beat_type": "payoff",
+              "narration": "<spoken answer to the hook>",
+              "on_screen_text": "<2-5 payoff words>",
+              "visual_query": "<literal payoff subject and action>",
+              "energy": "high",
+              "transition": "hold",
+              "sfx": "silence",
+              "duration_weight": 1.0
+            }}
+          ]
         }}
         """
     ).strip()

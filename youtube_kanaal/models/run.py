@@ -22,6 +22,17 @@ class ShortRunRequest(BaseModel):
     scheduled_publish_at: datetime | None = None
     save_to_downloads: bool = True
     mock_mode: bool = False
+    content_path: Path | None = None
+
+    @field_validator("content_path")
+    @classmethod
+    def _resolve_content_path(cls, value: Path | None) -> Path | None:
+        if value is None:
+            return None
+        resolved = value.expanduser().resolve()
+        if not resolved.is_file():
+            raise ValueError(f"Content file not found: {resolved}")
+        return resolved
 
     @field_validator("privacy_status")
     @classmethod
