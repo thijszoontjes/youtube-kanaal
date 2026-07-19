@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import logging
+import random
 import warnings
 import wave
 from pathlib import Path
@@ -118,12 +119,13 @@ class KokoroService:
             "loop": 0.045,
         }
         chunks: list[object] = []
+        run_speed_variation = random.uniform(0.985, 1.015)
         for index, beat in enumerate(beats):
             narration = str(beat.get("narration", "")).strip()
             if not narration:
                 continue
             beat_type = str(beat.get("beat_type", "evidence"))
-            speed = self.settings.kokoro_speed * speed_factors.get(beat_type, 1.0)
+            speed = self.settings.kokoro_speed * run_speed_variation * speed_factors.get(beat_type, 1.0)
             chunks.extend(self._generate_audio(narration, speed=speed))
             if index < len(beats) - 1:
                 next_type = str(beats[index + 1].get("beat_type", "evidence"))
@@ -143,6 +145,7 @@ class KokoroService:
                     "stage": "narration_generation",
                     "engine": "kokoro",
                     "beat_count": len(beats),
+                    "speed_variation": round(run_speed_variation, 4),
                     "output_path": str(output_path),
                 },
             )

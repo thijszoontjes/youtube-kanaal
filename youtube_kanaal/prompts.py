@@ -5,6 +5,14 @@ from textwrap import dedent
 from youtube_kanaal.models.content import TOPIC_CATALOG, TopicChoice
 
 
+_SHORT_STORY_STYLES = (
+    "myth-buster: open with a common belief, then overturn it with visible proof",
+    "impossible contrast: open with two facts that seem unable to both be true",
+    "mini mystery: show the strange result first, then reveal the cause",
+    "record chase: open with the strongest number, then explain what makes it possible",
+)
+
+
 def build_topic_selection_prompt(excluded_topics: list[str]) -> str:
     catalog_lines = []
     for bucket, topics in TOPIC_CATALOG.items():
@@ -39,6 +47,8 @@ def build_topic_selection_prompt(excluded_topics: list[str]) -> str:
 
 def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[str]) -> str:
     excluded = ", ".join(excluded_titles[-20:]) if excluded_titles else "None"
+    variation_seed = sum(ord(char) for char in f"{topic.topic}|{excluded}".lower())
+    story_style = _SHORT_STORY_STYLES[variation_seed % len(_SHORT_STORY_STYLES)]
     return dedent(
         f"""
         Write a YouTube Shorts package that feels like one fast, satisfying mini-story told by a curious human.
@@ -46,6 +56,7 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
         Topic:
         - Bucket: {topic.bucket}
         - Topic: {topic.topic}
+        - Story shape for this Short: {story_style}
 
         Constraints:
         - English only
@@ -63,9 +74,13 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
           "SATURN IS HIDING SOMETHING WEIRD"
           "Do NOT Ignore This About Axolotls"
         - Build one promise through 5-7 beats: hook, setup, evidence, escalation, payoff, and optionally a loop
-        - The hook must work in the first second: name or unmistakably identify {topic.topic}, open a precise information gap, and promise a payoff
-        - Make each later beat change how the viewer understands the previous beat
-        - The payoff must directly answer or reframe the hook; never end with a recap, disclaimer, or production comment
+        - The spoken hook must be 5-12 words and work in the first second: name or unmistakably identify {topic.topic}, state a concrete surprise or contradiction, and open a precise information gap
+        - Do not spend the hook establishing atmosphere; put the subject and surprising claim first
+        - Give the viewer a concrete new reward in at least three later beats: a number, visible mechanism, reversal, comparison, or answer
+        - Make each later beat add new information and change how the viewer understands the previous beat; no connective-only or filler beats
+        - Reveal useful proof early, then save the strongest reframe for the payoff instead of withholding every answer until the end
+        - The final payoff or loop must be 6-12 spoken words, directly answer or reframe the hook, and end immediately after the strongest idea
+        - Never end with a recap, moral, generic importance statement, disclaimer, or production comment
         - The narration should feel like natural spoken English, with contractions, purposeful rhythm, and varied sentence length
         - Spoken narration must use normal sentence capitalization; never write narration in ALL CAPS
         - Do not fake stutters, mistakes, self-corrections, or filler words to imitate a human
@@ -75,7 +90,7 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
         - Never use "Here are", "First", "Second", "Third", "Fact 1", "Fact 2", or "Fact 3" in the narration
         - Vary sentence length and rhythm
         - Slightly informal phrasing is good, but keep it clean and easy to follow
-        - End with impact or a clean loop, not a summary
+        - End with impact or a clean loop, not a summary; do not explain the reveal again afterward
         - Avoid stock endings or recap lines
         - Do not end with phrases like "That is why..." or "People remember..." or "it looks unusual on screen"
         - No bullet points, stage directions, or narrator-style labels inside the narration
@@ -90,9 +105,11 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
         - Every JSON field must be filled; never use "" or [] for required fields
         - The facts array must contain exactly 3 complete sentences copied or summarized from the narration
         - Subtitle text must exactly match the spoken narration
-        - Every beat needs a literal, Pexels-friendly visual_query describing what must be visible, not a vague mood
-        - Every beat needs short on_screen_text of 2-5 words and at most 32 characters; use it only for the key claim, number, contrast, or payoff
-        - visual_query must prioritize the exact subject and action before style words
+        - Every beat needs a literal, Pexels-friendly visual_query describing the exact subject, action, scale, or comparison that proves that spoken line
+        - Never request a scientist, laboratory, crowd, or generic landscape as a proxy for a fact unless that person or place is literally discussed
+        - Every beat needs concrete on_screen_text of 2-4 words and at most 24 characters; use a number, mechanism, contrast, or answer that adds information
+        - Never use vague overlays such as "Scientific Findings", "Hidden Truth", "Learn More", "Understanding X", or "The Secret Life"
+        - visual_query must prioritize the exact subject and visible action before style words
         - energy controls delivery and editing; transition and sfx must support meaning rather than decorate every cut
         - narration must exactly equal all beat narration fields joined with single spaces
         - subtitle_text must exactly match narration

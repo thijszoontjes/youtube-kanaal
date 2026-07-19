@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import warnings
 
+import numpy as np
+
 from youtube_kanaal.config import Settings
 from youtube_kanaal.services.kokoro_service import KOKORO_REPO_ID, KokoroService
 
@@ -56,3 +58,24 @@ def test_kokoro_dependency_warnings_are_suppressed() -> None:
             )
 
     assert caught == []
+
+
+def test_kokoro_uses_one_small_speed_variation_per_short(tmp_path, monkeypatch) -> None:
+    service = KokoroService(Settings(kokoro_speed=1.0))
+    captured_speeds: list[float] = []
+    monkeypatch.setattr("youtube_kanaal.services.kokoro_service.random.uniform", lambda _low, _high: 1.01)
+    monkeypatch.setattr(
+        service,
+        "_generate_audio",
+        lambda _text, speed=None: captured_speeds.append(float(speed)) or [np.zeros(32, dtype=np.float32)],
+    )
+
+    service.synthesize_beats(
+        beats=[
+            {"beat_type": "hook", "narration": "A short concrete hook."},
+            {"beat_type": "payoff", "narration": "Then the answer lands."},
+        ],
+        output_path=tmp_path / "narration.wav",
+    )
+
+    assert captured_speeds == [1.0807, 0.97465]

@@ -27,8 +27,12 @@ def test_content_prompt_contains_recent_titles() -> None:
     assert "Use full ALL CAPS for some titles" in prompt
     assert "Do NOT Ignore This About Axolotls" in prompt
     assert '"hook_text"' not in prompt
-    assert "Every beat needs short on_screen_text" in prompt
+    assert "Every beat needs concrete on_screen_text" in prompt
     assert '"beat_type": "hook"' in prompt
+    assert "spoken hook must be 5-12 words" in prompt
+    assert "at most 24 characters" in prompt
+    assert "end immediately after the strongest idea" in prompt
+    assert "Story shape for this Short" in prompt
     assert 'Never use "Here are", "First", "Second", "Third"' in prompt
     assert "open a precise information gap" in prompt
     assert "name or unmistakably identify axolotls" in prompt

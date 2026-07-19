@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 from youtube_kanaal.config import load_settings
@@ -29,6 +30,11 @@ def test_make_short_pipeline_creates_expected_artifacts(configured_env) -> None:
     assert result.downloads_copy_path is not None
     assert result.downloads_copy_path.exists()
     assert result.metadata_path.exists()
+    assert list((configured_env["cache_dir"] / "pexels").glob("*.mp4"))
+
+    metadata = json.loads(result.metadata_path.read_text(encoding="utf-8"))
+    planned_segments = metadata["stages"]["asset_planning"]["segments"]
+    assert max(segment["duration_seconds"] for segment in planned_segments) <= 2.8
 
     validation = validate_artifact_directory(result.run_id, settings.output_dir / result.run_id)
     assert validation.valid, validation.errors

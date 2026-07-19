@@ -146,9 +146,9 @@ def build_ass_from_srt_text(
             f"{alignment},{margin_l},{margin_r},{margin_v},1"
         ),
         (
-            f"Style: Overlay,{font_name},{max(int(font_size * 1.35), 78)},{primary_color},{highlight_color},"
-            f"{outline_color},{back_color},-1,0,0,0,100,100,1.5,0,1,{max(outline, 5)},0,"
-            "8,72,72,210,1"
+            f"Style: Overlay,{font_name},{min(max(int(font_size * 1.12), 74), 92)},{highlight_color},{primary_color},"
+            f"{outline_color},{back_color},-1,0,0,0,100,100,1.2,0,1,{max(outline, 6)},2,"
+            "8,96,96,210,1"
         ),
         "",
         "[Events]",
@@ -166,17 +166,20 @@ def build_ass_from_srt_text(
             )
         )
     for overlay in beat_overlays or []:
-        text = _escape_ass_text(str(overlay.get("text", "")).strip().upper())
-        if not text:
+        raw_text = str(overlay.get("text", "")).strip().upper()
+        if not raw_text:
             continue
         start_seconds = float(overlay.get("start_seconds", 0.0) or 0.0)
         end_seconds = float(overlay.get("end_seconds", start_seconds + 1.0) or (start_seconds + 1.0))
         beat_type = str(overlay.get("beat_type", "evidence"))
         y_position = 280 if beat_type == "hook" else 340
+        text, font_size_override = _format_overlay_text(raw_text)
+        accent_color = _overlay_accent_color(beat_type)
         lines.append(
             (
                 f"Dialogue: 1,{_format_ass_timestamp(start_seconds)},{_format_ass_timestamp(end_seconds)},"
-                f"Overlay,,0,0,0,,{{\\an8\\pos(540,{y_position})\\fad(55,90)\\t(0,140,\\fscx106\\fscy106)}}{text}"
+                f"Overlay,,0,0,0,,{{\\an8\\pos(540,{y_position})\\fs{font_size_override}\\1c{accent_color}"
+                f"\\bord7\\shad2\\fad(55,90)\\t(0,140,\\fscx105\\fscy105)}}{text}"
             )
         )
     return "\n".join(lines).strip() + "\n"
@@ -705,6 +708,53 @@ def _render_ass_highlighted_text(
 
 def _escape_ass_text(text: str) -> str:
     return text.replace("\\", r"\\").replace("{", "(").replace("}", ")")
+
+
+def _format_overlay_text(text: str) -> tuple[str, int]:
+    words = text.split()
+    if not words:
+        return "", 78
+
+    wrapped_lines = _wrap_overlay_words(words)
+    longest_line = max(len(line) for line in wrapped_lines)
+    total_chars = sum(len(line) for line in wrapped_lines)
+    if longest_line > 18 or total_chars > 30:
+        font_size = 72
+    elif len(wrapped_lines) > 1 or longest_line > 14 or total_chars > 24:
+        font_size = 78
+    else:
+        font_size = 86
+    return r"\N".join(_escape_ass_text(line) for line in wrapped_lines), font_size
+
+
+def _wrap_overlay_words(words: list[str], *, max_chars_per_line: int = 14, max_lines: int = 2) -> list[str]:
+    if len(" ".join(words)) <= max_chars_per_line:
+        return [" ".join(words)]
+
+    lines: list[str] = []
+    current: list[str] = []
+    for word in words:
+        candidate = current + [word]
+        if current and len(" ".join(candidate)) > max_chars_per_line and len(lines) < max_lines - 1:
+            lines.append(" ".join(current))
+            current = [word]
+            continue
+        current = candidate
+
+    if current:
+        lines.append(" ".join(current))
+    if len(lines) <= max_lines:
+        return lines
+
+    return [lines[0], " ".join(lines[1:])]
+
+
+def _overlay_accent_color(beat_type: str) -> str:
+    return {
+        "hook": "&H0000E8FF",
+        "escalation": "&H00286BFF",
+        "payoff": "&H006BFF7C",
+    }.get(beat_type, "&H00FFFFFF")
 
 
 def _format_ass_timestamp(seconds: float) -> str:

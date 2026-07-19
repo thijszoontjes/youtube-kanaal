@@ -104,6 +104,19 @@ _WEAK_SHORT_OPENERS: tuple[str, ...] = (
     "have you ever wondered",
     "what if i told you",
 )
+_GENERIC_OVERLAY_FRAGMENTS: tuple[str, ...] = (
+    "scientific findings",
+    "hidden truth",
+    "learn more",
+    "understanding",
+    "the secret life",
+)
+_GENERIC_PAYOFF_FRAGMENTS: tuple[str, ...] = (
+    "allows them to thrive",
+    "makes it remarkable",
+    "truly fascinating",
+    "in their environment",
+)
 _GENERIC_REPAIR_FRAGMENTS: tuple[str, ...] = (
     "visual youtube short",
     "made locally",
@@ -420,10 +433,10 @@ class OllamaService:
                 beat_type = raw_type if raw_type in allowed_types else default_types[min(index, len(default_types) - 1)]
                 if index == 0:
                     beat_type = "hook"
-                overlay_words = str(raw_beat.get("on_screen_text", "")).strip().split()[:5]
+                overlay_words = str(raw_beat.get("on_screen_text", "")).strip().split()[:4]
                 overlay = " ".join(overlay_words)
-                if len(overlay) > 42:
-                    overlay = overlay[:42].rsplit(" ", 1)[0].strip()
+                if len(overlay) > 24:
+                    overlay = overlay[:24].rsplit(" ", 1)[0].strip()
                 visual_query = " ".join(str(raw_beat.get("visual_query", "")).split()).strip()
                 cleaned_beats.append(
                     {
@@ -1012,6 +1025,22 @@ class OllamaService:
             problems.append("narration contains internal production or verification language")
         if content.beats and not content.beats[0].on_screen_text:
             problems.append("hook is missing visual promise text")
+        if content.beats and not 5 <= len(content.beats[0].narration.split()) <= 12:
+            problems.append("spoken hook must contain 5-12 words")
+        if any(len(beat.on_screen_text) > 24 for beat in content.beats):
+            problems.append("on-screen text exceeds 24 characters")
+        if any(
+            fragment in beat.on_screen_text.lower()
+            for beat in content.beats
+            for fragment in _GENERIC_OVERLAY_FRAGMENTS
+        ):
+            problems.append("on-screen text contains a vague generic label")
+        if content.beats:
+            payoff = content.beats[-1].narration
+            if not 6 <= len(payoff.split()) <= 12:
+                problems.append("final payoff must contain 6-12 words")
+            if any(fragment in payoff.lower() for fragment in _GENERIC_PAYOFF_FRAGMENTS):
+                problems.append("final payoff is a generic recap instead of a sharp ending")
         if self._uppercase_letter_ratio(content.narration) > 0.55:
             problems.append("narration uses too much all-caps text for natural speech")
         if not self._facts_supported_by_narration(content):

@@ -150,6 +150,7 @@ def test_cli_make_short_upload_skips_downloads_copy(cli_runner, configured_env) 
     assert cleanup["cleaned"] is True
     assert cleanup["deleted_bytes"] > 0
     assert not (latest_run_dir / "video").exists()
+    assert not list((configured_env["cache_dir"] / "pexels").glob("*.mp4"))
 
 
 def test_cli_make_short_schedule_creates_four_scheduled_uploads(cli_runner, configured_env) -> None:

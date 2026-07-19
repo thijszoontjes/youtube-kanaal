@@ -105,7 +105,7 @@ class LongPipeline(ShortPipeline):
                 upload_metadata=upload_metadata,
                 started_at=started_at,
             )
-            cleanup = self.cleanup_uploaded_media(runtime, upload_metadata=upload_metadata)
+            cleanup = self.cleanup_uploaded_media(runtime, upload_metadata=upload_metadata, clips=clips)
             result.media_cleaned = cleanup["cleaned"]
             result.cleanup_deleted_bytes = int(cleanup["deleted_bytes"])
             result.cleanup_summary_path = Path(cleanup["summary_path"]) if cleanup.get("summary_path") else None

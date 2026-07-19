@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import shutil
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -215,7 +216,7 @@ class ShortPipeline:
                 upload_metadata=upload_metadata,
                 started_at=started_at,
             )
-            cleanup = self.cleanup_uploaded_media(runtime, upload_metadata=upload_metadata)
+            cleanup = self.cleanup_uploaded_media(runtime, upload_metadata=upload_metadata, clips=clips)
             result.media_cleaned = cleanup["cleaned"]
             result.cleanup_deleted_bytes = int(cleanup["deleted_bytes"])
             result.cleanup_summary_path = Path(cleanup["summary_path"]) if cleanup.get("summary_path") else None
@@ -245,7 +246,13 @@ class ShortPipeline:
             )
             raise
 
-    def cleanup_uploaded_media(self, runtime: PipelineRuntime, *, upload_metadata: UploadMetadata) -> dict[str, object]:
+    def cleanup_uploaded_media(
+        self,
+        runtime: PipelineRuntime,
+        *,
+        upload_metadata: UploadMetadata,
+        clips: list[VideoClipAsset] | None = None,
+    ) -> dict[str, object]:
         if not upload_metadata.uploaded:
             return {"cleaned": False, "deleted_bytes": 0, "summary_path": None, "deleted_paths": []}
         if self.settings.keep_uploaded_media:
@@ -259,6 +266,8 @@ class ShortPipeline:
             runtime.artifacts.prompts_dir,
             runtime.artifacts.responses_dir,
         ]
+        pexels_cache_dir = self.settings.cache_dir / "pexels"
+        pexels_clip_paths = list(dict.fromkeys(clip.local_path for clip in (clips or [])))
         try:
             deleted_paths: list[str] = []
             deleted_bytes = 0
@@ -272,6 +281,14 @@ class ShortPipeline:
                 else:
                     path.unlink()
                 deleted_paths.append(str(path))
+
+            for clip_path in pexels_clip_paths:
+                if not clip_path.exists():
+                    continue
+                _ensure_child_path(clip_path, pexels_cache_dir)
+                deleted_bytes += _path_size_bytes(clip_path)
+                clip_path.unlink()
+                deleted_paths.append(str(clip_path))
 
             summary = {
                 "cleaned": True,
@@ -619,26 +636,30 @@ class ShortPipeline:
                 clip = clips[index % len(clips)]
                 beat = beats[index] if beats else None
                 duration = max(0.65, durations[index] if index < len(durations) else narration.duration_seconds)
-                available_offset = max(clip.duration_seconds - duration - 0.2, 0.0)
-                if available_offset:
-                    offset_ratio = 0.18 if index == 0 else 0.24 + (0.13 * (index % 3))
-                    start_offset = min(max(available_offset * offset_ratio, 0.35), available_offset)
-                else:
-                    start_offset = 0.0
-                segments.append(
-                    AssetPlanSegment(
-                        clip_path=clip.local_path,
-                        duration_seconds=min(duration, max(clip.duration_seconds - start_offset, 0.65)),
-                        start_offset_seconds=round(start_offset, 2),
-                        beat_type=beat.beat_type if beat else "evidence",
-                        energy=beat.energy if beat else "medium",
-                        transition=beat.transition if beat else "cut",
-                        on_screen_text=beat.on_screen_text if beat else "",
-                        reason=(
-                            f"{beat.beat_type if beat else 'evidence'} beat; selected for query: {clip.query}"
-                        ),
+                part_count = max(1, math.ceil(duration / 2.8))
+                part_duration = duration / part_count
+                for part_index in range(part_count):
+                    available_offset = max(clip.duration_seconds - part_duration - 0.2, 0.0)
+                    if available_offset:
+                        offset_ratio = 0.12 + (0.76 * ((part_index + index) % max(part_count, 2)) / max(part_count, 2))
+                        start_offset = min(max(available_offset * offset_ratio, 0.25), available_offset)
+                    else:
+                        start_offset = 0.0
+                    segments.append(
+                        AssetPlanSegment(
+                            clip_path=clip.local_path,
+                            duration_seconds=min(part_duration, max(clip.duration_seconds - start_offset, 0.65)),
+                            start_offset_seconds=round(start_offset, 2),
+                            beat_type=beat.beat_type if beat else "evidence",
+                            energy=beat.energy if beat else "medium",
+                            transition=(beat.transition if beat and part_index == 0 else "cut"),
+                            on_screen_text=beat.on_screen_text if beat and part_index == 0 else "",
+                            reason=(
+                                f"{beat.beat_type if beat else 'evidence'} beat part {part_index + 1}/{part_count}; "
+                                f"selected for query: {clip.query}"
+                            ),
+                        )
                     )
-                )
             plan = AssetPlan(
                 segments=segments,
                 total_duration_seconds=narration.duration_seconds,
