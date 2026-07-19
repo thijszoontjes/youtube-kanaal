@@ -437,7 +437,7 @@ class OllamaService:
                 overlay = " ".join(overlay_words)
                 if len(overlay) > 24:
                     overlay = overlay[:24].rsplit(" ", 1)[0].strip()
-                visual_query = " ".join(str(raw_beat.get("visual_query", "")).split()).strip()
+                visual_query = self._coerce_visual_query(raw_beat.get("visual_query"))
                 cleaned_beats.append(
                     {
                         "beat_type": beat_type,
@@ -476,6 +476,15 @@ class OllamaService:
         )
         repaired["subtitle_text"] = narration
         return repaired
+
+    def _coerce_visual_query(self, value: object) -> str:
+        if isinstance(value, dict):
+            parts = [str(item).strip() for item in value.values() if str(item).strip()]
+            return " ".join(" ".join(parts).split())[:120].strip()
+        if isinstance(value, list):
+            parts = [str(item).strip() for item in value if str(item).strip()]
+            return " ".join(" ".join(parts).split())[:120].strip()
+        return " ".join(str(value or "").split())[:120].strip()
 
     def _dedupe_preserving_order(self, values: list[str]) -> list[str]:
         deduped: list[str] = []
