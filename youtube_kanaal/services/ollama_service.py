@@ -554,6 +554,14 @@ class OllamaService:
             facts=facts,
         )
         base_payload = content.model_dump(mode="json")
+        normalized_beats = []
+        for beat in content.beats:
+            beat_payload = beat.model_dump(mode="json")
+            overlay = " ".join(beat.on_screen_text.split()[:4])
+            if len(overlay) > 24:
+                overlay = overlay[:24].rsplit(" ", 1)[0].strip()
+            beat_payload["on_screen_text"] = overlay
+            normalized_beats.append(beat_payload)
         base_payload.update(
             {
                 "bucket": topic.bucket,
@@ -561,6 +569,7 @@ class OllamaService:
                 "title": title,
                 "title_hook": title_hook,
                 "facts": facts,
+                "beats": normalized_beats,
             }
         )
 
