@@ -581,8 +581,10 @@ class PexelsService:
         viable_candidates = [
             clip
             for clip in candidates
-            if clip.score >= 4.0 and self._matches_required_subject(clip, required_subjects)
+            if clip.score >= 3.0 and self._matches_required_subject(clip, required_subjects)
         ]
+        if not viable_candidates:
+            viable_candidates = [clip for clip in candidates if clip.score >= 4.0]
         for clip in self._prioritized_candidates(viable_candidates, queries):
             if clip.source_id in used_ids:
                 continue
