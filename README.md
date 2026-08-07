@@ -140,7 +140,7 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\scripts\install_windows_startup_youtube.ps1 -RepoRoot (Get-Location).Path
 ```
 
-The task requires the YouTube OAuth token and the configured `.env` to already exist on the Windows machine. It uses `shorts-retention-editing` by default; override `-BranchName` only when intentionally testing another branch.
+Run that command once from PowerShell started with **Run as administrator** so Windows can create or replace the logon task. The task requires the YouTube OAuth token and the configured `.env` to already exist on the Windows machine. It uses `shorts-retention-editing` by default; override `-BranchName` only when intentionally testing another branch.
 
 `test-pipeline` is a smoke test. For a playable preview MP4 it still needs FFmpeg installed.
 
@@ -614,6 +614,8 @@ Install a visible Windows startup terminal run:
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\install_windows_startup_youtube.ps1 -Upload
 ```
+
+If Task Scheduler reports access denied, rerun PowerShell as Administrator and execute the same command again.
 
 This creates a logon task named `youtube-kanaal-startup-upload` that opens PowerShell and runs `python -m youtube_kanaal make-short-schedule --times "10:00,13:00,15:00,19:00"` through `scripts\run_startup_youtube.ps1`.
 That command generates and uploads 4 Shorts scheduled for tomorrow at 10:00, 13:00, 15:00, and 19:00 local time.
