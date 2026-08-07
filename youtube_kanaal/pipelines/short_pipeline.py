@@ -21,6 +21,7 @@ from youtube_kanaal.models import (
     NarrationAsset,
     ShortRunRequest,
     ShortRunResult,
+    ShortBeat,
     SoundDesignAsset,
     SubtitleAsset,
     TopicChoice,
@@ -632,13 +633,17 @@ class ShortPipeline:
             if durations:
                 durations[-1] += narration.duration_seconds - sum(durations)
             segments: list[AssetPlanSegment] = []
+            beat_clip_pools = self._assign_clips_to_beats(clips, beats)
             for index in range(planned_count):
-                clip = clips[index % len(clips)]
                 beat = beats[index] if beats else None
                 duration = max(0.65, durations[index] if index < len(durations) else narration.duration_seconds)
-                part_count = max(1, math.ceil(duration / 2.8))
+                energy = beat.energy if beat else "medium"
+                max_part_duration = {"low": 2.4, "medium": 2.0, "high": 1.6}.get(energy, 2.0)
+                part_count = max(1, math.ceil(duration / max_part_duration))
                 part_duration = duration / part_count
+                beat_clips = beat_clip_pools[index] if index < len(beat_clip_pools) else clips
                 for part_index in range(part_count):
+                    clip = beat_clips[part_index % len(beat_clips)]
                     available_offset = max(clip.duration_seconds - part_duration - 0.2, 0.0)
                     if available_offset:
                         offset_ratio = 0.12 + (0.76 * ((part_index + index) % max(part_count, 2)) / max(part_count, 2))
@@ -650,9 +655,14 @@ class ShortPipeline:
                             clip_path=clip.local_path,
                             duration_seconds=min(part_duration, max(clip.duration_seconds - start_offset, 0.65)),
                             start_offset_seconds=round(start_offset, 2),
+                            beat_index=index,
                             beat_type=beat.beat_type if beat else "evidence",
-                            energy=beat.energy if beat else "medium",
+                            energy=energy,
                             transition=(beat.transition if beat and part_index == 0 else "cut"),
+                            visual_variant=self._visual_variant_for_segment(
+                                beat_type=beat.beat_type if beat else "evidence",
+                                part_index=part_index,
+                            ),
                             on_screen_text=beat.on_screen_text if beat and part_index == 0 else "",
                             reason=(
                                 f"{beat.beat_type if beat else 'evidence'} beat part {part_index + 1}/{part_count}; "
@@ -666,6 +676,57 @@ class ShortPipeline:
             )
             runtime.stage_summaries["asset_planning"] = plan.model_dump(mode="json")
             return plan
+
+    def _assign_clips_to_beats(
+        self,
+        clips: list[VideoClipAsset],
+        beats: list[ShortBeat],
+    ) -> list[list[VideoClipAsset]]:
+        """Keep each beat on-topic while allowing a second visual for micro-cuts."""
+
+        if not clips:
+            raise PipelineStageError(
+                stage="asset_planning",
+                message="No stock clips are available for the Short.",
+                probable_cause="The stock-video stage returned an empty selection.",
+            )
+        if not beats:
+            return [clips]
+
+        available = list(clips)
+        pools: list[list[VideoClipAsset]] = []
+        for beat in beats:
+            ranked = sorted(
+                available or clips,
+                key=lambda clip: self._clip_match_score(beat.visual_query, clip),
+                reverse=True,
+            )
+            primary = ranked[0]
+            pool = [primary]
+            if len(ranked) > 1:
+                secondary = ranked[1]
+                primary_score = self._clip_match_score(beat.visual_query, primary)
+                secondary_score = self._clip_match_score(beat.visual_query, secondary)
+                if secondary_score >= primary_score - 2.5:
+                    pool.append(secondary)
+            pools.append(pool)
+            for clip in pool:
+                if clip in available:
+                    available.remove(clip)
+        return pools
+
+    def _clip_match_score(self, visual_query: str, clip: VideoClipAsset) -> float:
+        query_tokens = set(normalize_for_similarity(visual_query).split())
+        clip_tokens = set(normalize_for_similarity(f"{clip.query} {clip.source_url}").split())
+        overlap = len(query_tokens & clip_tokens)
+        return (overlap * 4.0) + clip.score
+
+    def _visual_variant_for_segment(self, *, beat_type: str, part_index: int) -> str:
+        if part_index == 0 and beat_type in {"hook", "escalation"}:
+            return "punch"
+        if beat_type == "payoff":
+            return "reveal"
+        return ("primary", "cutaway", "proof")[part_index % 3]
 
     def render_video(
         self,

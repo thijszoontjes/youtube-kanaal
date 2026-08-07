@@ -2,7 +2,7 @@ param(
     [string]$RepoRoot = "",
     [string]$PythonExe = "",
     [string]$TaskName = "youtube-kanaal-startup-upload",
-    [string]$BranchName = "algemene-videos-verbeteringen",
+    [string]$BranchName = "shorts-retention-editing",
     [string]$ShortTimes = "10:00,13:00,15:00,19:00",
     [string]$ScheduleDate = "",
     [switch]$SkipPull,
@@ -36,6 +36,7 @@ if (-not (Test-Path $startupScript)) {
 
 $scriptArgs = @(
     "-NoExit",
+    "-NoProfile",
     "-ExecutionPolicy", "Bypass",
     "-File", "`"$startupScript`"",
     "-RepoRoot", "`"$RepoRoot`"",

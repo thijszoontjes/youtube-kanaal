@@ -168,7 +168,7 @@ Octopuses disappear here
 
     assert "Style: Overlay" in ass_text
     assert "NOW YOU SEE IT" in ass_text
-    assert "\\pos(540,280)" in ass_text
+    assert "\\pos(540,260)" in ass_text
     assert "\\1c&H0000E8FF" in ass_text
 
 

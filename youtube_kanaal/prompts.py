@@ -106,11 +106,13 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
         - The facts array must contain exactly 3 complete sentences copied or summarized from the narration
         - Subtitle text must exactly match the spoken narration
         - Every beat needs a literal, Pexels-friendly visual_query describing the exact subject, action, scale, or comparison that proves that spoken line
+        - Write visual_query so the beat can support a primary proof shot and a distinct cutaway or detail shot; prefer visible action over static scenery
         - Never request a scientist, laboratory, crowd, or generic landscape as a proxy for a fact unless that person or place is literally discussed
         - Every beat needs concrete on_screen_text of 2-4 words and at most 24 characters; use a number, mechanism, contrast, or answer that adds information
         - Never use vague overlays such as "Scientific Findings", "Hidden Truth", "Learn More", "Understanding X", or "The Secret Life"
         - visual_query must prioritize the exact subject and visible action before style words
         - energy controls delivery and editing; transition and sfx must support meaning rather than decorate every cut
+        - High-energy beats should be visually changeable: include a clear motion, reveal, comparison, number, texture, or close-up that can survive a fast cut
         - narration must exactly equal all beat narration fields joined with single spaces
         - subtitle_text must exactly match narration
         - Generate at least 10 relevant hashtags
