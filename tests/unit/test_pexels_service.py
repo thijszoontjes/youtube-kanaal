@@ -171,6 +171,30 @@ def test_pexels_service_prioritizes_one_clip_per_query_first(configured_env) -> 
     assert [clip.source_id for clip in prioritized[:2]] == ["a1", "b1"]
 
 
+def test_pexels_service_falls_back_when_result_metadata_omits_subject(monkeypatch, configured_env) -> None:
+    service = PexelsService(load_settings())
+    clip = VideoClipAsset(
+        source_id="pompeii-context",
+        query="Pompeii buried under ash",
+        source_url="https://www.pexels.com/video/ancient-roman-ruins-under-ash-123/",
+        download_url="https://example.com/pompeii-context.mp4",
+        local_path=Path("pompeii-context.mp4"),
+        duration_seconds=8,
+        width=1080,
+        height=1920,
+        score=8.0,
+    )
+    monkeypatch.setattr(service, "_prepare_clip_for_use", lambda _: True)
+
+    selected = service._select_and_download(
+        [clip],
+        target_duration_seconds=8,
+        queries=["Pompeii buried under ash", "Pompeii ancient ruins"],
+    )
+
+    assert [asset.source_id for asset in selected] == ["pompeii-context"]
+
+
 def test_pexels_service_falls_back_after_transient_search_error(monkeypatch, configured_env) -> None:
     service = PexelsService(load_settings(mock_mode=False))
     response_path = configured_env["output_dir"] / "pexels_search.json"
