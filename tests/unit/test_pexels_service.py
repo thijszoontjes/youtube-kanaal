@@ -179,6 +179,38 @@ def test_pexels_service_falls_back_when_result_metadata_omits_subject(monkeypatc
         source_url="https://www.pexels.com/video/ancient-roman-ruins-under-ash-123/",
         download_url="https://example.com/pompeii-context.mp4",
         local_path=Path("pompeii-context.mp4"),
+def test_pexels_service_selects_subject_match_below_preferred_score(monkeypatch, configured_env) -> None:
+    service = PexelsService(load_settings())
+    clip = VideoClipAsset(
+        source_id="comet",
+        query="comet moving through space",
+        source_url="https://www.pexels.com/video/beautiful-comets-in-the-sky-5169262/",
+        download_url="https://example.com/comet.mp4",
+        local_path=Path("comet.mp4"),
+        duration_seconds=8,
+        width=1920,
+        height=1080,
+        score=3.56,
+    )
+    monkeypatch.setattr(service, "_prepare_clip_for_use", lambda _: True)
+
+    selected = service._select_and_download(
+        [clip],
+        target_duration_seconds=8,
+        queries=["comet moving through space", "comets in space"],
+    )
+
+    assert [asset.source_id for asset in selected] == ["comet"]
+
+
+def test_pexels_service_falls_back_when_result_metadata_omits_subject(monkeypatch, configured_env) -> None:
+    service = PexelsService(load_settings())
+    clip = VideoClipAsset(
+        source_id="solar-system",
+        query="comet moving through space",
+        source_url="https://www.pexels.com/video/solar-system-animation-14618955/",
+        download_url="https://example.com/solar-system.mp4",
+        local_path=Path("solar-system.mp4"),
         duration_seconds=8,
         width=1080,
         height=1920,
@@ -193,6 +225,10 @@ def test_pexels_service_falls_back_when_result_metadata_omits_subject(monkeypatc
     )
 
     assert [asset.source_id for asset in selected] == ["pompeii-context"]
+        queries=["comet moving through space", "comets in space"],
+    )
+
+    assert [asset.source_id for asset in selected] == ["solar-system"]
 
 
 def test_pexels_service_falls_back_after_transient_search_error(monkeypatch, configured_env) -> None:
