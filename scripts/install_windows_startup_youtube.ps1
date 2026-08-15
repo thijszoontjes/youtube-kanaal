@@ -2,7 +2,7 @@ param(
     [string]$RepoRoot = "",
     [string]$PythonExe = "",
     [string]$TaskName = "youtube-kanaal-startup-upload",
-    [string]$BranchName = "algemene-videos-verbeteringen",
+    [string]$BranchName = "shorts-retention-editing",
     [string]$ShortTimes = "10:00,13:00,15:00,19:00",
     [string]$ScheduleDate = "",
     [switch]$SkipPull,
@@ -34,15 +34,26 @@ if (-not (Test-Path $startupScript)) {
     throw "Missing startup script: $startupScript"
 }
 
+$defaultRepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$defaultPythonExe = Join-Path $defaultRepoRoot ".venv\Scripts\python.exe"
 $scriptArgs = @(
     "-NoExit",
+    "-NoProfile",
     "-ExecutionPolicy", "Bypass",
-    "-File", "`"$startupScript`"",
-    "-RepoRoot", "`"$RepoRoot`"",
-    "-PythonExe", "`"$PythonExe`"",
-    "-BranchName", "`"$BranchName`"",
-    "-ShortTimes", "`"$ShortTimes`""
+    "-File", "`"$startupScript`""
 )
+if ($RepoRoot -ne $defaultRepoRoot) {
+    $scriptArgs += @("-RepoRoot", "`"$RepoRoot`"")
+}
+if ($PythonExe -ne "python" -and $PythonExe -ne $defaultPythonExe) {
+    $scriptArgs += @("-PythonExe", "`"$PythonExe`"")
+}
+if ($BranchName -ne "shorts-retention-editing") {
+    $scriptArgs += @("-BranchName", "`"$BranchName`"")
+}
+if ($ShortTimes -ne "10:00,13:00,15:00,19:00") {
+    $scriptArgs += @("-ShortTimes", "`"$ShortTimes`"")
+}
 if ($ScheduleDate) {
     $scriptArgs += "-ScheduleDate"
     $scriptArgs += "`"$ScheduleDate`""
@@ -65,9 +76,15 @@ if ($PrivacyStatus) {
 }
 
 $action = "powershell.exe $($scriptArgs -join ' ')"
+if ($action.Length -gt 261) {
+    throw "The Windows Task Scheduler command is $($action.Length) characters; shorten RepoRoot or optional arguments below the 261-character limit."
+}
 $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 
 schtasks /Create /F /SC ONLOGON /TN $TaskName /TR $action /RU $currentUser /IT | Out-Host
+if ($LASTEXITCODE -ne 0) {
+    throw "Windows Task Scheduler could not create task $TaskName."
+}
 
 Write-Host "Installed startup task: $TaskName"
 Write-Host "It opens a visible PowerShell terminal at logon and runs:"

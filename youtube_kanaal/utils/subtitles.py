@@ -172,14 +172,21 @@ def build_ass_from_srt_text(
         start_seconds = float(overlay.get("start_seconds", 0.0) or 0.0)
         end_seconds = float(overlay.get("end_seconds", start_seconds + 1.0) or (start_seconds + 1.0))
         beat_type = str(overlay.get("beat_type", "evidence"))
-        y_position = 280 if beat_type == "hook" else 340
+        y_position = {
+            "hook": 260,
+            "setup": 330,
+            "evidence": 300,
+            "escalation": 360,
+            "payoff": 275,
+            "loop": 320,
+        }.get(beat_type, 320)
         text, font_size_override = _format_overlay_text(raw_text)
         accent_color = _overlay_accent_color(beat_type)
         lines.append(
             (
                 f"Dialogue: 1,{_format_ass_timestamp(start_seconds)},{_format_ass_timestamp(end_seconds)},"
                 f"Overlay,,0,0,0,,{{\\an8\\pos(540,{y_position})\\fs{font_size_override}\\1c{accent_color}"
-                f"\\bord7\\shad2\\fad(55,90)\\t(0,140,\\fscx105\\fscy105)}}{text}"
+                f"\\bord7\\shad2\\fad(45,75)\\t(0,120,\\fscx110\\fscy110)}}{text}"
             )
         )
     return "\n".join(lines).strip() + "\n"
@@ -198,7 +205,9 @@ def estimate_runtime_from_text(text: str, words_per_second: float = 2.6) -> floa
 
 
 def ideal_clip_count(total_duration_seconds: float) -> int:
-    return max(5, ceil(total_duration_seconds / 4.5))
+    """Return enough stock clips for a varied Short edit without forcing noise."""
+
+    return max(7, ceil(total_duration_seconds / 3.0))
 
 
 def parse_srt_text(srt_text: str) -> list[SubtitleCue]:

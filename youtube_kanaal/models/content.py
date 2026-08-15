@@ -565,11 +565,11 @@ class GeneratedShort(BaseModel):
         overlays: list[dict[str, object]] = []
         for beat, weight in zip(self.beats, weights):
             beat_duration = duration_seconds * (weight / total_weight)
-            if beat.on_screen_text and beat.beat_type in {"hook", "escalation", "payoff"}:
+            if beat.on_screen_text:
                 overlays.append(
                     {
                         "start_seconds": round(cursor, 2),
-                        "end_seconds": round(min(cursor + min(beat_duration, 1.55), duration_seconds), 2),
+                        "end_seconds": round(min(cursor + min(beat_duration, 1.25), duration_seconds), 2),
                         "text": beat.on_screen_text,
                         "beat_type": beat.beat_type,
                     }

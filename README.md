@@ -8,6 +8,8 @@ Local, terminal-first YouTube automation for English Shorts and daily long-form 
 
 The normal daily command generates and schedules 4 Shorts first, then 1 English long-form video. Shorts use `SCHEDULED_RUN_TIMES` (`10:00,13:00,15:00,19:00` by default), and the long-form video publishes at `17:00` in `SCHEDULED_TIMEZONE`.
 
+The Windows logon task uses the `shorts-retention-editing` branch by default. At logon it fetches that branch, switches the local checkout to it, pulls fast-forward-only updates, starts Ollama if needed, and runs `make-short-schedule`, which generates and schedules the four Shorts for the next day.
+
 ## alleen video upload voor vandaag
 v
 #short met datum upload
@@ -130,6 +132,15 @@ Install the future Windows auto-upload schedule for `13:00`, `15:00`, and `19:00
 ```bash
 .venv/bin/python -m youtube_kanaal install-windows-schedule
 ```
+
+Install the Windows logon task that synchronizes the retention-editing branch and schedules four Shorts after each login:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\scripts\install_windows_startup_youtube.ps1 -RepoRoot (Get-Location).Path
+```
+
+Run that command once from PowerShell started with **Run as administrator** so Windows can create or replace the logon task. The task requires the YouTube OAuth token and the configured `.env` to already exist on the Windows machine. It uses `shorts-retention-editing` by default; override `-BranchName` only when intentionally testing another branch.
 
 `test-pipeline` is a smoke test. For a playable preview MP4 it still needs FFmpeg installed.
 
@@ -604,9 +615,11 @@ Install a visible Windows startup terminal run:
 powershell -ExecutionPolicy Bypass -File scripts\install_windows_startup_youtube.ps1 -Upload
 ```
 
+If Task Scheduler reports access denied, rerun PowerShell as Administrator and execute the same command again.
+
 This creates a logon task named `youtube-kanaal-startup-upload` that opens PowerShell and runs `python -m youtube_kanaal make-short-schedule --times "10:00,13:00,15:00,19:00"` through `scripts\run_startup_youtube.ps1`.
 That command generates and uploads 4 Shorts scheduled for tomorrow at 10:00, 13:00, 15:00, and 19:00 local time.
-The startup script checks out `algemene-videos-verbeteringen` and runs `git pull --ff-only origin algemene-videos-verbeteringen` before generating/uploading, so startup uses the latest pushed automation branch by default.
+The startup script checks out `shorts-retention-editing` and runs `git pull --ff-only origin shorts-retention-editing` before generating/uploading, so startup uses the latest pushed retention-editing branch by default.
 
 Override the times if needed:
 

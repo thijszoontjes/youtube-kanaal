@@ -35,6 +35,9 @@ def test_make_short_pipeline_creates_expected_artifacts(configured_env) -> None:
     metadata = json.loads(result.metadata_path.read_text(encoding="utf-8"))
     planned_segments = metadata["stages"]["asset_planning"]["segments"]
     assert max(segment["duration_seconds"] for segment in planned_segments) <= 2.8
+    assert len(planned_segments) >= 8
+    assert {segment["visual_variant"] for segment in planned_segments} >= {"primary", "punch", "proof"}
+    assert {segment["beat_index"] for segment in planned_segments} >= set(range(5))
 
     validation = validate_artifact_directory(result.run_id, settings.output_dir / result.run_id)
     assert validation.valid, validation.errors

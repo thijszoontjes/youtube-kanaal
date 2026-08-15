@@ -58,7 +58,13 @@ def test_generated_short_uses_story_beats_as_narration_source() -> None:
     assert content.narration == " ".join(beat.narration for beat in beats)
     assert content.subtitle_text == content.narration
     assert [cue["sfx"] for cue in content.beat_sound_cues(24.0)] == ["impact", "none", "tick", "riser", "silence"]
-    assert [overlay["beat_type"] for overlay in content.beat_overlays(24.0)] == ["hook", "escalation", "payoff"]
+    assert [overlay["beat_type"] for overlay in content.beat_overlays(24.0)] == [
+        "hook",
+        "setup",
+        "evidence",
+        "escalation",
+        "payoff",
+    ]
 
 
 def test_generated_short_requires_three_distinct_facts() -> None:

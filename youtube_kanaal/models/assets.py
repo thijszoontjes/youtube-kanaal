@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -51,9 +52,11 @@ class AssetPlanSegment(BaseModel):
     duration_seconds: float = Field(ge=0.5)
     reason: str
     start_offset_seconds: float = Field(default=0.0, ge=0)
+    beat_index: int = Field(default=0, ge=0)
     beat_type: str = "evidence"
     energy: str = "medium"
     transition: str = "cut"
+    visual_variant: Literal["primary", "punch", "cutaway", "proof", "reveal"] = "primary"
     on_screen_text: str = ""
 
 
