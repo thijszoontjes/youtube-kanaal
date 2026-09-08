@@ -341,6 +341,8 @@ def _narration_required_check_names(settings: Settings) -> set[str]:
         return {"Kokoro"}
     if inspection.resolved_engine == "xtts":
         return {"XTTS runtime", "XTTS speaker samples"}
+    if inspection.resolved_engine == "chatterbox":
+        return {"Chatterbox runtime", "Chatterbox speaker samples"}
     return {"Piper", "Piper voice model"}
 
 
@@ -349,6 +351,8 @@ def _print_narration_fallback_note(settings: Settings) -> None:
     if inspection.requested_engine == "kokoro" and inspection.resolved_engine == "piper" and inspection.fallback_reason:
         console.print(f"[yellow]Using Piper fallback:[/yellow] {inspection.fallback_reason}")
     if inspection.requested_engine == "xtts" and inspection.resolved_engine == "piper" and inspection.fallback_reason:
+        console.print(f"[yellow]Using Piper fallback:[/yellow] {inspection.fallback_reason}")
+    if inspection.requested_engine == "chatterbox" and inspection.resolved_engine == "piper" and inspection.fallback_reason:
         console.print(f"[yellow]Using Piper fallback:[/yellow] {inspection.fallback_reason}")
 
 
@@ -868,6 +872,8 @@ def diagnose_voice(
     table.add_row("Kokoro details", inspection.kokoro_reason or "ready")
     table.add_row("XTTS runtime ready", "yes" if inspection.xtts_runtime_ready else "no")
     table.add_row("XTTS runtime details", inspection.xtts_runtime_reason or "ready")
+    table.add_row("Chatterbox ready", "yes" if inspection.chatterbox_ready else "no")
+    table.add_row("Chatterbox details", inspection.chatterbox_reason or "ready")
     table.add_row("Piper ready", "yes" if inspection.piper_ready else "no")
     table.add_row("Piper details", inspection.piper_reason or "ready")
     table.add_row("Reference clips", str(len(inspection.reference_sources)))

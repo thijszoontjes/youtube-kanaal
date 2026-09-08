@@ -147,6 +147,12 @@ class Settings(BaseSettings):
         default=True,
         validation_alias=AliasChoices("XTTS_FALLBACK_TO_PIPER"),
     )
+    chatterbox_model: str = Field(default="turbo", validation_alias=AliasChoices("CHATTERBOX_MODEL"))
+    chatterbox_device: str = Field(default="auto", validation_alias=AliasChoices("CHATTERBOX_DEVICE"))
+    chatterbox_fallback_to_piper: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("CHATTERBOX_FALLBACK_TO_PIPER"),
+    )
     whisper_cpp_binary: str = Field(
         default="whisper-cli",
         validation_alias=AliasChoices("WHISPER_CPP_BINARY"),
@@ -298,8 +304,8 @@ class Settings(BaseSettings):
     @classmethod
     def _validate_narration_engine(cls, value: str) -> str:
         normalized = value.strip().lower()
-        if normalized not in {"kokoro", "piper", "xtts"}:
-            raise ValueError("NARRATION_ENGINE must be kokoro, piper, or xtts.")
+        if normalized not in {"kokoro", "piper", "xtts", "chatterbox"}:
+            raise ValueError("NARRATION_ENGINE must be kokoro, piper, xtts, or chatterbox.")
         return normalized
 
     @field_validator("kokoro_lang_code", "kokoro_device")
@@ -340,6 +346,22 @@ class Settings(BaseSettings):
         normalized = value.strip().lower()
         if not normalized:
             raise ValueError("XTTS_LANGUAGE cannot be empty.")
+        return normalized
+
+    @field_validator("chatterbox_model")
+    @classmethod
+    def _validate_chatterbox_model(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"turbo", "standard"}:
+            raise ValueError("CHATTERBOX_MODEL must be turbo or standard.")
+        return normalized
+
+    @field_validator("chatterbox_device")
+    @classmethod
+    def _validate_chatterbox_device(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not normalized:
+            raise ValueError("CHATTERBOX_DEVICE cannot be empty.")
         return normalized
 
     @field_validator("scheduled_timezone")

@@ -40,6 +40,21 @@ def test_cli_preview_voice_with_xtts_mock(cli_runner, configured_env, monkeypatc
     assert preview_path.exists()
 
 
+def test_cli_preview_voice_with_chatterbox_mock(cli_runner, configured_env, monkeypatch) -> None:
+    monkeypatch.setenv("NARRATION_ENGINE", "chatterbox")
+
+    preview_result = cli_runner.invoke(
+        app,
+        ["preview-voice", "This is my Chatterbox preview.", "--mock-mode"],
+    )
+
+    assert preview_result.exit_code == 0, preview_result.stdout
+    normalized_output = " ".join(preview_result.stdout.lower().split())
+    assert "using chatterbox" in normalized_output
+    preview_path = Path(configured_env["output_dir"]) / "voice-preview" / "preview.wav"
+    assert preview_path.exists()
+
+
 def test_cli_preview_voice_with_xtts_missing_samples_falls_back_to_piper(cli_runner, configured_env, monkeypatch) -> None:
     monkeypatch.setenv("NARRATION_ENGINE", "xtts")
 

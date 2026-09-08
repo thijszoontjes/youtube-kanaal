@@ -6,6 +6,7 @@ from pathlib import Path
 
 from youtube_kanaal.config import Settings
 from youtube_kanaal.exceptions import PipelineStageError
+from youtube_kanaal.services.chatterbox_service import ChatterboxService
 from youtube_kanaal.services.kokoro_service import KokoroService
 from youtube_kanaal.services.piper_service import PiperService
 from youtube_kanaal.services.xtts_service import XTTSService
@@ -21,6 +22,8 @@ class NarrationInspection:
     kokoro_reason: str | None = None
     xtts_runtime_ready: bool = False
     xtts_runtime_reason: str | None = None
+    chatterbox_ready: bool = False
+    chatterbox_reason: str | None = None
     piper_ready: bool = False
     piper_reason: str | None = None
 
@@ -57,11 +60,13 @@ class NarrationService:
         kokoro_service: KokoroService | None = None,
         piper_service: PiperService | None = None,
         xtts_service: XTTSService | None = None,
+        chatterbox_service: ChatterboxService | None = None,
     ) -> None:
         self.settings = settings
         self.kokoro = kokoro_service or KokoroService(settings)
         self.piper = piper_service or PiperService(settings)
         self.xtts = xtts_service or XTTSService(settings)
+        self.chatterbox = chatterbox_service or ChatterboxService(settings)
 
     def inspect(self, *, logger: logging.Logger | None = None) -> NarrationInspection:
         requested_engine = self.settings.narration_engine
@@ -87,6 +92,33 @@ class NarrationService:
                 fallback_reason=fallback_reason if resolved_engine == "piper" else None,
                 kokoro_ready=kokoro_ready,
                 kokoro_reason=kokoro_reason,
+                piper_ready=piper_ready,
+                piper_reason=piper_reason,
+            )
+
+        if requested_engine == "chatterbox":
+            reference_sources = self.chatterbox.discover_reference_sources()
+            chatterbox_ready, chatterbox_reason = self.chatterbox.runtime_ready()
+            fallback_reason: str | None = None
+            resolved_engine = "chatterbox"
+            if not reference_sources:
+                fallback_reason = (
+                    "Chatterbox custom voice skipped because no valid reference audio files were found in "
+                    f"{self.settings.xtts_speaker_wav_dir}."
+                )
+            elif not chatterbox_ready:
+                fallback_reason = chatterbox_reason or "Chatterbox runtime is not ready."
+            if fallback_reason and self.settings.chatterbox_fallback_to_piper and piper_ready:
+                resolved_engine = "piper"
+            return NarrationInspection(
+                requested_engine=requested_engine,
+                resolved_engine=resolved_engine,
+                reference_sources=reference_sources,
+                fallback_reason=fallback_reason if resolved_engine == "piper" else None,
+                kokoro_ready=kokoro_ready,
+                kokoro_reason=kokoro_reason,
+                chatterbox_ready=chatterbox_ready,
+                chatterbox_reason=chatterbox_reason,
                 piper_ready=piper_ready,
                 piper_reason=piper_reason,
             )
@@ -194,6 +226,34 @@ class NarrationService:
                             extra={
                                 "stage": "narration_generation",
                                 "requested_engine": "xtts",
+                                "resolved_engine": "piper",
+                                "fallback_reason": fallback_reason,
+                            },
+                        )
+                    self.piper.synthesize(text=text, output_path=output_path, logger=logger)
+                    return NarrationSynthesisResult(
+                        output_path=output_path,
+                        inspection=replace(
+                            inspection,
+                            resolved_engine="piper",
+                            fallback_reason=fallback_reason,
+                        ),
+                    )
+                raise
+
+        if inspection.resolved_engine == "chatterbox":
+            try:
+                self.chatterbox.synthesize(text=text, output_path=output_path, logger=logger)
+                return NarrationSynthesisResult(output_path=output_path, inspection=inspection)
+            except Exception as exc:
+                if self.settings.chatterbox_fallback_to_piper and inspection.piper_ready:
+                    fallback_reason = self._fallback_reason_from_exception(exc)
+                    if logger:
+                        logger.warning(
+                            "narration_fallback: chatterbox_to_piper",
+                            extra={
+                                "stage": "narration_generation",
+                                "requested_engine": "chatterbox",
                                 "resolved_engine": "piper",
                                 "fallback_reason": fallback_reason,
                             },

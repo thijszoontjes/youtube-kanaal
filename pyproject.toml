@@ -38,6 +38,9 @@ runtime = [
   "torchcodec",
   "transformers==4.57.6",
 ]
+chatterbox = [
+  "chatterbox-tts",
+]
 
 [project.scripts]
 youtube-kanaal = "youtube_kanaal.cli:main"

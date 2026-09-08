@@ -8,7 +8,7 @@ Local, terminal-first YouTube automation for English Shorts and daily long-form 
 
 The normal daily command generates and schedules 4 Shorts first, then 1 English long-form video. Shorts use `SCHEDULED_RUN_TIMES` (`10:00,13:00,15:00,19:00` by default), and the long-form video publishes at `17:00` in `SCHEDULED_TIMEZONE`.
 
-The Windows logon task uses the `shorts-retention-editing` branch by default. At logon it fetches that branch, switches the local checkout to it, pulls fast-forward-only updates, starts Ollama if needed, and runs `make-short-schedule`, which generates and schedules the four Shorts for the next day.
+The Windows logon task uses the `gratis-ai-stem-chatterbox` branch by default. At logon it fetches that branch, switches the local checkout to it, pulls fast-forward-only updates, starts Ollama if needed, and runs `make-short-schedule`, which generates and schedules the four Shorts for the next day.
 
 ## alleen video upload voor vandaag
 v
@@ -140,7 +140,7 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\scripts\install_windows_startup_youtube.ps1 -RepoRoot (Get-Location).Path
 ```
 
-Run that command once from PowerShell started with **Run as administrator** so Windows can create or replace the logon task. The task requires the YouTube OAuth token and the configured `.env` to already exist on the Windows machine. It uses `shorts-retention-editing` by default; override `-BranchName` only when intentionally testing another branch.
+Run that command once from PowerShell started with **Run as administrator** so Windows can create or replace the logon task. The task requires the YouTube OAuth token and the configured `.env` to already exist on the Windows machine. It uses `gratis-ai-stem-chatterbox` by default; override `-BranchName` only when intentionally testing another branch.
 
 `test-pipeline` is a smoke test. For a playable preview MP4 it still needs FFmpeg installed.
 
@@ -383,6 +383,35 @@ If your voice memos are not there yet, the app now falls back automatically to t
 
 If you want to switch back to the original local voice, set `NARRATION_ENGINE=piper`.
 
+## Free Local Chatterbox Voice
+
+Chatterbox is an open-source local alternative to XTTS for English voice cloning. It uses one clean reference memo and runs through the same narration pipeline.
+
+Install its optional dependencies:
+
+```bash
+.venv/bin/pip install -e ".[chatterbox]"
+```
+
+Set this in `.env`:
+
+```dotenv
+NARRATION_ENGINE=chatterbox
+CHATTERBOX_MODEL=turbo
+CHATTERBOX_DEVICE=auto
+CHATTERBOX_FALLBACK_TO_PIPER=false
+XTTS_SPEAKER_WAV_DIR=./data/voice_samples/en
+```
+
+Put a clean English voice memo in `data/voice_samples/en`, then test it:
+
+```bash
+.venv/bin/python -m youtube_kanaal diagnose-voice
+.venv/bin/python -m youtube_kanaal preview-voice "This is a test of my cloned English voice."
+```
+
+Use `CHATTERBOX_MODEL=standard` if the installed package does not support Turbo on your machine. `turbo` is faster; `auto` selects CUDA, Apple Silicon MPS, or CPU.
+
 ## What You Still Need
 
 For the app itself, the last private credentials you still need are:
@@ -619,7 +648,7 @@ If Task Scheduler reports access denied, rerun PowerShell as Administrator and e
 
 This creates a logon task named `youtube-kanaal-startup-upload` that opens PowerShell and runs `python -m youtube_kanaal make-short-schedule --times "10:00,13:00,15:00,19:00"` through `scripts\run_startup_youtube.ps1`.
 That command generates and uploads 4 Shorts scheduled for tomorrow at 10:00, 13:00, 15:00, and 19:00 local time.
-The startup script checks out `shorts-retention-editing` and runs `git pull --ff-only origin shorts-retention-editing` before generating/uploading, so startup uses the latest pushed retention-editing branch by default.
+The startup script checks out `gratis-ai-stem-chatterbox` and runs `git pull --ff-only origin gratis-ai-stem-chatterbox` before generating/uploading, so startup uses the latest pushed voice-cloning branch by default.
 
 Override the times if needed:
 

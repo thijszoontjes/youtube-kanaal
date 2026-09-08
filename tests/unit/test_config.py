@@ -37,6 +37,23 @@ def test_settings_reject_invalid_narration_engine() -> None:
         Settings(narration_engine="clone")
 
 
+def test_settings_accept_chatterbox_narration() -> None:
+    settings = Settings(
+        narration_engine="chatterbox",
+        chatterbox_model="turbo",
+        chatterbox_device="auto",
+    )
+
+    assert settings.narration_engine == "chatterbox"
+    assert settings.chatterbox_model == "turbo"
+    assert settings.chatterbox_device == "auto"
+
+
+def test_settings_reject_invalid_chatterbox_model() -> None:
+    with pytest.raises(ValidationError):
+        Settings(chatterbox_model="large")
+
+
 def test_settings_reject_invalid_xtts_reference_max_seconds() -> None:
     with pytest.raises(ValidationError):
         Settings(xtts_reference_max_seconds=2)

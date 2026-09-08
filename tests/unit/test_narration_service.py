@@ -78,6 +78,36 @@ class StubXTTSService:
         return output_path
 
 
+class StubChatterboxService:
+    def __init__(
+        self,
+        *,
+        sources: list[Path] | None = None,
+        ready: bool = True,
+        reason: str | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.sources = sources or []
+        self.ready = ready
+        self.reason = reason
+        self.error = error
+        self.calls = 0
+
+    def discover_reference_sources(self) -> list[Path]:
+        return self.sources
+
+    def runtime_ready(self) -> tuple[bool, str | None]:
+        return self.ready, self.reason
+
+    def synthesize(self, *, text: str, output_path: Path, logger=None) -> Path:
+        self.calls += 1
+        if self.error:
+            raise self.error
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"chatterbox")
+        return output_path
+
+
 def test_narration_service_uses_kokoro_by_default_when_ready() -> None:
     settings = Settings(narration_engine="kokoro")
     kokoro = StubKokoroService(ready=True)
@@ -209,3 +239,46 @@ def test_narration_service_falls_back_to_piper_when_xtts_synthesis_fails(tmp_pat
     assert "container exited early" in (result.fallback_reason or "")
     assert piper.calls == 1
     assert xtts.calls == 1
+
+
+def test_narration_service_uses_chatterbox_when_reference_audio_and_runtime_exist(tmp_path) -> None:
+    sample_path = tmp_path / "memo.m4a"
+    sample_path.write_bytes(b"voice")
+    settings = Settings(
+        narration_engine="chatterbox",
+        xtts_speaker_wav_dir=tmp_path,
+        chatterbox_fallback_to_piper=False,
+    )
+    chatterbox = StubChatterboxService(sources=[sample_path])
+    service = NarrationService(
+        settings,
+        piper_service=StubPiperService(ready=True),
+        chatterbox_service=chatterbox,
+    )
+
+    result = service.synthesize(text="hello", output_path=tmp_path / "out.wav")
+
+    assert result.engine_used == "chatterbox"
+    assert chatterbox.calls == 1
+
+
+def test_narration_service_falls_back_from_chatterbox_when_runtime_is_missing(tmp_path) -> None:
+    settings = Settings(
+        narration_engine="chatterbox",
+        xtts_speaker_wav_dir=tmp_path,
+        chatterbox_fallback_to_piper=True,
+    )
+    sample_path = tmp_path / "memo.wav"
+    sample_path.write_bytes(b"voice")
+    chatterbox = StubChatterboxService(sources=[sample_path], ready=False, reason="package missing")
+    piper = StubPiperService(ready=True)
+    service = NarrationService(
+        settings,
+        piper_service=piper,
+        chatterbox_service=chatterbox,
+    )
+
+    inspection = service.inspect()
+
+    assert inspection.resolved_engine == "piper"
+    assert "package missing" in (inspection.fallback_reason or "")

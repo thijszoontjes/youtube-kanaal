@@ -1,7 +1,7 @@
 param(
     [string]$RepoRoot = "",
     [string]$PythonExe = "",
-    [string]$BranchName = "shorts-retention-editing",
+    [string]$BranchName = "gratis-ai-stem-chatterbox",
     [string]$ShortTimes = "10:00,13:00,15:00,19:00",
     [string]$ScheduleDate = "",
     [switch]$SkipPull,

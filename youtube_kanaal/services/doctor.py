@@ -7,6 +7,7 @@ from youtube_kanaal.config import Settings
 from youtube_kanaal.exceptions import PipelineStageError
 from youtube_kanaal.models.run import DoctorCheck, DoctorReport
 from youtube_kanaal.services.kokoro_service import KokoroService
+from youtube_kanaal.services.chatterbox_service import ChatterboxService
 from youtube_kanaal.services.ollama_service import OllamaService
 from youtube_kanaal.services.pexels_service import PexelsService
 from youtube_kanaal.services.piper_service import PiperService
@@ -29,6 +30,8 @@ class DoctorService:
             narration_details = "kokoro with Piper fallback"
         if self.settings.narration_engine == "xtts" and self.settings.xtts_fallback_to_piper:
             narration_details = "xtts with Piper fallback"
+        if self.settings.narration_engine == "chatterbox" and self.settings.chatterbox_fallback_to_piper:
+            narration_details = "chatterbox with Piper fallback"
         checks = [
             self._python_check(),
             self._binary_check("FFmpeg", self.settings.ffmpeg_binary),
@@ -63,6 +66,8 @@ class DoctorService:
             return self._kokoro_checks()
         if self.settings.narration_engine == "xtts":
             return self._xtts_checks()
+        if self.settings.narration_engine == "chatterbox":
+            return self._chatterbox_checks()
         return [
             self._binary_check("Piper", self.settings.piper_binary),
             self._piper_voice_check(),
@@ -190,6 +195,50 @@ class DoctorService:
         if self.settings.xtts_runtime == "docker":
             return command_exists("docker") and self._xtts_docker_image_ready()
         return command_exists(self.settings.xtts_binary)
+
+    def _chatterbox_checks(self) -> list[DoctorCheck]:
+        chatterbox = ChatterboxService(self.settings)
+        samples = chatterbox.discover_reference_sources()
+        runtime_ok, runtime_reason = chatterbox.runtime_ready()
+        fallback_enabled = self.settings.chatterbox_fallback_to_piper
+        piper_ready, _ = PiperService(self.settings).runtime_ready()
+        fallback_available = fallback_enabled and piper_ready
+        sample_details = (
+            f"{len(samples)} sample(s) ready"
+            if samples
+            else str(self.settings.xtts_speaker_wav_dir)
+        )
+        return [
+            DoctorCheck(
+                name="Chatterbox runtime",
+                status="ok" if runtime_ok else ("warn" if fallback_available else "fail"),
+                details=runtime_reason or f"model={self.settings.chatterbox_model}, device={self.settings.chatterbox_device}",
+                action=None
+                if runtime_ok
+                else (
+                    "Install Chatterbox with `.venv/bin/pip install chatterbox-tts`."
+                    if not fallback_available
+                    else "Install Chatterbox with `.venv/bin/pip install chatterbox-tts`; until then the pipeline falls back to Piper."
+                ),
+            ),
+            DoctorCheck(
+                name="Chatterbox speaker samples",
+                status="ok" if samples else ("warn" if fallback_enabled else "fail"),
+                details=sample_details,
+                action=None
+                if samples
+                else (
+                    "Add an English voice memo to XTTS_SPEAKER_WAV_DIR."
+                    if not fallback_enabled
+                    else "Add an English voice memo to use your own voice. Until then the pipeline falls back to Piper."
+                ),
+            ),
+            *(
+                [self._binary_check("Piper", self.settings.piper_binary), self._piper_voice_check()]
+                if fallback_enabled and (not samples or not runtime_ok)
+                else []
+            ),
+        ]
 
     def _xtts_runtime_action(
         self,
