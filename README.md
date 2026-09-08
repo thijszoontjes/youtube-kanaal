@@ -163,6 +163,8 @@ The default behavior is safe and conservative:
 
 For the free online deployment path, see [docs/run-online.md](docs/run-online.md).
 
+For the research evidence map, Analytics baseline, and measurement plan for new Shorts cohorts, see [docs/channel-research-reference-inventory.md](docs/channel-research-reference-inventory.md).
+
 ## Features
 
 - One-command Short generation with `python -m youtube_kanaal make-short`
