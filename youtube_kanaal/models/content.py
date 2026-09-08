@@ -422,7 +422,7 @@ class GeneratedShort(BaseModel):
     narration: str = Field(min_length=80, max_length=700)
     facts: list[str] = Field(min_length=3, max_length=3)
     subtitle_text: str = Field(min_length=20, max_length=700)
-    beats: list[ShortBeat] = Field(default_factory=list, max_length=7)
+    beats: list[ShortBeat] = Field(default_factory=list, max_length=5)
     beat_plan_source: Literal["generated", "derived"] = "generated"
 
     banned_phrases: ClassVar[tuple[str, ...]] = _BANNED_PHRASES
@@ -514,15 +514,19 @@ class GeneratedShort(BaseModel):
         ]
         if not sentences:
             sentences = [self.narration]
-        beat_types = ["hook", "setup", "evidence", "escalation", "payoff"]
+        beat_types = ["hook", "evidence", "escalation", "payoff"]
+        beat_count = min(4, len(sentences))
         beats: list[ShortBeat] = []
-        for index, sentence in enumerate(sentences[:7]):
+        for index in range(beat_count):
+            start = index * len(sentences) // beat_count
+            end = (index + 1) * len(sentences) // beat_count
+            sentence = " ".join(sentences[start:end]).strip()
             if index == 0:
                 beat_type = "hook"
-            elif index == len(sentences[:7]) - 1:
+            elif index == beat_count - 1:
                 beat_type = "payoff"
             else:
-                beat_type = beat_types[min(index, len(beat_types) - 2)]
+                beat_type = beat_types[index]
             meaningful_words = [
                 word.strip(".,:;!?()[]\"")
                 for word in sentence.split()

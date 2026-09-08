@@ -73,12 +73,11 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
           "This Lives 3,000 Meters Down"
           "SATURN IS HIDING SOMETHING WEIRD"
           "Do NOT Ignore This About Axolotls"
-        - Build one promise through 5-7 beats: hook, setup, evidence, escalation, payoff, and optionally a loop
+        - Build one promise through exactly four beats: hook, evidence, reversal, payoff. Add one optional loop beat only when it creates a genuinely satisfying return to the hook
         - The spoken hook must be 5-12 words and work in the first second: name or unmistakably identify {topic.topic}, state a concrete surprise or contradiction, and open a precise information gap
         - Do not spend the hook establishing atmosphere; put the subject and surprising claim first
-        - Give the viewer a concrete new reward in at least three later beats: a number, visible mechanism, reversal, comparison, or answer
-        - Make each later beat add new information and change how the viewer understands the previous beat; no connective-only or filler beats
-        - Reveal useful proof early, then save the strongest reframe for the payoff instead of withholding every answer until the end
+        - Make every later beat add new information: the evidence beat proves the claim, the reversal changes how the viewer sees it, and the payoff answers or reframes the hook
+        - Reveal useful proof in the evidence beat, then save the strongest reframe for the payoff instead of withholding every answer until the end
         - The final payoff or loop must be 6-12 spoken words, directly answer or reframe the hook, and end immediately after the strongest idea
         - Never end with a recap, moral, generic importance statement, disclaimer, or production comment
         - The narration should feel like natural spoken English, with contractions, purposeful rhythm, and varied sentence length
@@ -142,16 +141,6 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
               "duration_weight": 0.7
             }},
             {{
-              "beat_type": "setup",
-              "narration": "<spoken context phrase>",
-              "on_screen_text": "<2-5 context words>",
-              "visual_query": "<literal subject and action>",
-              "energy": "medium",
-              "transition": "cut",
-              "sfx": "none",
-              "duration_weight": 1.0
-            }},
-            {{
               "beat_type": "evidence",
               "narration": "<spoken proof phrase>",
               "on_screen_text": "<2-5 proof words>",
@@ -163,9 +152,9 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
             }},
             {{
               "beat_type": "escalation",
-              "narration": "<spoken escalation phrase>",
-              "on_screen_text": "<2-5 escalation words>",
-              "visual_query": "<literal escalation subject and action>",
+              "narration": "<spoken reversal phrase>",
+              "on_screen_text": "<2-5 reversal words>",
+              "visual_query": "<literal reversal subject and action>",
               "energy": "high",
               "transition": "punch",
               "sfx": "riser",

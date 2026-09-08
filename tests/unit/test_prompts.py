@@ -33,6 +33,8 @@ def test_content_prompt_contains_recent_titles() -> None:
     assert "at most 24 characters" in prompt
     assert "end immediately after the strongest idea" in prompt
     assert "Story shape for this Short" in prompt
+    assert "exactly four beats: hook, evidence, reversal, payoff" in prompt
+    assert "5-7 beats" not in prompt
     assert 'Never use "Here are", "First", "Second", "Third"' in prompt
     assert "open a precise information gap" in prompt
     assert "name or unmistakably identify axolotls" in prompt

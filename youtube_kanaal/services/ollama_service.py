@@ -421,9 +421,9 @@ class OllamaService:
         raw_beats = repaired.get("beats")
         cleaned_beats: list[dict[str, object]] = []
         allowed_types = ("hook", "setup", "evidence", "escalation", "payoff", "loop")
-        default_types = ("hook", "setup", "evidence", "escalation", "payoff", "loop")
+        default_types = ("hook", "evidence", "escalation", "payoff", "loop")
         if isinstance(raw_beats, list):
-            for index, raw_beat in enumerate(raw_beats[:7]):
+            for index, raw_beat in enumerate(raw_beats[:5]):
                 if not isinstance(raw_beat, dict):
                     continue
                 narration_text = self._clean_narration(str(raw_beat.get("narration", "")))
@@ -450,7 +450,7 @@ class OllamaService:
                         "duration_weight": min(max(float(raw_beat.get("duration_weight", 1.0) or 1.0), 0.45), 2.5),
                     }
                 )
-        repaired["beats"] = cleaned_beats if len(cleaned_beats) >= 5 else []
+        repaired["beats"] = cleaned_beats if len(cleaned_beats) >= 4 else []
 
         narration = raw_narration
         repaired_facts = list(repaired["facts"]) if isinstance(repaired["facts"], list) else []
@@ -1033,12 +1033,14 @@ class OllamaService:
             problems.append("narration starts by reading an all-caps title card")
         if any(self._is_low_signal_fact(fact) for fact in content.facts):
             problems.append("facts contain generic production filler")
-        if len(content.beats) < 5:
-            problems.append("story plan has fewer than five beats")
-        elif content.beats[0].beat_type != "hook":
-            problems.append("story plan does not begin with a hook")
-        elif content.beats[-1].beat_type not in {"payoff", "loop"}:
-            problems.append("story plan does not end with a payoff or loop")
+        beat_types = [beat.beat_type for beat in content.beats]
+        expected_story = ["hook", "evidence", "escalation", "payoff"]
+        if len(content.beats) not in {4, 5}:
+            problems.append("story plan must contain four beats, with one optional loop")
+        elif beat_types[:4] != expected_story:
+            problems.append("story plan must be hook, evidence, reversal, payoff")
+        elif len(content.beats) == 5 and beat_types[-1] != "loop":
+            problems.append("optional fifth beat must be a loop")
         if any(fragment in content.narration.lower() for fragment in _ADMINISTRATIVE_NARRATION_FRAGMENTS):
             problems.append("narration contains internal production or verification language")
         if content.beats and not content.beats[0].on_screen_text:

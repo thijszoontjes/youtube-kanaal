@@ -67,6 +67,37 @@ def test_generated_short_uses_story_beats_as_narration_source() -> None:
     ]
 
 
+def test_generated_short_derives_four_story_beats() -> None:
+    short = GeneratedShort(
+        bucket="animals",
+        topic="axolotls",
+        title="Why Axolotls Keep Their Baby Features",
+        description="A concise visual explanation of one unusual axolotl trait and why it matters.",
+        hashtags=["#shorts", "#animals", "#axolotls"],
+        narration=(
+            "Axolotls look permanently young, even when they are fully grown. "
+            "Their bodies keep external gills instead of replacing them with adult lungs. "
+            "That lets them stay underwater for life, which is unusual for an amphibian. "
+            "They can still use those gills to pull oxygen from the water around them. "
+            "So the strange face is not a baby phase; it is the adult design. "
+            "The feature that looks unfinished is actually what makes the animal perfectly suited to its habitat."
+        ),
+        facts=[
+            "Axolotls keep external gills into adulthood.",
+            "Axolotls can remain underwater for life.",
+            "Their juvenile appearance is an adult trait.",
+        ],
+        subtitle_text="Axolotls look permanently young, even when they are fully grown.",
+    )
+
+    assert [beat.beat_type for beat in short.beats] == [
+        "hook",
+        "evidence",
+        "escalation",
+        "payoff",
+    ]
+
+
 def test_generated_short_requires_three_distinct_facts() -> None:
     with pytest.raises(ValidationError):
         GeneratedShort(
