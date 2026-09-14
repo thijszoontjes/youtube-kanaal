@@ -77,6 +77,18 @@ class LongRunRequest(BaseModel):
     scheduled_publish_at: datetime | None = None
     save_to_downloads: bool = False
     mock_mode: bool = False
+    test_duration_seconds: int | None = Field(default=None, ge=30, le=120)
+    thumbnail_path: Path | None = None
+
+    @field_validator("thumbnail_path")
+    @classmethod
+    def _resolve_thumbnail_path(cls, value: Path | None) -> Path | None:
+        if value is None:
+            return value
+        resolved = value.expanduser().resolve()
+        if not resolved.is_file():
+            raise ValueError(f"Thumbnail file not found: {resolved}")
+        return resolved
 
     @field_validator("privacy_status")
     @classmethod

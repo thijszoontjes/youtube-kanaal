@@ -176,8 +176,23 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
     ).strip()
 
 
-def build_long_content_generation_prompt(topic: TopicChoice, excluded_titles: list[str]) -> str:
+def build_long_content_generation_prompt(
+    topic: TopicChoice,
+    excluded_titles: list[str],
+    target_duration_seconds: int | None = None,
+) -> str:
     excluded = ", ".join(excluded_titles[-20:]) if excluded_titles else "None"
+    duration_instructions = (
+        "- duration_profile must be \"test\".\n"
+        "        - Include exactly 6 short sections.\n"
+        "        - Each section narration should be 62-72 words.\n"
+        "        - Total narration should be 380-420 words for a roughly 1-minute render."
+        if target_duration_seconds is not None
+        else "- duration_profile must be \"long\".\n"
+        "        - Include exactly 7 sections.\n"
+        "        - Each section narration should be 500-650 words.\n"
+        "        - Total narration should be 3500-4500 words for an 8:30-11:00 render."
+    )
     return dedent(
         f"""
         Write a long-form YouTube video package in the same fast, curious, visual fact-explainer style as the Shorts,
@@ -192,9 +207,7 @@ def build_long_content_generation_prompt(topic: TopicChoice, excluded_titles: li
         - No emoji, no bullet labels inside narration, no stage directions.
         - Keep the tone conversational, curious, and clean.
         - Open with a strong hook, then build through clear segments with visual variety.
-        - Include exactly 7 sections.
-        - Each section narration should be 190-225 words.
-        - Total narration should be 1325-1650 words.
+        {duration_instructions}
         - Mention {topic.topic} early.
         - Use controlled clickbait: the title should create curiosity without lying or overpromising.
         - Use full ALL CAPS for some titles, and use ALL CAPS emphasis words in others; do not make every title all caps.
@@ -212,6 +225,7 @@ def build_long_content_generation_prompt(topic: TopicChoice, excluded_titles: li
         {{
           "bucket": "{topic.bucket}",
           "topic": "{topic.topic}",
+          "duration_profile": "{'test' if target_duration_seconds is not None else 'long'}",
           "title": "<clickable SEO-friendly long-form title>",
           "thumbnail_text": "<2-5 word ALL CAPS thumbnail phrase>",
           "description": "<2-4 paragraph YouTube description>",
@@ -219,7 +233,7 @@ def build_long_content_generation_prompt(topic: TopicChoice, excluded_titles: li
           "sections": [
             {{
               "title": "<chapter title>",
-              "narration": "<190-225 spoken words>",
+              "narration": "<500-650 spoken words>",
               "visual_queries": ["<query 1>", "<query 2>"]
             }}
           ],

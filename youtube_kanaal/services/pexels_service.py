@@ -10,7 +10,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 from youtube_kanaal.config import Settings
 from youtube_kanaal.exceptions import ConfigurationError, PipelineStageError
-from youtube_kanaal.models.assets import VideoClipAsset
+from youtube_kanaal.models.assets import ImageAsset, VideoClipAsset
 from youtube_kanaal.utils.files import write_json
 from youtube_kanaal.utils.process import command_exists, run_command
 from youtube_kanaal.utils.subtitles import ideal_clip_count
@@ -158,6 +158,138 @@ class PexelsService:
                 details_path=response_path,
             )
         return chosen
+
+    def fetch_broll_photos(
+        self,
+        *,
+        queries: list[str],
+        max_photos: int,
+        response_path: Path,
+    ) -> list[ImageAsset]:
+        """Fetch reusable Pexels photos for the long-form Ken Burns edit."""
+        if self.settings.mock_mode:
+            photos = self._mock_photos(max_photos)
+            write_json(response_path, [photo.model_dump(mode="json") for photo in photos])
+            return photos
+        if not self.settings.pexels_api_key:
+            raise ConfigurationError("PEXELS_API_KEY is required for stock photo downloads.")
+
+        raw_payloads: list[dict[str, object]] = []
+        candidates: list[ImageAsset] = []
+        for query in list(dict.fromkeys(query for query in queries if query.strip())):
+            try:
+                payload = self._search_photos(query)
+            except httpx.HTTPError as exc:
+                if isinstance(exc, httpx.HTTPStatusError) and self._is_fatal_search_error(exc):
+                    raise
+                raw_payloads.append({"query": query, "error": self._search_error_payload(exc)})
+                continue
+            raw_payloads.append({"query": query, "response": payload})
+            candidates.extend(self._parse_photo_results(query, payload))
+
+        write_json(response_path, raw_payloads)
+        chosen: list[ImageAsset] = []
+        used_ids: set[str] = set()
+        for query in queries:
+            for photo in candidates:
+                if photo.query != query or photo.source_id in used_ids:
+                    continue
+                if self._prepare_photo_for_use(photo):
+                    chosen.append(photo)
+                    used_ids.add(photo.source_id)
+                    break
+            if len(chosen) >= max_photos:
+                break
+        if len(chosen) < max_photos:
+            for photo in sorted(candidates, key=lambda item: item.score, reverse=True):
+                if photo.source_id in used_ids:
+                    continue
+                if self._prepare_photo_for_use(photo):
+                    chosen.append(photo)
+                    used_ids.add(photo.source_id)
+                if len(chosen) >= max_photos:
+                    break
+        if not chosen:
+            raise PipelineStageError(
+                stage="stock_image_download",
+                message="Pexels returned no usable long-form photos.",
+                probable_cause="Try a different topic, or inspect the saved API response.",
+                details_path=response_path,
+            )
+        return chosen
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=8),
+        retry=retry_if_exception_type(httpx.HTTPError),
+        reraise=True,
+    )
+    def _search_photos(self, query: str) -> dict[str, object]:
+        response = self.client.get(
+            "/v1/search",
+            params={
+                "query": self._clean_query(query),
+                "per_page": self.settings.pexels_results_per_query,
+                "orientation": "landscape",
+            },
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def _parse_photo_results(self, query: str, payload: dict[str, object]) -> list[ImageAsset]:
+        photos: list[ImageAsset] = []
+        for photo in payload.get("photos", []):
+            if not isinstance(photo, dict) or not isinstance(photo.get("src"), dict):
+                continue
+            source = photo["src"]
+            download_url = str(source.get("large2x") or source.get("large") or source.get("original") or "")
+            if not download_url:
+                continue
+            width = int(photo.get("width") or 1)
+            height = int(photo.get("height") or 1)
+            user = photo.get("photographer")
+            photos.append(
+                ImageAsset(
+                    source_id=str(photo.get("id")),
+                    query=query,
+                    source_url=str(photo.get("url") or ""),
+                    download_url=download_url,
+                    local_path=self.settings.cache_dir / "pexels" / "photos" / f"{photo.get('id')}.jpg",
+                    width=width,
+                    height=height,
+                    score=round((2.0 if width >= height else 0.5) + min(width / 1000, 2.0), 2),
+                    photographer=str(user) if user else None,
+                    photographer_url=str(photo.get("photographer_url")) if photo.get("photographer_url") else None,
+                )
+            )
+        return photos
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=8),
+        retry=retry_if_exception_type(httpx.HTTPError),
+        reraise=True,
+    )
+    def _download_photo(self, photo: ImageAsset) -> None:
+        photo.local_path.parent.mkdir(parents=True, exist_ok=True)
+        response = self.client.get(photo.download_url)
+        response.raise_for_status()
+        temp_path = photo.local_path.with_suffix(f"{photo.local_path.suffix}.part")
+        temp_path.write_bytes(response.content)
+        temp_path.replace(photo.local_path)
+
+    def _prepare_photo_for_use(self, photo: ImageAsset) -> bool:
+        if photo.local_path.exists() and photo.local_path.stat().st_size >= 1024:
+            return True
+        photo.local_path.unlink(missing_ok=True)
+        try:
+            self._download_photo(photo)
+        except httpx.HTTPError:
+            return False
+        if photo.local_path.exists() and photo.local_path.stat().st_size >= 1024:
+            return True
+        photo.local_path.unlink(missing_ok=True)
+        return False
 
     @retry(
         stop=stop_after_attempt(3),
@@ -721,3 +853,26 @@ class PexelsService:
                 )
             )
         return clips
+
+    def _mock_photos(self, max_photos: int) -> list[ImageAsset]:
+        photos: list[ImageAsset] = []
+        for index in range(max(1, max_photos)):
+            local_path = self.settings.cache_dir / "pexels" / "photos" / f"mock-{index}.jpg"
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            if not local_path.exists():
+                local_path.write_text("mock photo", encoding="utf-8")
+            photos.append(
+                ImageAsset(
+                    source_id=f"mock-photo-{index}",
+                    query="mock",
+                    source_url="https://example.invalid/mock-photo",
+                    download_url="https://example.invalid/mock-photo.jpg",
+                    local_path=local_path,
+                    width=1920,
+                    height=1080,
+                    score=5.0,
+                    photographer="Mock Photographer",
+                    photographer_url="https://example.invalid/mock-photographer",
+                )
+            )
+        return photos

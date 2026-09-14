@@ -165,6 +165,7 @@ TOPIC_CATALOG: dict[str, list[str]] = {
     ],
     "human body": [
         "the human brain",
+        "nutrient deficiencies",
         "your skin",
         "the immune system",
         "bones",
@@ -684,7 +685,7 @@ class GeneratedShort(BaseModel):
 
 class LongVideoSection(BaseModel):
     title: str = Field(min_length=8, max_length=64)
-    narration: str = Field(min_length=400, max_length=2500)
+    narration: str = Field(min_length=40, max_length=2500)
     visual_queries: list[str] = Field(min_length=2, max_length=5)
 
     @field_validator("title", "narration")
@@ -721,6 +722,7 @@ class GeneratedLongVideo(BaseModel):
     tags: list[str] = Field(min_length=8, max_length=20)
     sections: list[LongVideoSection] = Field(min_length=6, max_length=8)
     facts: list[str] = Field(min_length=6, max_length=12)
+    duration_profile: Literal["long", "test"] = "long"
 
     @field_validator("bucket")
     @classmethod
@@ -772,8 +774,12 @@ class GeneratedLongVideo(BaseModel):
     @model_validator(mode="after")
     def _validate_long_duration_shape(self) -> "GeneratedLongVideo":
         word_count = len(self.narration.split())
-        if not 1325 <= word_count <= 1650:
-            raise ValueError("Long-form narration should be roughly 8:30-11:00 at normal Kokoro speed.")
+        if self.duration_profile == "test":
+            if not 100 <= word_count <= 420:
+                raise ValueError("Test narration should be roughly 1 minute.")
+            return self
+        if not 1325 <= word_count <= 4500:
+            raise ValueError("Long-form narration should be suitable for an 8:30-11:00 video.")
         return self
 
     @property

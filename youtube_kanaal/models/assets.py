@@ -47,6 +47,23 @@ class VideoClipAsset(BaseModel):
         return self.height >= self.width
 
 
+class ImageAsset(BaseModel):
+    source_id: str
+    query: str
+    source_url: str
+    download_url: str
+    local_path: Path
+    width: int = Field(ge=1)
+    height: int = Field(ge=1)
+    score: float = Field(default=0, ge=0)
+    photographer: str | None = None
+    photographer_url: str | None = None
+
+    @property
+    def is_portrait(self) -> bool:
+        return self.height >= self.width
+
+
 class AssetPlanSegment(BaseModel):
     clip_path: Path
     duration_seconds: float = Field(ge=0.5)

@@ -180,6 +180,7 @@ class NarrationService:
         output_path: Path,
         beats: list[dict[str, object]] | None = None,
         logger: logging.Logger | None = None,
+        long_form: bool = False,
     ) -> NarrationSynthesisResult:
         inspection = self.inspect(logger=logger)
         if inspection.resolved_engine == "kokoro":
@@ -243,7 +244,10 @@ class NarrationService:
 
         if inspection.resolved_engine == "chatterbox":
             try:
-                self.chatterbox.synthesize(text=text, output_path=output_path, logger=logger)
+                if long_form:
+                    self.chatterbox.synthesize_long(text=text, output_path=output_path, logger=logger)
+                else:
+                    self.chatterbox.synthesize(text=text, output_path=output_path, logger=logger)
                 return NarrationSynthesisResult(output_path=output_path, inspection=inspection)
             except Exception as exc:
                 if self.settings.chatterbox_fallback_to_piper and inspection.piper_ready:

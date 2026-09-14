@@ -1,6 +1,7 @@
 from youtube_kanaal.models.assets import (
     AssetPlan,
     AssetPlanSegment,
+    ImageAsset,
     NarrationAsset,
     SoundDesignAsset,
     SubtitleAsset,
@@ -34,6 +35,7 @@ __all__ = [
     "TOPIC_CATALOG",
     "AssetPlan",
     "AssetPlanSegment",
+    "ImageAsset",
     "BatchRequest",
     "DoctorCheck",
     "DoctorReport",

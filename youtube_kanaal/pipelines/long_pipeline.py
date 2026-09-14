@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import shutil
+import textwrap
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,12 +16,13 @@ from youtube_kanaal.models import (
     AssetPlan,
     AssetPlanSegment,
     GeneratedLongVideo,
+    ImageAsset,
     LongRunRequest,
     LongRunResult,
     NarrationAsset,
+    SubtitleAsset,
     TopicChoice,
     UploadMetadata,
-    VideoClipAsset,
 )
 from youtube_kanaal.pipelines.short_pipeline import RunArtifacts, ShortPipeline, _new_run_id, _utc_now_iso
 from youtube_kanaal.services.ffmpeg_service import FFmpegService
@@ -86,10 +89,11 @@ class LongPipeline(ShortPipeline):
             topic = self.select_topic(runtime)  # type: ignore[arg-type]
             content = self.generate_long_content(runtime, topic)
             narration = self.generate_long_narration(runtime, content)
+            subtitles = self.generate_long_subtitles(runtime, content, narration)
             mixed_audio = self.mix_background_music(runtime, narration)
             clips = self.download_long_broll(runtime, topic, content)
             plan = self.plan_long_assets(runtime, clips, narration, content)
-            final_video_path = self.render_long_video(runtime, plan, mixed_audio, content)
+            final_video_path = self.render_long_video(runtime, plan, mixed_audio, subtitles, content)
             validation_payload = self.validate_long_output(runtime, final_video_path)
             thumbnail_path = self.generate_thumbnail(runtime, clips, content)
             upload_metadata = self.upload_long_if_requested(runtime, final_video_path, thumbnail_path, content)
@@ -98,6 +102,7 @@ class LongPipeline(ShortPipeline):
                 topic=topic,
                 content=content,
                 narration=narration,
+                subtitles=subtitles,
                 clips=clips,
                 final_video_path=final_video_path,
                 thumbnail_path=thumbnail_path,
@@ -140,6 +145,7 @@ class LongPipeline(ShortPipeline):
                     excluded_titles=recent_titles,
                     prompt_path=runtime.artifacts.prompts_dir / "long_content_generation.txt",
                     response_path=runtime.artifacts.responses_dir / "long_content_generation.json",
+                    target_duration_seconds=runtime.request.test_duration_seconds,
                 )
                 if not is_near_duplicate(content.title, recent_titles, self.settings.similarity_threshold):
                     runtime.stage_summaries["long_content_generation"] = content.model_dump(mode="json")
@@ -160,16 +166,33 @@ class LongPipeline(ShortPipeline):
             raw_path = runtime.artifacts.audio_dir / "long_narration_raw.wav"
             normalized_path = runtime.artifacts.audio_dir / "long_narration_normalized.wav"
             fitted_path = runtime.artifacts.audio_dir / "long_narration.wav"
-            synthesis = self.narration.synthesize(text=content.narration, output_path=raw_path, logger=runtime.logger)
+            synthesis = self.narration.synthesize(
+                text=content.narration,
+                output_path=raw_path,
+                logger=runtime.logger,
+                long_form=True,
+            )
             self.ffmpeg.normalize_audio(input_path=raw_path, output_path=normalized_path)
             current_duration = self.ffmpeg.audio_duration_seconds(normalized_path)
-            _, fitted_duration = self.ffmpeg.fit_audio_duration(
-                input_path=normalized_path,
-                output_path=fitted_path,
-                current_duration_seconds=current_duration,
-                min_seconds=self.settings.min_long_duration_seconds,
-                max_seconds=self.settings.max_long_duration_seconds,
-            )
+            if runtime.request.test_duration_seconds is not None:
+                _, fitted_duration = self.ffmpeg.fit_audio_duration(
+                    input_path=normalized_path,
+                    output_path=fitted_path,
+                    current_duration_seconds=current_duration,
+                    min_seconds=runtime.request.test_duration_seconds,
+                    max_seconds=runtime.request.test_duration_seconds,
+                    target_seconds=runtime.request.test_duration_seconds,
+                    preserve_natural_speed=True,
+                )
+            else:
+                _, fitted_duration = self.ffmpeg.fit_audio_duration(
+                    input_path=normalized_path,
+                    output_path=fitted_path,
+                    current_duration_seconds=current_duration,
+                    min_seconds=self.settings.min_long_duration_seconds,
+                    max_seconds=self.settings.max_long_duration_seconds,
+                    preserve_natural_speed=True,
+                )
             asset = NarrationAsset(raw_path=raw_path, normalized_path=fitted_path, duration_seconds=fitted_duration)
             runtime.stage_summaries["narration_generation"] = {
                 "requested_engine": synthesis.requested_engine,
@@ -179,6 +202,23 @@ class LongPipeline(ShortPipeline):
                 **asset.model_dump(mode="json"),
             }
             return asset
+
+    def generate_long_subtitles(
+        self,
+        runtime: "LongPipelineRuntime",
+        content: GeneratedLongVideo,
+        narration: NarrationAsset,
+    ) -> SubtitleAsset:
+        with self._long_stage(runtime, "subtitle_generation", {"audio_seconds": narration.duration_seconds}):
+            subtitles = self.whisper.generate_subtitles(
+                audio_path=narration.normalized_path,
+                subtitle_text=content.narration,
+                output_base_path=runtime.artifacts.subtitles_dir / "long_captions",
+                duration_seconds=narration.duration_seconds,
+                style_profile="long",
+            )
+            runtime.stage_summaries["subtitle_generation"] = subtitles.model_dump(mode="json")
+            return subtitles
 
     def mix_background_music(self, runtime: "LongPipelineRuntime", narration: NarrationAsset) -> Path:
         with self._long_stage(runtime, "background_music", {"duration_seconds": narration.duration_seconds}):
@@ -200,39 +240,64 @@ class LongPipeline(ShortPipeline):
         runtime: "LongPipelineRuntime",
         topic: TopicChoice,
         content: GeneratedLongVideo,
-    ) -> list[VideoClipAsset]:
+    ) -> list[ImageAsset]:
         queries = self._long_visual_queries(topic, content)
-        with self._long_stage(runtime, "stock_video_download", {"query_count": len(queries), "max_clips": self.settings.long_broll_clip_count}):
-            clips = self.pexels.fetch_broll_clips(
+        with self._long_stage(runtime, "stock_image_download", {"query_count": len(queries), "max_images": self.settings.long_broll_clip_count}):
+            clips = self.pexels.fetch_broll_photos(
                 queries=queries,
-                max_clips=self.settings.long_broll_clip_count,
-                response_path=runtime.artifacts.responses_dir / "pexels_long_search.json",
+                max_photos=self.settings.long_broll_clip_count,
+                response_path=runtime.artifacts.responses_dir / "pexels_long_photo_search.json",
             )
-            runtime.stage_summaries["stock_video_download"] = {"clip_count": len(clips), "queries": queries}
+            runtime.stage_summaries["stock_image_download"] = {"image_count": len(clips), "queries": queries}
             return clips
 
     def plan_long_assets(
         self,
         runtime: "LongPipelineRuntime",
-        clips: list[VideoClipAsset],
+        clips: list[ImageAsset],
         narration: NarrationAsset,
         content: GeneratedLongVideo,
     ) -> AssetPlan:
         with self._long_stage(runtime, "asset_planning", {"clip_count": len(clips), "duration": narration.duration_seconds}):
-            clip_count = max(len(clips), 1)
+            if not clips:
+                raise PipelineStageError(
+                    stage="asset_planning",
+                    message="Long-form rendering needs at least one photo asset.",
+                    probable_cause="Pexels returned no usable photos for the selected topic.",
+                )
+            overview_path = self._create_long_overview(runtime, clips, content)
+            overview_duration = min(4.0, max(3.0, narration.duration_seconds * 0.08)) if overview_path else 0.0
+            clip_count = len(clips)
             segment_duration = narration.duration_seconds / clip_count
             segment_duration = max(self.settings.long_segment_min_seconds, min(segment_duration, self.settings.long_segment_max_seconds))
             segments: list[AssetPlanSegment] = []
-            remaining = narration.duration_seconds
+            if overview_path:
+                overview_titles = ", ".join(section.title for section in content.sections[:8])
+                segments.append(
+                    AssetPlanSegment(
+                        clip_path=overview_path,
+                        duration_seconds=overview_duration,
+                        reason=f"OVERVIEW: {overview_titles}",
+                        on_screen_text="Everything covered in this video",
+                        visual_variant="reveal",
+                    )
+                )
+            remaining = max(narration.duration_seconds - overview_duration, 0.5)
             index = 0
             while remaining > 0.25:
                 clip = clips[index % len(clips)]
                 duration = min(segment_duration, remaining)
+                section = content.sections[index % len(content.sections)]
+                section_words = section.narration.split()
+                words_per_segment = max(5, len(section_words) // max(len(content.sections), 1))
+                phrase_start = ((index // max(len(content.sections), 1)) * words_per_segment) % max(len(section_words), 1)
+                phrase = " ".join(section_words[phrase_start : phrase_start + words_per_segment]).strip()
                 segments.append(
                     AssetPlanSegment(
                         clip_path=clip.local_path,
                         duration_seconds=max(0.5, duration),
-                        reason=f"Long-form B-roll for {content.topic}: {clip.query}",
+                        reason=f"{section.title}: {clip.query}",
+                        on_screen_text=phrase or section.title,
                     )
                 )
                 remaining -= duration
@@ -241,11 +306,77 @@ class LongPipeline(ShortPipeline):
             runtime.stage_summaries["asset_planning"] = plan.model_dump(mode="json")
             return plan
 
+    def _create_long_overview(
+        self,
+        runtime: "LongPipelineRuntime",
+        clips: list[ImageAsset],
+        content: GeneratedLongVideo,
+    ) -> Path | None:
+        """Create the opening photo-zine: one centered card per chapter."""
+        try:
+            from PIL import Image, ImageDraw, ImageFont, ImageOps
+
+            valid_clips: list[ImageAsset] = []
+            for clip in clips[:8]:
+                try:
+                    with Image.open(clip.local_path):
+                        valid_clips.append(clip)
+                except (OSError, ValueError):
+                    continue
+            if not valid_clips:
+                return None
+
+            canvas = Image.new("RGB", (1280, 720), "white")
+            draw = ImageDraw.Draw(canvas)
+            try:
+                title_font = ImageFont.truetype("Arial.ttf", 28)
+                label_font = ImageFont.truetype("Arial.ttf", 18)
+            except OSError:
+                title_font = ImageFont.load_default()
+                label_font = ImageFont.load_default()
+            heading = "WHAT THIS VIDEO COVERS"
+            heading_box = draw.textbbox((0, 0), heading, font=title_font)
+            draw.text(((1280 - (heading_box[2] - heading_box[0])) / 2, 14), heading, fill="black", font=title_font)
+
+            count = len(valid_clips)
+            columns = 1 if count == 1 else 4
+            rows = (count + columns - 1) // columns
+            tile_width = 640 if count == 1 else 280
+            tile_height = 500 if count == 1 else 230
+            gap_x = 24 if count == 1 else 18
+            gap_y = 24 if count == 1 else 18
+            total_width = columns * tile_width + (columns - 1) * gap_x
+            total_height = rows * tile_height + (rows - 1) * gap_y
+            start_x = (1280 - total_width) // 2
+            start_y = max(62, (720 - total_height) // 2 + 18)
+            for index, clip in enumerate(valid_clips):
+                with Image.open(clip.local_path).convert("RGB") as source:
+                    tile = ImageOps.fit(source, (tile_width, tile_height), method=Image.Resampling.LANCZOS)
+                x = start_x + (index % columns) * (tile_width + gap_x)
+                y = start_y + (index // columns) * (tile_height + gap_y)
+                canvas.paste(tile, (x, y))
+                label = content.sections[index].title if index < len(content.sections) else clip.query
+                label = " ".join(label.replace(".", "").split())[:52]
+                label_lines = textwrap.wrap(label, width=24)[:2] or [label]
+                label_text = "\n".join(label_lines)
+                label_box = draw.multiline_textbbox((0, 0), label_text, font=label_font, spacing=1)
+                label_height = label_box[3] - label_box[1] + 10
+                label_top = y + tile_height - label_height
+                draw.rectangle((x, label_top, x + tile_width, y + tile_height), fill="white")
+                draw.multiline_text((x + 8, label_top + 4), label_text, fill="black", font=label_font, spacing=1)
+
+            output_path = runtime.artifacts.video_dir / "long-overview.jpg"
+            canvas.save(output_path, quality=95, subsampling=0)
+            return output_path
+        except (ImportError, OSError, ValueError):
+            return None
+
     def render_long_video(
         self,
         runtime: "LongPipelineRuntime",
         plan: AssetPlan,
         audio_path: Path,
+        subtitles: SubtitleAsset,
         content: GeneratedLongVideo,
     ) -> Path:
         with self._long_stage(runtime, "video_rendering", {"segments": len(plan.segments)}):
@@ -253,6 +384,7 @@ class LongPipeline(ShortPipeline):
             output_path = self.ffmpeg.render_longform(
                 plan=plan,
                 audio_path=audio_path,
+                subtitle_path=subtitles.ass_path or subtitles.srt_path,
                 working_dir=runtime.artifacts.video_dir,
                 output_path=final_video_path,
             )
@@ -263,8 +395,8 @@ class LongPipeline(ShortPipeline):
         with self._long_stage(runtime, "validation", {"video_path": str(final_video_path)}):
             payload = self.ffmpeg.validate_long_video(
                 final_video_path,
-                min_seconds=self.settings.min_long_duration_seconds,
-                max_seconds=self.settings.max_long_duration_seconds,
+                min_seconds=runtime.request.test_duration_seconds or self.settings.min_long_duration_seconds,
+                max_seconds=runtime.request.test_duration_seconds or self.settings.max_long_duration_seconds,
             )
             write_json(runtime.artifacts.metadata_dir / "validation.json", payload)
             runtime.stage_summaries["validation"] = payload
@@ -273,13 +405,33 @@ class LongPipeline(ShortPipeline):
     def generate_thumbnail(
         self,
         runtime: "LongPipelineRuntime",
-        clips: list[VideoClipAsset],
+        clips: list[ImageAsset],
         content: GeneratedLongVideo,
     ) -> Path:
         with self._long_stage(runtime, "thumbnail_generation", {"topic": content.topic}):
+            if runtime.request.thumbnail_path:
+                thumbnail_path = runtime.artifacts.metadata_dir / "thumbnail.jpg"
+                try:
+                    from PIL import Image
+
+                    Image.open(runtime.request.thumbnail_path).convert("RGB").save(
+                        thumbnail_path,
+                        quality=96,
+                        subsampling=0,
+                        optimize=True,
+                    )
+                except (ImportError, OSError):
+                    shutil.copy2(runtime.request.thumbnail_path, thumbnail_path)
+                runtime.stage_summaries["thumbnail_generation"] = {
+                    "path": str(thumbnail_path),
+                    "size": "reference image",
+                    "reference_path": str(runtime.request.thumbnail_path),
+                }
+                return thumbnail_path
+
             background_path = runtime.artifacts.assets_dir / "thumbnail_background.jpg"
             if clips:
-                self.ffmpeg.extract_frame(video_path=clips[0].local_path, output_path=background_path)
+                shutil.copy2(clips[0].local_path, background_path)
             thumbnail_path = runtime.artifacts.metadata_dir / "thumbnail.jpg"
             output_path = self.thumbnail.generate(
                 title_text=content.thumbnail_text,
@@ -367,7 +519,8 @@ class LongPipeline(ShortPipeline):
         topic: TopicChoice,
         content: GeneratedLongVideo,
         narration: NarrationAsset,
-        clips: list[VideoClipAsset],
+        subtitles: SubtitleAsset,
+        clips: list[ImageAsset],
         final_video_path: Path,
         thumbnail_path: Path,
         validation_payload: dict[str, object],
@@ -384,6 +537,7 @@ class LongPipeline(ShortPipeline):
                 "completed_at": _utc_now_iso(),
                 "language": "en",
                 "duration_seconds": narration.duration_seconds,
+                "subtitles": subtitles.model_dump(mode="json"),
                 "topic": topic.model_dump(mode="json"),
                 "content": content.model_dump(mode="json"),
                 "chapters": [{"start_seconds": seconds, "title": title} for seconds, title in chapters],
@@ -409,6 +563,15 @@ class LongPipeline(ShortPipeline):
             )
             self.database.record_asset(
                 run_id=runtime.run_id,
+                asset_type="long_subtitles",
+                source_id=None,
+                source_url=None,
+                local_path=str(subtitles.srt_path),
+                metadata=subtitles.model_dump(mode="json"),
+                created_at=completed_at,
+            )
+            self.database.record_asset(
+                run_id=runtime.run_id,
                 asset_type="long_narration",
                 source_id=None,
                 source_url=None,
@@ -419,7 +582,7 @@ class LongPipeline(ShortPipeline):
             for clip in clips:
                 self.database.record_asset(
                     run_id=runtime.run_id,
-                    asset_type="long_stock_clip",
+                    asset_type="long_stock_image",
                     source_id=clip.source_id,
                     source_url=clip.source_url,
                     local_path=str(clip.local_path),

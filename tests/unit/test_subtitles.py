@@ -147,6 +147,25 @@ Here are 3 facts
     assert "\\pos(540,1280)" in ass_text
 
 
+def test_long_ass_captions_use_the_center_of_a_1280_frame() -> None:
+    ass_text = build_ass_from_srt_text(
+        "1\n00:00:00,000 --> 00:00:02,000\nCentered long-form caption\n",
+        font_name="Arial",
+        font_size=36,
+        margin_v=28,
+        outline=2,
+        primary_color="&H00000000",
+        highlight_color="&H00000000",
+        outline_color="&H00FFFFFF",
+        back_color="&H64FFFFFF",
+        play_res_x=1280,
+        play_res_y=720,
+        style_name="LongForm",
+    )
+
+    assert "\\pos(640," in ass_text
+
+
 def test_build_ass_from_srt_text_adds_short_story_overlays() -> None:
     ass_text = build_ass_from_srt_text(
         """1

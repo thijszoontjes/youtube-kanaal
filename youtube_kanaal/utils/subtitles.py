@@ -124,13 +124,15 @@ def build_ass_from_srt_text(
     alignment: int = 2,
     style_name: str = "Shorts",
     beat_overlays: list[dict[str, object]] | None = None,
+    play_res_x: int = 1080,
+    play_res_y: int = 1920,
 ) -> str:
     cues = parse_srt_text(srt_text)
     lines = [
         "[Script Info]",
         "ScriptType: v4.00+",
-        "PlayResX: 1080",
-        "PlayResY: 1920",
+        f"PlayResX: {play_res_x}",
+        f"PlayResY: {play_res_y}",
         "ScaledBorderAndShadow: yes",
         "WrapStyle: 2",
         "",
@@ -162,7 +164,8 @@ def build_ass_from_srt_text(
                 style_name=style_name,
                 primary_color=primary_color,
                 highlight_color=highlight_color,
-                y_position=max(240, 1920 - margin_v),
+                y_position=max(int(play_res_y * 0.12), play_res_y - margin_v),
+                x_position=play_res_x // 2,
             )
         )
     for overlay in beat_overlays or []:
@@ -654,6 +657,7 @@ def _build_ass_events_for_cue(
     primary_color: str,
     highlight_color: str,
     y_position: int,
+    x_position: int,
 ) -> list[str]:
     line_groups = [line.split() for line in cue.text.splitlines() if line.strip()]
     word_positions = [
@@ -682,6 +686,7 @@ def _build_ass_events_for_cue(
         primary_color=primary_color,
         highlight_color=highlight_color,
         y_position=y_position,
+        x_position=x_position,
     )
     return [
         (
@@ -699,6 +704,7 @@ def _render_ass_highlighted_text(
     primary_color: str,
     highlight_color: str,
     y_position: int,
+    x_position: int,
 ) -> str:
     rendered_lines: list[str] = []
     for line_index, words in enumerate(line_groups):
@@ -712,7 +718,7 @@ def _render_ass_highlighted_text(
             else:
                 rendered_words.append(escaped)
         rendered_lines.append(" ".join(rendered_words))
-    return f"{{\\an5\\pos(540,{y_position})}}" + r"\N".join(rendered_lines)
+    return f"{{\\an5\\pos({x_position},{y_position})}}" + r"\N".join(rendered_lines)
 
 
 def _escape_ass_text(text: str) -> str:

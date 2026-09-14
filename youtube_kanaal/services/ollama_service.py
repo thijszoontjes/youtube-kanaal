@@ -242,13 +242,18 @@ class OllamaService:
         excluded_titles: list[str],
         prompt_path: Path,
         response_path: Path,
+        target_duration_seconds: int | None = None,
     ) -> GeneratedLongVideo:
         if self.settings.mock_mode:
-            content = self._fallback_long_content(topic)
+            content = (
+                self._fallback_test_long_content(topic)
+                if target_duration_seconds is not None
+                else self._fallback_long_content(topic)
+            )
             write_text(prompt_path, "mock-mode long-form content generation")
             write_json(response_path, content.model_dump(mode="json"))
             return content
-        prompt = build_long_content_generation_prompt(topic, excluded_titles)
+        prompt = build_long_content_generation_prompt(topic, excluded_titles, target_duration_seconds)
         write_text(prompt_path, prompt)
         content = self._generate_model(
             prompt=prompt,
@@ -635,7 +640,14 @@ class OllamaService:
                             "visual_queries": cleaned_queries or [topic_value, f"{topic_value} documentary"],
                         }
                     )
-        repaired["sections"] = self._fit_long_sections(cleaned_sections, topic_value, bucket_value)
+        test_mode = str(repaired.get("duration_profile", "long")).strip().lower() == "test"
+        repaired["duration_profile"] = "test" if test_mode else "long"
+        repaired["sections"] = self._fit_long_sections(
+            cleaned_sections,
+            topic_value,
+            bucket_value,
+            test_mode=test_mode,
+        )
 
         tags = repaired.get("tags")
         cleaned_tags = [str(tag).strip().lstrip("#") for tag in tags if str(tag).strip()] if isinstance(tags, list) else []
@@ -658,6 +670,7 @@ class OllamaService:
             [section.model_dump(mode="json") for section in content.sections],
             topic.topic,
             topic.bucket,
+            test_mode=content.duration_profile == "test",
         )
         return GeneratedLongVideo.model_validate(payload)
 
@@ -666,10 +679,20 @@ class OllamaService:
         sections: list[dict[str, object]],
         topic: str,
         bucket: str,
+        *,
+        test_mode: bool = False,
     ) -> list[LongVideoSection]:
         normalized: list[dict[str, object]] = []
+        minimum_words, maximum_words = (62, 72) if test_mode else (500, 650)
         for index, section in enumerate(sections, start=1):
-            narration = self._fit_section_words(str(section.get("narration", "")), topic, index)
+            narration = self._fit_section_words(
+                str(section.get("narration", "")),
+                topic,
+                index,
+                minimum_words=minimum_words,
+                maximum_words=maximum_words,
+                test_mode=test_mode,
+            )
             queries = section.get("visual_queries")
             visual_queries = [str(query).strip() for query in queries if str(query).strip()] if isinstance(queries, list) else []
             visual_queries.extend([topic, f"{topic} {bucket}", f"{topic} documentary b-roll"])
@@ -682,17 +705,37 @@ class OllamaService:
             )
         while len(normalized) < 7:
             index = len(normalized) + 1
+            if test_mode and len(normalized) >= 6:
+                break
             normalized.append(
                 {
                     "title": f"{topic.title()} Detail {index}",
-                    "narration": self._fallback_long_section(topic, bucket, index),
+                    "narration": (
+                        self._fallback_test_section(topic, index)
+                        if test_mode
+                        else self._fallback_long_section(topic, bucket, index)
+                    ),
                     "visual_queries": [topic, f"{topic} {bucket}", f"{topic} documentary b-roll"],
                 }
             )
-        normalized = normalized[:7]
+        normalized = normalized[:6] if test_mode else normalized[:7]
         total_words = sum(len(str(section["narration"]).split()) for section in normalized)
+        if test_mode:
+            index = 0
+            while total_words < 380:
+                words = str(normalized[index]["narration"]).split()
+                if len(words) < maximum_words:
+                    normalized[index]["narration"] = f"{normalized[index]['narration']} This changes the bigger picture."
+                    total_words = sum(len(str(section["narration"]).split()) for section in normalized)
+                index = (index + 1) % len(normalized)
+            while total_words > 420:
+                longest = max(range(len(normalized)), key=lambda i: len(str(normalized[i]["narration"]).split()))
+                words = str(normalized[longest]["narration"]).split()
+                normalized[longest]["narration"] = " ".join(words[:62]).rstrip(" ,;:") + "."
+                total_words = sum(len(str(section["narration"]).split()) for section in normalized)
+            return [LongVideoSection.model_validate(section) for section in normalized]
         index = 0
-        while total_words < 1325:
+        while total_words < 3500:
             addition = (
                 f" That detail matters because it changes how {topic} fits into the bigger story, "
                 "and it gives the visuals another layer instead of just repeating the same angle."
@@ -700,26 +743,37 @@ class OllamaService:
             normalized[index]["narration"] = f"{normalized[index]['narration']}{addition}"
             total_words += len(addition.split())
             index = (index + 1) % len(normalized)
-        while total_words > 1650:
+        while total_words > 4500:
             longest = max(range(len(normalized)), key=lambda i: len(str(normalized[i]["narration"]).split()))
             words = str(normalized[longest]["narration"]).split()
-            normalized[longest]["narration"] = " ".join(words[: max(190, len(words) - 25)]).rstrip(" ,;:") + "."
+            normalized[longest]["narration"] = " ".join(words[: max(500, len(words) - 25)]).rstrip(" ,;:") + "."
             new_total = sum(len(str(section["narration"]).split()) for section in normalized)
             if new_total == total_words:
                 break
             total_words = new_total
         return [LongVideoSection.model_validate(section) for section in normalized]
 
-    def _fit_section_words(self, narration: str, topic: str, index: int) -> str:
+    def _fit_section_words(
+        self,
+        narration: str,
+        topic: str,
+        index: int,
+        *,
+        minimum_words: int = 190,
+        maximum_words: int = 225,
+        test_mode: bool = False,
+    ) -> str:
         cleaned = self._clean_narration(narration)
         if not cleaned:
-            return self._fallback_long_section(topic, "facts", index)
+            return self._fallback_test_section(topic, index) if test_mode else self._fallback_long_section(topic, "facts", index)
         words = cleaned.split()
-        if len(words) > 235:
-            return " ".join(words[:225]).rstrip(" ,;:") + "."
-        while len(words) < 190:
+        if len(words) > maximum_words:
+            return " ".join(words[:maximum_words]).rstrip(" ,;:") + "."
+        while len(words) < minimum_words:
             extension = (
-                f" For {topic}, that small point is useful because it connects the explanation "
+                f" For {topic}, that detail changes the bigger picture."
+                if test_mode
+                else f" For {topic}, that small point is useful because it connects the explanation "
                 "to something you can actually picture on screen."
             )
             cleaned = f"{cleaned} {extension}"
@@ -1177,14 +1231,15 @@ class OllamaService:
         )
 
     def _fallback_long_content(self, topic: TopicChoice) -> GeneratedLongVideo:
-        sections = [
-            LongVideoSection(
-                title=f"{topic.topic.title()} Detail {index}",
-                narration=self._fallback_long_section(topic.topic, topic.bucket, index),
-                visual_queries=[topic.topic, f"{topic.topic} {topic.bucket}", f"{topic.topic} documentary"],
-            )
+        raw_sections = [
+            {
+                "title": f"{topic.topic.title()} Detail {index}",
+                "narration": self._fallback_long_section(topic.topic, topic.bucket, index),
+                "visual_queries": [topic.topic, f"{topic.topic} {topic.bucket}", f"{topic.topic} documentary"],
+            }
             for index in range(1, 8)
         ]
+        sections = self._fit_long_sections(raw_sections, topic.topic, topic.bucket)
         return GeneratedLongVideo(
             bucket=topic.bucket,
             topic=topic.topic,
@@ -1194,4 +1249,32 @@ class OllamaService:
             tags=[topic.topic, topic.bucket, "facts", "explainer", "documentary", "science", "education", "visual"],
             sections=sections,
             facts=self._fallback_long_facts(topic.topic, topic.bucket),
+        )
+
+    def _fallback_test_long_content(self, topic: TopicChoice) -> GeneratedLongVideo:
+        raw_sections = [
+            {
+                "title": f"{topic.topic.title()} Detail {index}",
+                "narration": self._fallback_test_section(topic.topic, index),
+                "visual_queries": [topic.topic, f"{topic.topic} {topic.bucket}"],
+            }
+            for index in range(1, 7)
+        ]
+        sections = self._fit_long_sections(raw_sections, topic.topic, topic.bucket, test_mode=True)
+        return GeneratedLongVideo(
+            bucket=topic.bucket,
+            topic=topic.topic,
+            title=self._clean_long_title("", topic.topic),
+            thumbnail_text=self._clean_thumbnail_text("", topic.topic),
+            description=self._clean_long_description("", topic.topic),
+            tags=[topic.topic, topic.bucket, "facts", "explainer", "documentary", "science", "education", "visual"],
+            sections=sections,
+            facts=self._fallback_long_facts(topic.topic, topic.bucket),
+            duration_profile="test",
+        )
+
+    def _fallback_test_section(self, topic: str, index: int) -> str:
+        return (
+            f"{topic.title()} looks familiar, but detail {index} changes how the whole subject makes sense. "
+            "The key idea is easier to understand when you see the evidence clearly."
         )

@@ -67,19 +67,40 @@ class FFmpegService:
         current_duration_seconds: float,
         min_seconds: int,
         max_seconds: int,
+        target_seconds: int | None = None,
+        preserve_natural_speed: bool = False,
     ) -> tuple[Path, float]:
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        if min_seconds <= current_duration_seconds <= max_seconds:
+        if target_seconds is None and min_seconds <= current_duration_seconds <= max_seconds:
             shutil.copy2(input_path, output_path)
             return output_path, current_duration_seconds
 
-        target_duration = min(max(current_duration_seconds, min_seconds + 8), max_seconds - 8)
-        if current_duration_seconds < min_seconds:
-            target_duration = min_seconds + 8
-        elif current_duration_seconds > max_seconds:
-            target_duration = max_seconds - 8
-        tempo = max(0.5, min(current_duration_seconds / target_duration, 2.0))
-        if self.settings.mock_mode:
+        if target_seconds is not None:
+            target_duration = float(target_seconds)
+        else:
+            target_duration = min(max(current_duration_seconds, min_seconds + 8), max_seconds - 8)
+            if current_duration_seconds < min_seconds:
+                target_duration = min_seconds + 8
+            elif current_duration_seconds > max_seconds:
+                target_duration = max_seconds - 8
+        if preserve_natural_speed:
+            # Chatterbox is already relatively quick. Stretching a short take down
+            # to a fixed video length makes the voice sound unnaturally slow.
+            # Keep the original speed, or speed up a slightly long take, then pad
+            # the tail so the render still has an exact, predictable duration.
+            tempo = max(1.0, min(current_duration_seconds / target_duration, 1.35))
+            remaining_seconds = max(target_duration - (current_duration_seconds / tempo), 0.0)
+            filter_graph = (
+                f"atempo={tempo:.6f},loudnorm=I=-16:TP=-1.5:LRA=11,"
+                f"apad=pad_dur={remaining_seconds:.3f},atrim=duration={target_duration:.3f}"
+            )
+        else:
+            tempo = max(0.5, min(current_duration_seconds / target_duration, 2.0))
+            filter_graph = f"atempo={tempo:.6f},loudnorm=I=-16:TP=-1.5:LRA=11"
+        if self.settings.mock_mode and target_seconds is None:
+            shutil.copy2(input_path, output_path)
+            return output_path, current_duration_seconds
+        if self.settings.mock_mode and not command_exists(self.settings.ffmpeg_binary):
             shutil.copy2(input_path, output_path)
             return output_path, current_duration_seconds
         run_command(
@@ -89,7 +110,7 @@ class FFmpegService:
                 "-i",
                 str(input_path),
                 "-af",
-                f"atempo={tempo:.6f},loudnorm=I=-16:TP=-1.5:LRA=11",
+                filter_graph,
                 "-ar",
                 "48000",
                 "-ac",
@@ -285,12 +306,17 @@ class FFmpegService:
         *,
         plan: AssetPlan,
         audio_path: Path,
+        subtitle_path: Path,
         working_dir: Path,
         output_path: Path,
     ) -> Path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         if self.settings.mock_mode:
-            return self._render_mock_longform(audio_path=audio_path, output_path=output_path)
+            return self._render_mock_longform(
+                audio_path=audio_path,
+                subtitle_path=subtitle_path,
+                output_path=output_path,
+            )
 
         segments_dir = working_dir / "segments"
         segments_dir.mkdir(parents=True, exist_ok=True)
@@ -301,32 +327,88 @@ class FFmpegService:
                 duration_seconds=segment.duration_seconds,
                 variant=index,
             )
-            run_command(
-                [
-                    self.settings.ffmpeg_binary,
-                    "-y",
-                    "-stream_loop",
-                    "-1",
-                    "-i",
-                    str(segment.clip_path),
-                    "-t",
-                    f"{segment.duration_seconds:.2f}",
-                    "-vf",
-                    segment_filter,
-                    "-an",
-                    "-c:v",
-                    "libx264",
-                    "-threads",
-                    "2",
-                    "-preset",
-                    "superfast",
-                    "-crf",
-                    "23",
-                    str(segment_path),
-                ],
-                timeout_seconds=900,
-                stage="video_rendering",
-            )
+            if segment.clip_path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}:
+                title_path = working_dir / f"long-title-{index:03d}.txt"
+                caption_path = working_dir / f"long-caption-{index:03d}.txt"
+                write_text(title_path, self._clean_drawtext_text(segment.reason.split(":", 1)[0]))
+                write_text(caption_path, self._clean_drawtext_text(segment.on_screen_text or segment.reason))
+                photo_filter = (
+                    self._long_overview_filter(
+                        duration_seconds=segment.duration_seconds,
+                        title_path=title_path,
+                        caption_path=caption_path,
+                    )
+                    if segment.clip_path.name == "long-overview.jpg"
+                    else self._long_photo_filter(
+                        duration_seconds=segment.duration_seconds,
+                        variant=index,
+                        title_path=title_path,
+                        caption_path=caption_path,
+                    )
+                )
+                run_command(
+                    [
+                        self.settings.ffmpeg_binary,
+                        "-y",
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        f"color=c=white:s=1280x720:r=30:d={segment.duration_seconds:.2f}",
+                        "-loop",
+                        "1",
+                        "-framerate",
+                        "30",
+                        "-i",
+                        str(segment.clip_path),
+                        "-filter_complex",
+                        photo_filter,
+                        "-map",
+                        "[v]",
+                        "-t",
+                        f"{segment.duration_seconds:.2f}",
+                        "-an",
+                        "-c:v",
+                        "libx264",
+                        "-threads",
+                        "2",
+                        "-preset",
+                        "superfast",
+                        "-crf",
+                        "23",
+                        "-pix_fmt",
+                        "yuv420p",
+                        str(segment_path),
+                    ],
+                    timeout_seconds=900,
+                    stage="video_rendering",
+                )
+            else:
+                run_command(
+                    [
+                        self.settings.ffmpeg_binary,
+                        "-y",
+                        "-stream_loop",
+                        "-1",
+                        "-i",
+                        str(segment.clip_path),
+                        "-t",
+                        f"{segment.duration_seconds:.2f}",
+                        "-vf",
+                        segment_filter,
+                        "-an",
+                        "-c:v",
+                        "libx264",
+                        "-threads",
+                        "2",
+                        "-preset",
+                        "superfast",
+                        "-crf",
+                        "23",
+                        str(segment_path),
+                    ],
+                    timeout_seconds=900,
+                    stage="video_rendering",
+                )
             segment_paths.append(segment_path)
 
         concat_file = working_dir / "long-concat.txt"
@@ -359,12 +441,40 @@ class FFmpegService:
                 "-preset",
                 "medium",
                 "-crf",
-                "22",
+                "18",
+                "-pix_fmt",
+                "yuv420p",
                 "-c:a",
                 "aac",
                 "-b:a",
                 "192k",
                 "-shortest",
+                str(rough_cut_path),
+            ],
+            timeout_seconds=1800,
+            stage="video_rendering",
+        )
+        subtitle_filter = self._subtitle_filter(subtitle_path, original_size=(1280, 720))
+        run_command(
+            [
+                self.settings.ffmpeg_binary,
+                "-y",
+                "-i",
+                str(rough_cut_path),
+                "-vf",
+                subtitle_filter,
+                "-c:v",
+                "libx264",
+                "-threads",
+                "2",
+                "-preset",
+                "medium",
+                "-crf",
+                "18",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "copy",
                 str(output_path),
             ],
             timeout_seconds=1800,
@@ -518,9 +628,9 @@ class FFmpegService:
         normalized = str(path.resolve()).replace("\\", "/")
         return normalized.replace(":", "\\:").replace("'", "\\'")
 
-    def _subtitle_filter(self, subtitle_path: Path) -> str:
+    def _subtitle_filter(self, subtitle_path: Path, *, original_size: tuple[int, int] = (1080, 1920)) -> str:
         if subtitle_path.suffix.lower() == ".ass":
-            return f"subtitles=filename='{self._escape_filter_path(subtitle_path)}':original_size=1080x1920"
+            return f"subtitles=filename='{self._escape_filter_path(subtitle_path)}'"
         style = (
             f"FontName={self.settings.subtitle_font_name},"
             f"FontSize={self.settings.subtitle_font_size},"
@@ -531,9 +641,56 @@ class FFmpegService:
             f"BackColour={self.settings.subtitle_back_color}"
         )
         return (
-            f"subtitles=filename='{self._escape_filter_path(subtitle_path)}':original_size=1080x1920:"
+            f"subtitles=filename='{self._escape_filter_path(subtitle_path)}':original_size={original_size[0]}x{original_size[1]}:"
             f"force_style='{style}'"
         )
+
+    def _long_photo_filter(
+        self,
+        *,
+        duration_seconds: float,
+        variant: int,
+        title_path: Path,
+        caption_path: Path,
+    ) -> str:
+        photo_x = 285 if variant % 2 else 375
+        photo_y = 120 if variant % 3 else 145
+        caption_y = 590 if variant % 2 else 560
+        title_file = self._escape_filter_path(title_path)
+        caption_file = self._escape_filter_path(caption_path)
+        return (
+            "[1:v]scale=520:360:force_original_aspect_ratio=decrease,"
+            "pad=520:360:(ow-iw)/2:(oh-ih)/2:color=white,"
+            "eq=saturation=1.1:contrast=1.05:brightness=0.01,"
+            "unsharp=5:5:0.45:3:3:0.0[photo];"
+            f"[0:v][photo]overlay=x={photo_x}:y={photo_y}:shortest=1[card];"
+            f"[card]drawtext=font='Arial':textfile='{title_file}':fontcolor=black:"
+            "fontsize=30:x=(w-text_w)/2:y=22:expansion=none:enable='between(t,0,"
+            f"{duration_seconds:.2f})',"
+            f"drawtext=font='Arial':textfile='{caption_file}':fontcolor=black:"
+            f"fontsize=25:x=(w-text_w)/2:y={caption_y}:expansion=none:enable='between(t,0,{duration_seconds:.2f})',"
+            "format=yuv420p[v]"
+        )
+
+    def _long_overview_filter(
+        self,
+        *,
+        duration_seconds: float,
+        title_path: Path,
+        caption_path: Path,
+    ) -> str:
+        title_file = self._escape_filter_path(title_path)
+        caption_file = self._escape_filter_path(caption_path)
+        return (
+            "[1:v]scale=1100:600:force_original_aspect_ratio=decrease,"
+            "pad=1100:600:(ow-iw)/2:(oh-ih)/2:color=white[overview];"
+            "[0:v][overview]overlay=x=90:y=55[card];"
+            "[card]fade=t=in:st=0:d=0.2,format=yuv420p[v]"
+        )
+
+    @staticmethod
+    def _clean_drawtext_text(value: str) -> str:
+        return " ".join(value.replace("\n", " ").split())[:120]
 
     def _segment_filter(
         self,
@@ -677,9 +834,10 @@ class FFmpegService:
             ),
         )
 
-    def _render_mock_longform(self, *, audio_path: Path, output_path: Path) -> Path:
+    def _render_mock_longform(self, *, audio_path: Path, subtitle_path: Path, output_path: Path) -> Path:
         if command_exists(self.settings.ffmpeg_binary):
             duration_seconds = self.audio_duration_seconds(audio_path)
+            rough_path = output_path.with_name(f"{output_path.stem}-rough.mp4")
             run_command(
                 [
                     self.settings.ffmpeg_binary,
@@ -701,6 +859,25 @@ class FFmpegService:
                     "-b:a",
                     "192k",
                     "-shortest",
+                    str(rough_path),
+                ],
+                timeout_seconds=900,
+                stage="video_rendering",
+            )
+            run_command(
+                [
+                    self.settings.ffmpeg_binary,
+                    "-y",
+                    "-i",
+                    str(rough_path),
+                    "-vf",
+                    self._subtitle_filter(subtitle_path, original_size=(1280, 720)),
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "veryfast",
+                    "-c:a",
+                    "copy",
                     str(output_path),
                 ],
                 timeout_seconds=900,

@@ -3,12 +3,14 @@ from __future__ import annotations
 import importlib
 import logging
 import math
+import re
 import struct
 import wave
 from pathlib import Path
 
 from youtube_kanaal.config import Settings
 from youtube_kanaal.exceptions import ConfigurationError, PipelineStageError
+from youtube_kanaal.utils.files import write_text
 from youtube_kanaal.utils.process import command_exists, run_command
 from youtube_kanaal.utils.subtitles import estimate_runtime_from_text
 
@@ -119,6 +121,90 @@ class ChatterboxService:
                 },
             )
         return output_path
+
+    def synthesize_long(
+        self,
+        *,
+        text: str,
+        output_path: Path,
+        logger: logging.Logger | None = None,
+        max_words_per_chunk: int = 200,
+    ) -> Path:
+        """Synthesize long narration in bounded chunks and join the WAV files."""
+        chunks = self._split_text_for_long_narration(text, max_words_per_chunk)
+        if len(chunks) <= 1:
+            return self.synthesize(text=text, output_path=output_path, logger=logger)
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        chunk_paths: list[Path] = []
+        try:
+            for index, chunk in enumerate(chunks, start=1):
+                chunk_path = output_path.with_name(f"{output_path.stem}.chunk-{index:02d}.wav")
+                self.synthesize(text=chunk, output_path=chunk_path, logger=logger)
+                chunk_paths.append(chunk_path)
+            self._join_wav_files(chunk_paths, output_path)
+        finally:
+            for chunk_path in chunk_paths:
+                chunk_path.unlink(missing_ok=True)
+        return output_path
+
+    @staticmethod
+    def _split_text_for_long_narration(text: str, max_words: int) -> list[str]:
+        sentences = [sentence.strip() for sentence in re.split(r"(?<=[.!?])\s+", text.strip()) if sentence.strip()]
+        chunks: list[str] = []
+        current: list[str] = []
+        current_words = 0
+        for sentence in sentences:
+            words = sentence.split()
+            if len(words) > max_words:
+                if current:
+                    chunks.append(" ".join(current))
+                    current, current_words = [], 0
+                for start in range(0, len(words), max_words):
+                    chunks.append(" ".join(words[start : start + max_words]))
+                continue
+            if current and current_words + len(words) > max_words:
+                chunks.append(" ".join(current))
+                current, current_words = [], 0
+            current.append(sentence)
+            current_words += len(words)
+        if current:
+            chunks.append(" ".join(current))
+        return chunks or [text.strip()]
+
+    def _join_wav_files(self, input_paths: list[Path], output_path: Path) -> None:
+        if not input_paths:
+            raise ValueError("At least one WAV file is required.")
+        concat_path = output_path.with_name(f"{output_path.stem}.concat.txt")
+        write_text(
+            concat_path,
+            "\n".join(f"file '{path.resolve()}'" for path in input_paths) + "\n",
+        )
+        try:
+            run_command(
+                [
+                    self.settings.ffmpeg_binary,
+                    "-y",
+                    "-f",
+                    "concat",
+                    "-safe",
+                    "0",
+                    "-i",
+                    str(concat_path),
+                    "-vn",
+                    "-ar",
+                    "24000",
+                    "-ac",
+                    "1",
+                    "-c:a",
+                    "pcm_s16le",
+                    str(output_path),
+                ],
+                timeout_seconds=600,
+                stage="narration_generation",
+            )
+        finally:
+            concat_path.unlink(missing_ok=True)
 
     def _load_model(self):
         if self._model is not None:

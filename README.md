@@ -2,6 +2,20 @@
 
 Local, terminal-first YouTube automation for English Shorts and daily long-form fact explainers.
 
+## Long-form branch
+
+The `long-term-videos` branch is dedicated to long-form videos. Shorts are not part of this workflow. A production video is rendered between 8:30 and 11:00 using an AI-generated English script, the configured local voice engine, copyright-friendly Pexels photos, a white explainer layout inspired by the supplied reference video, short visual text fragments, faster image changes, subtitles burned into the final video, background audio ducking, metadata, and a 16:9 thumbnail.
+
+The supplied reference thumbnail is stored at `data/long-form-thumbnail-reference.png` and is used by the local test command:
+
+```bash
+.venv/bin/python -m youtube_kanaal make-long-test
+```
+
+This command always creates a local one-minute test package and never uploads it. Production long-form generation remains available through `generate-and-schedule` and uses the normal 8:30–11:00 minute duration range.
+
+The reference video's exact voice ID is not exposed by YouTube metadata. The branch therefore uses the configured local Chatterbox reference voice; reproducing the source voice exactly requires a licensed voice match or an authorized clean reference recording. Long-form runs always write SRT/VTT/ASS captions and burn the ASS/SRT captions into the MP4.
+
 ## Quick Start
 
 ## Daily Content Run
@@ -25,10 +39,10 @@ $env:LONG_PUBLISH_TIME="13:30"
 python -m youtube_kanaal daily-content --for today --short-times "16:00, 17:00, 19:00, 20:00" --video-time "17:00"  
 
 ## op mac
-.venv/bin/python -m youtube_kanaal daily-content --for today --short-times "11:00,17:00,19:00,20:00" --video-time "17:00"
+.venv/bin/python -m youtube_kanaal daily-content --for tomorrow --short-times "11:00,17:00,19:00,20:00" --video-time "17:00"
 
 cd /Users/thijszoontjes/Projects/youtube-kanaal
-.venv/bin/python -m youtube_kanaal daily-content --for tomorrow --short-times "11:00,17:00,19:00,20:00" --video-time "17:00"
+ollama pull llama3.2:3b 
 
 ollama pull llama3.2:3b 
 
@@ -54,7 +68,7 @@ make daily-content-dry-run
 python -m youtube_kanaal daily-content --dry-run
 ```
 
-The long-form part generates English videos between `8:30` and `11:00`, uses the existing Kokoro-first narration config, pulls B-roll from Pexels, adds a generated royalty-free background bed with ducking, renders a 1280x720 thumbnail, writes metadata/chapters/tags, and schedules the YouTube upload for the next day at `LONG_PUBLISH_TIME`.
+The long-form part generates English videos between `8:30` and `11:00`, uses the configured narration engine, pulls copyright-friendly photos from Pexels, applies the existing movement and transition editing, adds a generated royalty-free background bed with ducking, renders a 1280x720 video and 1920x1080 thumbnail, writes metadata/chapters/tags, and schedules the YouTube upload for the next day at `LONG_PUBLISH_TIME`.
 
 Outputs are written to `output/<run_id>/`:
 
@@ -89,6 +103,8 @@ SCHEDULED_RUN_TIMES=10:00,13:00,15:00,19:00
 NARRATION_ENGINE=kokoro
 KOKORO_VOICE=af_heart
 ```
+
+`LONG_BROLL_CLIP_COUNT` is retained as the existing environment variable name; on this branch it controls the maximum number of Pexels photos used in the long-form edit.
 ollama pull llama3.2:3b   
 python -m youtube_kanaal daily-content --for today --short-times "10:00,13:00,15:00,19:00" --video-time "17:00"
 
