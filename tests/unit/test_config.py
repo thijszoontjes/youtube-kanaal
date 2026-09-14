@@ -14,6 +14,13 @@ def test_settings_default_to_kokoro_narration() -> None:
     assert settings.kokoro_speed == 1.05
 
 
+def test_settings_default_to_fast_local_ollama_model_and_longer_timeout() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.ollama_model == "llama3.2:3b"
+    assert settings.ollama_timeout_seconds == 300
+
+
 def test_settings_reject_invalid_duration_window() -> None:
     with pytest.raises(ValidationError):
         Settings(

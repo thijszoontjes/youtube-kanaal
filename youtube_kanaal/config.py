@@ -59,7 +59,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("OLLAMA_BASE_URL"),
     )
     ollama_model: str = Field(
-        default="llama3.1:8b-instruct",
+        default="llama3.2:3b",
         validation_alias=AliasChoices("OLLAMA_MODEL"),
     )
     pexels_api_key: str | None = Field(default=None, validation_alias=AliasChoices("PEXELS_API_KEY"))
@@ -212,7 +212,7 @@ class Settings(BaseSettings):
     )
 
     network_timeout_seconds: int = Field(default=30, validation_alias=AliasChoices("NETWORK_TIMEOUT_SECONDS"))
-    ollama_timeout_seconds: int = Field(default=180, validation_alias=AliasChoices("OLLAMA_TIMEOUT_SECONDS"))
+    ollama_timeout_seconds: int = Field(default=300, validation_alias=AliasChoices("OLLAMA_TIMEOUT_SECONDS"))
     retry_attempts: int = Field(default=3, validation_alias=AliasChoices("RETRY_ATTEMPTS"))
     allow_placeholder_video: bool = Field(
         default=False,
