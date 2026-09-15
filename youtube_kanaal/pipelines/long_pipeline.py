@@ -34,7 +34,52 @@ from youtube_kanaal.services.pexels_service import PexelsService
 from youtube_kanaal.services.thumbnail_service import ThumbnailService
 from youtube_kanaal.services.youtube_service import YouTubeService
 from youtube_kanaal.utils.files import copy_collision_safe, ensure_directory, safe_slug, write_json, write_text
+from youtube_kanaal.utils.subtitles import SubtitleCue, parse_srt_text
 from youtube_kanaal.utils.similarity import is_near_duplicate, normalize_for_similarity
+
+
+def _build_long_audio_ranges(
+    cues: list[SubtitleCue],
+    word_counts: list[int],
+    total_duration: float,
+) -> list[tuple[float, float]] | None:
+    """Map intro/chapters to the actual subtitle timeline instead of word ratios."""
+    if not cues or not word_counts or sum(word_counts) <= 0:
+        return None
+    cue_word_counts = [max(len(cue.text.split()), 1) for cue in cues]
+    cue_total = sum(cue_word_counts)
+    if cue_total < max(sum(word_counts) * 0.5, 1):
+        return None
+
+    def time_at_word(offset: int) -> float:
+        if offset <= 0:
+            return 0.0
+        consumed = 0
+        for cue, cue_words in zip(cues, cue_word_counts):
+            if offset <= consumed + cue_words:
+                fraction = (offset - consumed) / cue_words
+                return min(max(cue.start_seconds + (cue.end_seconds - cue.start_seconds) * fraction, 0.0), total_duration)
+            consumed += cue_words
+        return total_duration
+
+    offsets = [0]
+    for word_count in word_counts:
+        offsets.append(offsets[-1] + max(word_count, 0))
+    boundaries = [time_at_word(offset) for offset in offsets]
+    boundaries[-1] = total_duration
+    return [
+        (min(start, end), max(start, end))
+        for start, end in zip(boundaries, boundaries[1:])
+    ]
+
+
+def _subtitle_text_between(cues: list[SubtitleCue], start: float, end: float) -> str:
+    words: list[str] = []
+    for cue in cues:
+        if cue.end_seconds <= start or cue.start_seconds >= end:
+            continue
+        words.extend(cue.text.replace("\n", " ").split())
+    return " ".join(words[:12]).strip()
 
 
 class LongPipeline(ShortPipeline):
@@ -94,7 +139,7 @@ class LongPipeline(ShortPipeline):
             subtitles = self.generate_long_subtitles(runtime, content, narration)
             mixed_audio = self.mix_background_music(runtime, narration)
             clips = self.download_long_broll(runtime, topic, content)
-            plan = self.plan_long_assets(runtime, clips, narration, content)
+            plan = self.plan_long_assets(runtime, clips, narration, content, subtitles)
             final_video_path = self.render_long_video(runtime, plan, mixed_audio, subtitles, content)
             validation_payload = self.validate_long_output(runtime, final_video_path)
             thumbnail_path = self.generate_thumbnail(runtime, clips, content)
@@ -264,6 +309,7 @@ class LongPipeline(ShortPipeline):
         clips: list[ImageAsset],
         narration: NarrationAsset,
         content: GeneratedLongVideo,
+        subtitles: SubtitleAsset,
     ) -> AssetPlan:
         with self._long_stage(runtime, "asset_planning", {"clip_count": len(clips), "duration": narration.duration_seconds}):
             if not clips:
@@ -275,11 +321,27 @@ class LongPipeline(ShortPipeline):
             overview_path = self._create_long_overview(runtime, clips, content)
             segments: list[AssetPlanSegment] = []
             total_duration = narration.duration_seconds
-            overview_intro = min(8.0, max(6.0, total_duration * 0.08)) if overview_path else 0.0
-            chapter_audio_duration = max(total_duration - overview_intro, 0.5)
             section_word_counts = [max(len(section.narration.split()), 1) for section in content.sections]
-            total_section_words = sum(section_word_counts)
-            chapter_durations = [chapter_audio_duration * (count / total_section_words) for count in section_word_counts]
+            intro_word_count = len(content.intro.split())
+            subtitle_cues = parse_srt_text(subtitles.srt_path.read_text(encoding="utf-8")) if subtitles.srt_path.exists() else []
+            timed_ranges = _build_long_audio_ranges(
+                subtitle_cues,
+                [intro_word_count, *section_word_counts],
+                total_duration,
+            )
+            if timed_ranges and len(timed_ranges) == len(content.sections) + 1:
+                overview_intro = timed_ranges[0][1] if overview_path else 0.0
+                chapter_ranges = timed_ranges[1:]
+            else:
+                overview_intro = min(8.0, max(6.0, total_duration * 0.08)) if overview_path else 0.0
+                chapter_audio_duration = max(total_duration - overview_intro, 0.5)
+                total_section_words = sum(section_word_counts)
+                chapter_durations = [chapter_audio_duration * (count / total_section_words) for count in section_word_counts]
+                cursor = overview_intro
+                chapter_ranges = []
+                for chapter_duration in chapter_durations:
+                    chapter_ranges.append((cursor, cursor + chapter_duration))
+                    cursor += chapter_duration
             overview_cards = runtime.stage_summaries.get("overview_cards", [])
             card_by_chapter = {
                 str(card.get("chapter_id")): card
@@ -303,14 +365,19 @@ class LongPipeline(ShortPipeline):
                 )
 
             section_cursors = [0 for _ in content.sections]
-            for section_index, (section, chapter_duration) in enumerate(zip(content.sections, chapter_durations), start=1):
+            for section_index, (section, (chapter_start, chapter_end)) in enumerate(
+                zip(content.sections, chapter_ranges),
+                start=1,
+            ):
                 chapter_id = f"chapter-{section_index:02d}"
+                chapter_duration = max(chapter_end - chapter_start, 0.5)
                 card = card_by_chapter.get(chapter_id, {})
                 focus_x = float(card.get("focus_x", 0.5)) if card else 0.5
                 focus_y = float(card.get("focus_y", 0.5)) if card else 0.5
                 return_duration = 0.0
                 if overview_path and section_index > 1:
-                    return_duration = min(2.0, max(1.5, chapter_duration * 0.18))
+                    return_duration = min(2.0, max(1.5, chapter_duration * 0.18), max(chapter_duration - 0.75, 0.0))
+                if return_duration >= 0.5:
                     segments.append(
                         AssetPlanSegment(
                             clip_path=overview_path,
@@ -327,8 +394,12 @@ class LongPipeline(ShortPipeline):
                             focus_y=focus_y,
                         )
                     )
-                transition_duration = min(0.8, max(0.6, chapter_duration * 0.08)) if overview_path else 0.0
-                if overview_path and chapter_duration > transition_duration + 0.8:
+                transition_duration = (
+                    min(0.8, max(0.6, chapter_duration * 0.08), max(chapter_duration - return_duration - 0.5, 0.0))
+                    if overview_path
+                    else 0.0
+                )
+                if transition_duration >= 0.5:
                     transition_asset = self._section_clip_pool(section, clips, content.topic, content.bucket)[0]
                     segments.append(
                         AssetPlanSegment(
@@ -347,21 +418,25 @@ class LongPipeline(ShortPipeline):
                         )
                     )
 
-                section_words = section.narration.split()
-                scene_remaining = max(chapter_duration - return_duration - transition_duration, 0.5)
+                photo_start = min(chapter_end, chapter_start + return_duration + transition_duration)
+                photo_end = chapter_end
+                scene_start = photo_start
                 scene_index = 0
-                while scene_remaining > 0.25:
-                    duration = min(
-                        self.settings.long_segment_max_seconds,
-                        max(self.settings.long_segment_min_seconds, scene_remaining),
-                    )
-                    duration = min(duration, scene_remaining)
+                while photo_end - scene_start > 0.25:
+                    target_end = min(scene_start + self.settings.long_segment_max_seconds, photo_end)
+                    cue_boundaries = [
+                        cue.end_seconds
+                        for cue in subtitle_cues
+                        if scene_start + self.settings.long_segment_min_seconds <= cue.end_seconds <= target_end
+                    ]
+                    scene_end = max(cue_boundaries, default=target_end)
+                    if scene_end <= scene_start + 0.25:
+                        scene_end = target_end
+                    duration = scene_end - scene_start
                     pool = self._section_clip_pool(section, clips, content.topic, content.bucket)
                     clip = pool[section_cursors[section_index - 1] % len(pool)]
                     section_cursors[section_index - 1] += 1
-                    progress = 1.0 - (scene_remaining / max(chapter_duration, 0.1))
-                    phrase_start = min(int(progress * len(section_words)), max(len(section_words) - 10, 0))
-                    phrase = " ".join(section_words[phrase_start : phrase_start + 10]).strip()
+                    phrase = _subtitle_text_between(subtitle_cues, scene_start, scene_end)
                     segments.append(
                         AssetPlanSegment(
                             clip_path=clip.local_path,
@@ -376,7 +451,7 @@ class LongPipeline(ShortPipeline):
                             motion=scene_index % 3 != 1,
                         )
                     )
-                    scene_remaining -= duration
+                    scene_start = scene_end
                     scene_index += 1
             planned_duration = sum(segment.duration_seconds for segment in segments)
             duration_delta = total_duration - planned_duration

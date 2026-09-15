@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from youtube_kanaal.models import AssetPlanSegment, GeneratedLongVideo, LongRunRequest, LongVideoSection
+from youtube_kanaal.pipelines.long_pipeline import _build_long_audio_ranges, _subtitle_text_between
+from youtube_kanaal.utils.subtitles import SubtitleCue
 
 
 def _section(index: int) -> LongVideoSection:
@@ -82,3 +84,26 @@ def test_long_asset_plan_segment_can_be_static() -> None:
     )
 
     assert segment.motion is False
+
+
+def test_long_audio_ranges_follow_real_subtitle_timing() -> None:
+    cues = [
+        SubtitleCue(start_seconds=0.0, end_seconds=2.0, text="intro words"),
+        SubtitleCue(start_seconds=2.0, end_seconds=5.0, text="chapter words"),
+        SubtitleCue(start_seconds=5.0, end_seconds=9.0, text="more chapter"),
+    ]
+
+    ranges = _build_long_audio_ranges(cues, [2, 4], 9.0)
+
+    assert ranges == [(0.0, 2.0), (2.0, 9.0)]
+
+
+def test_long_visual_phrase_comes_from_the_same_timed_cues() -> None:
+    cues = [
+        SubtitleCue(start_seconds=0.0, end_seconds=2.0, text="first phrase"),
+        SubtitleCue(start_seconds=2.0, end_seconds=5.0, text="second phrase"),
+    ]
+
+    phrase = _subtitle_text_between(cues, 1.0, 3.0)
+
+    assert phrase == "first phrase second phrase"

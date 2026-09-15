@@ -14,7 +14,7 @@ def test_chatterbox_discovers_supported_reference_audio(tmp_path: Path) -> None:
     second.write_bytes(b"voice")
     ignored.write_text("not audio", encoding="utf-8")
 
-    service = ChatterboxService(Settings(xtts_speaker_wav_dir=sample_dir))
+    service = ChatterboxService(Settings(xtts_speaker_wav_path=None, xtts_speaker_wav_dir=sample_dir))
 
     assert service.discover_reference_sources() == [first.resolve(), second.resolve()]
 
