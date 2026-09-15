@@ -3,12 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from youtube_kanaal.cli import app
-from youtube_kanaal.models import GeneratedLongVideo, LongRunRequest, TOPIC_CATALOG, TopicChoice
+from youtube_kanaal.models import GeneratedLongVideo, ImageAsset, LongRunRequest, TOPIC_CATALOG, TopicChoice
 from youtube_kanaal.prompts import build_long_content_generation_prompt
 from youtube_kanaal.services.ollama_service import OllamaService
 from youtube_kanaal.services.pexels_service import PexelsService
 from youtube_kanaal.services.chatterbox_service import ChatterboxService
 from youtube_kanaal.config import load_settings
+from youtube_kanaal.db import Database
+from youtube_kanaal.pipelines.long_pipeline import LongPipeline
 
 
 def test_long_run_request_accepts_one_minute_test_and_thumbnail(tmp_path: Path) -> None:
@@ -76,6 +78,46 @@ def test_easiest_muscles_topic_has_concrete_test_blocks(tmp_path: Path) -> None:
         "LEGS",
     ]
     assert content.sections[0].visual_queries[0] == "chest muscle anatomy"
+    assert "#EasiestMusclesToGrow" in content.upload_description([(0.0, "CHEST")])
+
+
+def test_long_overview_uses_only_one_tile_per_chapter(tmp_path: Path) -> None:
+    service = OllamaService(load_settings(mock_mode=True))
+    topic = TopicChoice(
+        bucket="human body",
+        topic="easiest muscles to grow",
+        visual_queries=["easiest muscles to grow", "human body"],
+        search_terms=["easiest muscles to grow", "human body"],
+    )
+    content = service._fallback_test_long_content(topic)
+    pipeline = LongPipeline(load_settings(mock_mode=True), Database(tmp_path / "database.sqlite"))
+    clips = [
+        ImageAsset(
+            source_id=f"chapter-{index}",
+            query=section.visual_queries[0],
+            source_url="https://example.invalid/photo",
+            download_url="https://example.invalid/photo.jpg",
+            local_path=tmp_path / f"chapter-{index}.jpg",
+            width=1920,
+            height=1080,
+        )
+        for index, section in enumerate(content.sections)
+    ]
+    clips.append(
+        ImageAsset(
+            source_id="extra-search-result",
+            query="chest workout gym",
+            source_url="https://example.invalid/extra",
+            download_url="https://example.invalid/extra.jpg",
+            local_path=tmp_path / "extra.jpg",
+            width=1920,
+            height=1080,
+        )
+    )
+
+    selected = pipeline._select_long_overview_clips(clips, content)
+
+    assert [clip.source_id for clip in selected] == [f"chapter-{index}" for index in range(6)]
 
 
 def test_mock_one_minute_long_content_has_test_profile(tmp_path: Path, monkeypatch) -> None:

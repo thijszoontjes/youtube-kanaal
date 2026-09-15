@@ -485,17 +485,7 @@ class LongPipeline(ShortPipeline):
             from PIL import Image, ImageDraw, ImageFont, ImageOps
 
             valid_clips: list[ImageAsset] = []
-            used_ids: set[str] = set()
-            ordered_clips: list[ImageAsset] = []
-            for section in content.sections:
-                pool = self._section_clip_pool(section, clips, content.topic)
-                for clip in pool:
-                    if clip.source_id not in used_ids:
-                        ordered_clips.append(clip)
-                        used_ids.add(clip.source_id)
-                        break
-            ordered_clips.extend(clip for clip in clips if clip.source_id not in used_ids)
-            for clip in ordered_clips[:8]:
+            for clip in self._select_long_overview_clips(clips, content):
                 try:
                     with Image.open(clip.local_path):
                         valid_clips.append(clip)
@@ -576,6 +566,23 @@ class LongPipeline(ShortPipeline):
             return output_path
         except (ImportError, OSError, ValueError):
             return None
+
+    def _select_long_overview_clips(
+        self,
+        clips: list[ImageAsset],
+        content: GeneratedLongVideo,
+    ) -> list[ImageAsset]:
+        """Return one unique visual per chapter; never add loose search results."""
+        used_ids: set[str] = set()
+        ordered_clips: list[ImageAsset] = []
+        for section in content.sections:
+            pool = self._section_clip_pool(section, clips, content.topic)
+            for clip in pool:
+                if clip.source_id not in used_ids:
+                    ordered_clips.append(clip)
+                    used_ids.add(clip.source_id)
+                    break
+        return ordered_clips[: len(content.sections)]
 
     def render_long_video(
         self,
