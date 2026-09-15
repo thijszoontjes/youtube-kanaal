@@ -32,7 +32,7 @@ def test_long_prompt_has_separate_one_minute_profile() -> None:
     prompt = build_long_content_generation_prompt(topic, [], target_duration_seconds=60)
 
     assert '"duration_profile": "test"' in prompt
-    assert "380-420 words" in prompt
+    assert "220-250 words" in prompt
     assert "8:30 to 11:00" in prompt
 
 
@@ -57,8 +57,21 @@ def test_mock_one_minute_long_content_has_test_profile(tmp_path: Path, monkeypat
 
     assert isinstance(content, GeneratedLongVideo)
     assert content.duration_profile == "test"
-    assert 380 <= len(content.narration.split()) <= 420
+    assert 220 <= len(content.narration.split()) <= 250
     assert len(content.sections) == 6
+
+
+def test_long_narration_removes_search_instructions_and_keeps_visual_queries() -> None:
+    service = OllamaService(load_settings(mock_mode=True))
+
+    cleaned = service._clean_narration(
+        "Iron deficiency can cause fatigue. Pexels search queries: 'iron deficiency symptoms', 'fatigue causes'."
+    )
+
+    assert cleaned == "Iron deficiency can cause fatigue."
+    assert service._quoted_visual_queries("Pexels search queries: 'iron deficiency symptoms'") == [
+        "iron deficiency symptoms"
+    ]
 
 
 def test_cli_make_long_test_renders_local_one_minute_package(cli_runner, configured_env) -> None:

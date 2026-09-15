@@ -84,11 +84,10 @@ class FFmpegService:
             elif current_duration_seconds > max_seconds:
                 target_duration = max_seconds - 8
         if preserve_natural_speed:
-            # Chatterbox is already relatively quick. Stretching a short take down
-            # to a fixed video length makes the voice sound unnaturally slow.
-            # Keep the original speed, or speed up a slightly long take, then pad
-            # the tail so the render still has an exact, predictable duration.
-            tempo = max(1.0, min(current_duration_seconds / target_duration, 1.35))
+            # Chatterbox tends to speak faster than the reference style. Keep a
+            # relaxed pace for long-form videos and calibrate the script ranges
+            # around this value; never speed up an overlong narration here.
+            tempo = 0.88
             remaining_seconds = max(target_duration - (current_duration_seconds / tempo), 0.0)
             filter_graph = (
                 f"atempo={tempo:.6f},loudnorm=I=-16:TP=-1.5:LRA=11,"
@@ -653,22 +652,21 @@ class FFmpegService:
         title_path: Path,
         caption_path: Path,
     ) -> str:
-        photo_x = 285 if variant % 2 else 375
-        photo_y = 120 if variant % 3 else 145
-        caption_y = 590 if variant % 2 else 560
+        caption_y = 575
         title_file = self._escape_filter_path(title_path)
         caption_file = self._escape_filter_path(caption_path)
         return (
-            "[1:v]scale=520:360:force_original_aspect_ratio=decrease,"
-            "pad=520:360:(ow-iw)/2:(oh-ih)/2:color=white,"
+            "[1:v]scale=600:420:force_original_aspect_ratio=increase,"
+            "crop=520:360:x='(iw-520)/2+8*sin(t*0.35)':y='(ih-360)/2+6*cos(t*0.28)',"
             "eq=saturation=1.1:contrast=1.05:brightness=0.01,"
             "unsharp=5:5:0.45:3:3:0.0[photo];"
-            f"[0:v][photo]overlay=x={photo_x}:y={photo_y}:shortest=1[card];"
+            "[0:v][photo]overlay=x=380:y=135:shortest=1[card];"
             f"[card]drawtext=font='Arial':textfile='{title_file}':fontcolor=black:"
             "fontsize=30:x=(w-text_w)/2:y=22:expansion=none:enable='between(t,0,"
             f"{duration_seconds:.2f})',"
             f"drawtext=font='Arial':textfile='{caption_file}':fontcolor=black:"
             f"fontsize=25:x=(w-text_w)/2:y={caption_y}:expansion=none:enable='between(t,0,{duration_seconds:.2f})',"
+            f"fade=t=in:st=0:d=0.18:color=white,fade=t=out:st={max(duration_seconds - 0.18, 0):.2f}:d=0.18:color=white,"
             "format=yuv420p[v]"
         )
 
@@ -685,7 +683,7 @@ class FFmpegService:
             "[1:v]scale=1100:600:force_original_aspect_ratio=decrease,"
             "pad=1100:600:(ow-iw)/2:(oh-ih)/2:color=white[overview];"
             "[0:v][overview]overlay=x=90:y=55[card];"
-            "[card]fade=t=in:st=0:d=0.2,format=yuv420p[v]"
+            "[card]fade=t=in:st=0:d=0.2:color=white,format=yuv420p[v]"
         )
 
     @staticmethod

@@ -629,9 +629,11 @@ class OllamaService:
                 if not isinstance(section, dict):
                     continue
                 title = self._normalize_sentence(str(section.get("title", "")).strip() or f"Part {index}")
-                narration = self._clean_narration(str(section.get("narration", "")))
+                raw_narration = str(section.get("narration", ""))
+                narration = self._clean_narration(raw_narration)
                 queries = section.get("visual_queries")
                 cleaned_queries = [str(query).strip() for query in queries if str(query).strip()] if isinstance(queries, list) else []
+                cleaned_queries.extend(self._quoted_visual_queries(raw_narration))
                 if narration:
                     cleaned_sections.append(
                         {
@@ -683,7 +685,7 @@ class OllamaService:
         test_mode: bool = False,
     ) -> list[LongVideoSection]:
         normalized: list[dict[str, object]] = []
-        minimum_words, maximum_words = (62, 72) if test_mode else (500, 650)
+        minimum_words, maximum_words = (36, 42) if test_mode else (315, 390)
         for index, section in enumerate(sections, start=1):
             narration = self._fit_section_words(
                 str(section.get("narration", "")),
@@ -695,6 +697,7 @@ class OllamaService:
             )
             queries = section.get("visual_queries")
             visual_queries = [str(query).strip() for query in queries if str(query).strip()] if isinstance(queries, list) else []
+            visual_queries.extend(self._quoted_visual_queries(str(section.get("narration", ""))))
             visual_queries.extend([topic, f"{topic} {bucket}", f"{topic} documentary b-roll"])
             normalized.append(
                 {
@@ -722,20 +725,20 @@ class OllamaService:
         total_words = sum(len(str(section["narration"]).split()) for section in normalized)
         if test_mode:
             index = 0
-            while total_words < 380:
+            while total_words < 220:
                 words = str(normalized[index]["narration"]).split()
                 if len(words) < maximum_words:
                     normalized[index]["narration"] = f"{normalized[index]['narration']} This changes the bigger picture."
                     total_words = sum(len(str(section["narration"]).split()) for section in normalized)
                 index = (index + 1) % len(normalized)
-            while total_words > 420:
+            while total_words > 250:
                 longest = max(range(len(normalized)), key=lambda i: len(str(normalized[i]["narration"]).split()))
                 words = str(normalized[longest]["narration"]).split()
-                normalized[longest]["narration"] = " ".join(words[:62]).rstrip(" ,;:") + "."
+                normalized[longest]["narration"] = " ".join(words[:36]).rstrip(" ,;:") + "."
                 total_words = sum(len(str(section["narration"]).split()) for section in normalized)
             return [LongVideoSection.model_validate(section) for section in normalized]
         index = 0
-        while total_words < 3500:
+        while total_words < 2200:
             addition = (
                 f" That detail matters because it changes how {topic} fits into the bigger story, "
                 "and it gives the visuals another layer instead of just repeating the same angle."
@@ -743,10 +746,10 @@ class OllamaService:
             normalized[index]["narration"] = f"{normalized[index]['narration']}{addition}"
             total_words += len(addition.split())
             index = (index + 1) % len(normalized)
-        while total_words > 4500:
+        while total_words > 2700:
             longest = max(range(len(normalized)), key=lambda i: len(str(normalized[i]["narration"]).split()))
             words = str(normalized[longest]["narration"]).split()
-            normalized[longest]["narration"] = " ".join(words[: max(500, len(words) - 25)]).rstrip(" ,;:") + "."
+            normalized[longest]["narration"] = " ".join(words[: max(315, len(words) - 25)]).rstrip(" ,;:") + "."
             new_total = sum(len(str(section["narration"]).split()) for section in normalized)
             if new_total == total_words:
                 break
@@ -874,6 +877,9 @@ class OllamaService:
         cleaned = " ".join(narration.split()).strip()
         if not cleaned:
             return cleaned
+        # Models sometimes append stock-search instructions to the narration.
+        # Keep those as asset metadata, never as spoken words or subtitles.
+        cleaned = re.sub(r"\s*Pexels search queries?:.*$", "", cleaned, flags=re.IGNORECASE).strip()
         sentences = _SENTENCE_SPLIT_RE.split(cleaned)
         filtered_sentences = []
         for sentence in sentences:
@@ -887,6 +893,17 @@ class OllamaService:
                 continue
             filtered_sentences.append(stripped)
         return " ".join(filtered_sentences).strip()
+
+    @staticmethod
+    def _quoted_visual_queries(value: str) -> list[str]:
+        """Recover literal image searches that a model placed in narration."""
+        queries = []
+        for match in re.findall(r"['\"]([^'\"]{4,80})['\"]", value):
+            normalized = " ".join(match.split())
+            if normalized.lower().startswith(("t ", "s ", "re ", "ve ", "ll ", "d ", "m ")):
+                continue
+            queries.append(normalized)
+        return queries
 
     def _select_title(self, *, title: str, title_hook: str, topic: str, facts: list[str]) -> str:
         cleaned_title = " ".join(title.split()).strip()

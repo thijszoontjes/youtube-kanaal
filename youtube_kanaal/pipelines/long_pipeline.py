@@ -19,6 +19,7 @@ from youtube_kanaal.models import (
     ImageAsset,
     LongRunRequest,
     LongRunResult,
+    LongVideoSection,
     NarrationAsset,
     SubtitleAsset,
     TopicChoice,
@@ -248,7 +249,11 @@ class LongPipeline(ShortPipeline):
                 max_photos=self.settings.long_broll_clip_count,
                 response_path=runtime.artifacts.responses_dir / "pexels_long_photo_search.json",
             )
-            runtime.stage_summaries["stock_image_download"] = {"image_count": len(clips), "queries": queries}
+            runtime.stage_summaries["stock_image_download"] = {
+                "image_count": len(clips),
+                "queries": queries,
+                "section_queries": {section.title: section.visual_queries for section in content.sections},
+            }
             return clips
 
     def plan_long_assets(
@@ -283,14 +288,34 @@ class LongPipeline(ShortPipeline):
                     )
                 )
             remaining = max(narration.duration_seconds - overview_duration, 0.5)
+            voice_cursor = 0.0
             index = 0
+            section_word_counts = [max(len(section.narration.split()), 1) for section in content.sections]
+            total_section_words = sum(section_word_counts)
+            section_boundaries: list[tuple[float, float]] = []
+            boundary_cursor = 0.0
+            for word_count in section_word_counts:
+                section_start = narration.duration_seconds * (boundary_cursor / total_section_words)
+                boundary_cursor += word_count
+                section_end = narration.duration_seconds * (boundary_cursor / total_section_words)
+                section_boundaries.append((section_start, section_end))
+            section_cursors = [0 for _ in content.sections]
             while remaining > 0.25:
-                clip = clips[index % len(clips)]
-                duration = min(segment_duration, remaining)
-                section = content.sections[index % len(content.sections)]
+                midpoint = voice_cursor + min(segment_duration, remaining) / 2
+                section_index = next(
+                    (candidate for candidate, (_, section_end) in enumerate(section_boundaries) if midpoint <= section_end),
+                    len(content.sections) - 1,
+                )
+                section = content.sections[section_index]
+                section_start, section_end = section_boundaries[section_index]
+                duration = min(segment_duration, remaining, max(section_end - voice_cursor, 0.5))
+                pool = self._section_clip_pool(section, clips, content.topic)
+                clip = pool[section_cursors[section_index] % len(pool)]
+                section_cursors[section_index] += 1
                 section_words = section.narration.split()
-                words_per_segment = max(5, len(section_words) // max(len(content.sections), 1))
-                phrase_start = ((index // max(len(content.sections), 1)) * words_per_segment) % max(len(section_words), 1)
+                progress = min(max((voice_cursor - section_start) / max(section_end - section_start, 0.1), 0.0), 1.0)
+                phrase_start = min(int(progress * len(section_words)), max(len(section_words) - 8, 0))
+                words_per_segment = max(5, min(10, len(section_words) // 3))
                 phrase = " ".join(section_words[phrase_start : phrase_start + words_per_segment]).strip()
                 segments.append(
                     AssetPlanSegment(
@@ -301,10 +326,31 @@ class LongPipeline(ShortPipeline):
                     )
                 )
                 remaining -= duration
+                voice_cursor += duration
                 index += 1
             plan = AssetPlan(segments=segments, total_duration_seconds=narration.duration_seconds)
             runtime.stage_summaries["asset_planning"] = plan.model_dump(mode="json")
             return plan
+
+    @staticmethod
+    def _section_clip_pool(section: LongVideoSection, clips: list[ImageAsset], topic: str) -> list[ImageAsset]:
+        """Prefer photos returned for this chapter over generic topic photos."""
+        normalize = lambda value: " ".join(value.lower().split())
+        section_queries = {normalize(query) for query in section.visual_queries if query.strip()}
+        generic_queries = {
+            normalize(topic),
+            normalize(f"{topic} {section.title}"),
+            normalize(f"{topic} human body"),
+            normalize(f"{topic} {section.title} human body"),
+            normalize(f"{topic} documentary"),
+            normalize(f"{topic} documentary b-roll"),
+        }
+        specific_queries = section_queries - generic_queries
+        specific = [clip for clip in clips if normalize(clip.query) in specific_queries]
+        if specific:
+            return specific
+        matching = [clip for clip in clips if normalize(clip.query) in section_queries]
+        return matching or clips
 
     def _create_long_overview(
         self,
@@ -317,7 +363,17 @@ class LongPipeline(ShortPipeline):
             from PIL import Image, ImageDraw, ImageFont, ImageOps
 
             valid_clips: list[ImageAsset] = []
-            for clip in clips[:8]:
+            used_ids: set[str] = set()
+            ordered_clips: list[ImageAsset] = []
+            for section in content.sections:
+                pool = self._section_clip_pool(section, clips, content.topic)
+                for clip in pool:
+                    if clip.source_id not in used_ids:
+                        ordered_clips.append(clip)
+                        used_ids.add(clip.source_id)
+                        break
+            ordered_clips.extend(clip for clip in clips if clip.source_id not in used_ids)
+            for clip in ordered_clips[:8]:
                 try:
                     with Image.open(clip.local_path):
                         valid_clips.append(clip)
