@@ -130,8 +130,9 @@ def test_long_narration_removes_duplicate_sentences_and_adds_reason() -> None:
     )
 
     assert content.lower().count("chest responds to pressing") == 1
-    assert "the reason is direct loading" in content.lower()
+    assert "chest is easy to train because" in content.lower()
     assert "bigger picture" not in content.lower()
+    assert "the reason is direct loading" not in content.lower()
 
 
 def test_long_narration_adds_why_when_source_has_only_description() -> None:

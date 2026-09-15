@@ -805,7 +805,8 @@ class OllamaService:
             return self._fallback_test_section(topic, index) if test_mode else self._fallback_long_section(topic, "facts", index)
         words = cleaned.split()
         if len(words) > maximum_words:
-            return self._trim_narration_to_words(cleaned, maximum_words)
+            cleaned = self._trim_narration_to_words(cleaned, maximum_words)
+            words = cleaned.split()
         focus = focus or topic
         addition_index = 0
         while len(words) < minimum_words:
@@ -836,8 +837,16 @@ class OllamaService:
     def _reason_extension(topic: str, focus: str, index: int, *, test_mode: bool) -> str:
         focus_text = focus.lower().strip() or topic
         if test_mode:
+            specific_reason = {
+                "chest": "Chest is easy to train because pressing movements load it directly.",
+                "biceps": "Biceps are easy to train because curling movements load them directly.",
+                "triceps": "Triceps are easy to train because pressing movements load them directly.",
+                "shoulders": "Shoulders respond well because controlled presses and raises load them directly.",
+                "back": "The back responds well when rows and pulls create steady tension.",
+                "legs": "Legs respond well because squats and lunges create steady tension.",
+            }.get(focus_text)
             extensions = (
-                "The reason is direct loading creates clear tension.",
+                specific_reason or "The reason this block works is that simple movements create direct tension.",
                 "That makes progress easier to see and measure.",
                 "Consistency matters because the movement repeats reliably.",
                 f"This is why the {focus_text} block deserves its own explanation.",
