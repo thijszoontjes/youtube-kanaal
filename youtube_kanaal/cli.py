@@ -568,7 +568,7 @@ def daily_video(
 
 @app.command()
 def make_long_test(
-    topic: str = typer.Option("nutrient deficiencies", help="Catalog topic for the one-minute test video."),
+    topic: str = typer.Option("easiest muscles to grow", help="Catalog topic for the one-minute test video."),
     bucket: str = typer.Option("human body", help="Catalog bucket for the test topic."),
     thumbnail_path: Optional[Path] = typer.Option(None, "--thumbnail-path", help="Optional reference thumbnail."),
     debug: bool = typer.Option(False, help="Enable verbose logging."),

@@ -209,6 +209,8 @@ def build_long_content_generation_prompt(
         - Open with one concrete question or observation, then introduce the visual route before the chapters.
         - Every chapter must focus on one specific named subtopic, item, character, nutrient, object, or mechanism.
         - Good subtopics are "vitamin D", "zinc", and "iron" in a deficiency video, or "Iron Man" and "Captain America" in an Avengers video.
+        - Treat every chapter as a separate block in the opening overview tiles. Use a short, concrete label such as "CHEST", "BICEPS", "TRICEPS", "VITAMIN D", or "ZINC".
+        - For a topic such as "easiest muscles to grow", split the video into named blocks such as chest, biceps, triceps, shoulders, back, and legs. Do not use numbered parts as the block names.
         - Do not use generic chapter subjects such as "the bigger picture", "health effects", "the science", or "other details".
         - The chapter title, narration, and first visual query must name the same specific subtopic.
         - Stay on that one subtopic for the entire chapter; do not introduce the next subtopic before the chapter ends.
@@ -242,7 +244,7 @@ def build_long_content_generation_prompt(
           "tags": ["tag 1", "tag 2", "tag 3", "tag 4", "tag 5", "tag 6", "tag 7", "tag 8"],
           "sections": [
             {{
-              "title": "<chapter title>",
+              "title": "<short concrete block label naming the exact subtopic>",
               "narration": "<spoken chapter text in the requested word range>",
               "visual_queries": ["<query 1>", "<query 2>"]
             }}

@@ -166,6 +166,7 @@ TOPIC_CATALOG: dict[str, list[str]] = {
     "human body": [
         "the human brain",
         "nutrient deficiencies",
+        "easiest muscles to grow",
         "your skin",
         "the immune system",
         "bones",
@@ -684,7 +685,7 @@ class GeneratedShort(BaseModel):
 
 
 class LongVideoSection(BaseModel):
-    title: str = Field(min_length=8, max_length=64)
+    title: str = Field(min_length=3, max_length=64)
     narration: str = Field(min_length=40, max_length=2500)
     visual_queries: list[str] = Field(min_length=2, max_length=5)
 

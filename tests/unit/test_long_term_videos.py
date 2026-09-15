@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from youtube_kanaal.cli import app
-from youtube_kanaal.models import GeneratedLongVideo, LongRunRequest, TopicChoice
+from youtube_kanaal.models import GeneratedLongVideo, LongRunRequest, TOPIC_CATALOG, TopicChoice
 from youtube_kanaal.prompts import build_long_content_generation_prompt
 from youtube_kanaal.services.ollama_service import OllamaService
 from youtube_kanaal.services.pexels_service import PexelsService
@@ -50,6 +50,32 @@ def test_long_prompt_requires_specific_subtopics_and_visual_consistency() -> Non
     assert "one specific named subtopic" in prompt
     assert "vitamin D" in prompt
     assert "same specific subtopic" in prompt
+    assert "separate block in the opening overview tiles" in prompt
+    assert "CHEST" in prompt
+
+
+def test_easiest_muscles_topic_has_concrete_test_blocks(tmp_path: Path) -> None:
+    assert "easiest muscles to grow" in TOPIC_CATALOG["human body"]
+
+    service = OllamaService(load_settings(mock_mode=True))
+    topic = TopicChoice(
+        bucket="human body",
+        topic="easiest muscles to grow",
+        visual_queries=["easiest muscles to grow", "chest muscle anatomy"],
+        search_terms=["easiest muscles to grow", "chest muscle anatomy"],
+    )
+
+    content = service._fallback_test_long_content(topic)
+
+    assert [section.title for section in content.sections] == [
+        "CHEST",
+        "BICEPS",
+        "TRICEPS",
+        "SHOULDERS",
+        "BACK",
+        "LEGS",
+    ]
+    assert content.sections[0].visual_queries[0] == "chest muscle anatomy"
 
 
 def test_mock_one_minute_long_content_has_test_profile(tmp_path: Path, monkeypatch) -> None:

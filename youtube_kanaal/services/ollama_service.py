@@ -58,6 +58,17 @@ _FORMULAIC_NARRATION_PREFIXES: tuple[str, ...] = (
     "fact 3",
     "fact three",
 )
+
+_SPECIFIC_LONG_BLOCKS: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
+    "easiest muscles to grow": (
+        ("CHEST", ("chest muscle anatomy", "chest workout gym")),
+        ("BICEPS", ("biceps muscle anatomy", "biceps curl gym")),
+        ("TRICEPS", ("triceps muscle anatomy", "triceps workout gym")),
+        ("SHOULDERS", ("shoulder muscle anatomy", "shoulder press gym")),
+        ("BACK", ("back muscles anatomy", "back workout gym")),
+        ("LEGS", ("leg muscles anatomy", "leg workout gym")),
+    ),
+}
 _GENERIC_TITLE_RE = re.compile(
     r"^\s*(?:3|three)\s+(?:quick\s+|wild\s+|surprising\s+|amazing\s+|interesting\s+)?facts\s+about\b",
     re.IGNORECASE,
@@ -703,9 +714,16 @@ class OllamaService:
             visual_queries = [str(query).strip() for query in queries if str(query).strip()] if isinstance(queries, list) else []
             visual_queries.extend(self._quoted_visual_queries(str(section.get("narration", ""))))
             visual_queries.extend([topic, f"{topic} {bucket}", f"{topic} documentary b-roll"])
+            specific_blocks = _SPECIFIC_LONG_BLOCKS.get(topic.strip().lower(), ())
+            if index <= len(specific_blocks):
+                planned_title, planned_queries = specific_blocks[index - 1]
+                title = planned_title
+                visual_queries = [*planned_queries, *visual_queries]
+            else:
+                title = str(section.get("title") or f"{topic.title()} Detail {index}")[:64]
             normalized.append(
                 {
-                    "title": str(section.get("title") or f"{topic.title()} Detail {index}")[:64],
+                    "title": title,
                     "narration": narration,
                     "visual_queries": list(dict.fromkeys(visual_queries))[:5],
                 }
@@ -714,15 +732,18 @@ class OllamaService:
             index = len(normalized) + 1
             if test_mode and len(normalized) >= 6:
                 break
+            specific_blocks = _SPECIFIC_LONG_BLOCKS.get(topic.strip().lower(), ())
+            planned_title = specific_blocks[index - 1][0] if index <= len(specific_blocks) else f"{topic.title()} Detail {index}"
+            planned_queries = list(specific_blocks[index - 1][1]) if index <= len(specific_blocks) else [topic, f"{topic} {bucket}", f"{topic} documentary b-roll"]
             normalized.append(
                 {
-                    "title": f"{topic.title()} Detail {index}",
+                    "title": planned_title,
                     "narration": (
                         self._fallback_test_section(topic, index)
                         if test_mode
                         else self._fallback_long_section(topic, bucket, index)
                     ),
-                    "visual_queries": [topic, f"{topic} {bucket}", f"{topic} documentary b-roll"],
+                    "visual_queries": planned_queries,
                 }
             )
         normalized = normalized[:6] if test_mode else normalized[:7]
@@ -1274,11 +1295,16 @@ class OllamaService:
         )
 
     def _fallback_test_long_content(self, topic: TopicChoice) -> GeneratedLongVideo:
+        specific_blocks = _SPECIFIC_LONG_BLOCKS.get(topic.topic.strip().lower(), ())
         raw_sections = [
             {
-                "title": f"{topic.topic.title()} Detail {index}",
-                "narration": self._fallback_test_section(topic.topic, index),
-                "visual_queries": [topic.topic, f"{topic.topic} {topic.bucket}"],
+                "title": specific_blocks[index - 1][0] if index <= len(specific_blocks) else f"{topic.topic.title()} Detail {index}",
+                "narration": self._fallback_test_section(
+                    topic.topic,
+                    index,
+                    specific_blocks[index - 1][0].title() if index <= len(specific_blocks) else None,
+                ),
+                "visual_queries": list(specific_blocks[index - 1][1]) if index <= len(specific_blocks) else [topic.topic, f"{topic.topic} {topic.bucket}"],
             }
             for index in range(1, 7)
         ]
@@ -1296,8 +1322,15 @@ class OllamaService:
             duration_profile="test",
         )
 
-    def _fallback_test_section(self, topic: str, index: int) -> str:
+    def _fallback_test_section(self, topic: str, index: int, subtopic: str | None = None) -> str:
+        if subtopic is None:
+            return (
+                f"{topic.title()} looks familiar, but detail {index} changes how the whole subject makes sense. "
+                "The key idea is easier to understand when you see the evidence clearly."
+            )
+        focus = subtopic or f"detail {index}"
         return (
-            f"{topic.title()} looks familiar, but detail {index} changes how the whole subject makes sense. "
-            "The key idea is easier to understand when you see the evidence clearly."
+            f"{focus} is one of the clearest examples of how {topic} works. "
+            f"It looks simple at first, but the shape, movement, and training response of {focus.lower()} explain why people notice it quickly. "
+            "The key idea is easier to understand when the visual stays on this one block until the explanation is complete."
         )
