@@ -107,3 +107,14 @@ def test_long_audio_ranges_wait_for_active_subtitle_before_switching() -> None:
     ranges = _build_long_audio_ranges(cues, [2, 2], 7.0)
 
     assert ranges == [(0.0, 4.0), (4.0, 7.0)]
+
+
+def test_long_audio_ranges_reject_incomplete_whisper_timeline() -> None:
+    cues = [
+        SubtitleCue(start_seconds=0.0, end_seconds=2.0, text="intro"),
+        SubtitleCue(start_seconds=2.0, end_seconds=5.0, text="chapter"),
+    ]
+
+    ranges = _build_long_audio_ranges(cues, [10, 10], 10.0)
+
+    assert ranges is None

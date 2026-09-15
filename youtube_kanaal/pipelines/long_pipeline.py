@@ -48,7 +48,10 @@ def _build_long_audio_ranges(
         return None
     cue_word_counts = [max(len(cue.text.split()), 1) for cue in cues]
     cue_total = sum(cue_word_counts)
-    if cue_total < max(sum(word_counts) * 0.5, 1):
+    # Whisper can omit words on a difficult recording. A badly mismatched cue
+    # list would collapse later chapters at the end of the audio timeline, so
+    # use the script's section ratios when the subtitle transcript is incomplete.
+    if cue_total < max(sum(word_counts) * 0.85, 1):
         return None
 
     def time_at_word(offset: int) -> float:
@@ -69,10 +72,13 @@ def _build_long_audio_ranges(
         offsets.append(offsets[-1] + max(word_count, 0))
     boundaries = [time_at_word(offset) for offset in offsets]
     boundaries[-1] = total_duration
-    return [
+    ranges = [
         (min(start, end), max(start, end))
         for start, end in zip(boundaries, boundaries[1:])
     ]
+    if any(end - start <= 0.001 for start, end in ranges):
+        return None
+    return ranges
 
 
 class LongPipeline(ShortPipeline):
@@ -362,13 +368,23 @@ class LongPipeline(ShortPipeline):
                 start=1,
             ):
                 chapter_id = f"chapter-{section_index:02d}"
-                chapter_duration = max(chapter_end - chapter_start, 0.5)
+                chapter_duration = max(chapter_end - chapter_start, 0.0)
                 card = card_by_chapter.get(chapter_id, {})
                 focus_x = float(card.get("focus_x", 0.5)) if card else 0.5
                 focus_y = float(card.get("focus_y", 0.5)) if card else 0.5
                 return_duration = 0.0
                 if overview_path and section_index > 1:
                     return_duration = min(2.0, max(1.5, chapter_duration * 0.18), max(chapter_duration - 0.75, 0.0))
+                transition_duration = (
+                    min(0.8, max(0.6, chapter_duration * 0.08), max(chapter_duration - return_duration - 0.5, 0.0))
+                    if overview_path
+                    else 0.0
+                )
+                # A very short range must remain inside its chapter. In that
+                # case use the chapter photo for the complete spoken block.
+                if chapter_duration < 0.5 or return_duration + transition_duration + 0.5 > chapter_duration:
+                    return_duration = 0.0
+                    transition_duration = 0.0
                 if return_duration >= 0.5:
                     segments.append(
                         AssetPlanSegment(
@@ -385,11 +401,6 @@ class LongPipeline(ShortPipeline):
                             focus_x=focus_x,
                             focus_y=focus_y,
                         )
-                )
-                transition_duration = (
-                    min(0.8, max(0.6, chapter_duration * 0.08), max(chapter_duration - return_duration - 0.5, 0.0))
-                    if overview_path
-                    else 0.0
                 )
                 if transition_duration >= 0.5:
                     transition_asset = self._section_clip_pool(section, clips, content.topic, content.bucket)[0]
@@ -410,8 +421,7 @@ class LongPipeline(ShortPipeline):
                         )
                 )
 
-                photo_start = min(chapter_end, chapter_start + return_duration + transition_duration)
-                photo_duration = max(chapter_end - photo_start, 0.5)
+                photo_duration = max(chapter_duration - return_duration - transition_duration, 0.0)
                 primary_clip = self._section_clip_pool(section, clips, content.topic, content.bucket)[0]
                 segments.append(
                     AssetPlanSegment(
