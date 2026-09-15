@@ -372,6 +372,7 @@ class LongPipeline(ShortPipeline):
                             narration_fragment=phrase or section.narration,
                             visual_type="photo",
                             asset_id=clip.source_id,
+                            motion=scene_index % 3 != 1,
                         )
                     )
                     scene_remaining -= duration

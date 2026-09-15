@@ -64,9 +64,21 @@ def test_long_asset_plan_segment_keeps_scene_chapter_and_asset_identity() -> Non
         narration_fragment="The first concrete detail.",
         visual_type="photo",
         asset_id="pexels-123",
+        motion=False,
     )
 
     assert segment.scene_id == "scene-chapter-01-00"
     assert segment.chapter_id == "chapter-01"
     assert segment.asset_id == "pexels-123"
     assert segment.narration_fragment.startswith("The first")
+
+
+def test_long_asset_plan_segment_can_be_static() -> None:
+    segment = AssetPlanSegment(
+        clip_path=Path("diagram.jpg"),
+        duration_seconds=4.0,
+        reason="Static evidence card",
+        motion=False,
+    )
+
+    assert segment.motion is False

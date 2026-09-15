@@ -92,3 +92,20 @@ def test_long_photo_filter_forces_smooth_constant_30fps() -> None:
 
     assert "fps=30" in filter_graph
     assert "settb=AVTB" in filter_graph
+
+
+def test_long_photo_filter_can_hold_a_static_evidence_card() -> None:
+    service = FFmpegService(Settings())
+
+    filter_graph = service._long_photo_filter(
+        duration_seconds=5,
+        variant=1,
+        title_path=Path("title.txt"),
+        caption_path=Path("caption.txt"),
+        width=1280,
+        height=720,
+        motion=False,
+    )
+
+    assert "sin(t*0.35)" not in filter_graph
+    assert "cos(t*0.28)" not in filter_graph

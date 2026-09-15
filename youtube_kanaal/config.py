@@ -250,7 +250,7 @@ class Settings(BaseSettings):
     long_publish_time: str = Field(default="17:00", validation_alias=AliasChoices("LONG_PUBLISH_TIME"))
     long_broll_clip_count: int = Field(default=32, ge=12, le=80, validation_alias=AliasChoices("LONG_BROLL_CLIP_COUNT"))
     long_segment_min_seconds: float = Field(default=4.0, ge=3.0, le=30.0, validation_alias=AliasChoices("LONG_SEGMENT_MIN_SECONDS"))
-    long_segment_max_seconds: float = Field(default=8.0, ge=5.0, le=45.0, validation_alias=AliasChoices("LONG_SEGMENT_MAX_SECONDS"))
+    long_segment_max_seconds: float = Field(default=6.0, ge=5.0, le=45.0, validation_alias=AliasChoices("LONG_SEGMENT_MAX_SECONDS"))
     long_output_width: int = Field(default=1920, ge=640, le=3840, validation_alias=AliasChoices("LONG_OUTPUT_WIDTH"))
     long_output_height: int = Field(default=1080, ge=360, le=2160, validation_alias=AliasChoices("LONG_OUTPUT_HEIGHT"))
     long_preview_width: int = Field(default=1280, ge=640, le=1920, validation_alias=AliasChoices("LONG_PREVIEW_WIDTH"))

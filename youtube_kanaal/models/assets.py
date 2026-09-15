@@ -85,6 +85,7 @@ class AssetPlanSegment(BaseModel):
     asset_id: str | None = None
     focus_x: float = Field(default=0.5, ge=0.0, le=1.0)
     focus_y: float = Field(default=0.5, ge=0.0, le=1.0)
+    motion: bool = True
 
 
 class AssetPlan(BaseModel):

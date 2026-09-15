@@ -68,7 +68,7 @@ make daily-content-dry-run
 python -m youtube_kanaal daily-content --dry-run
 ```
 
-The long-form part generates English videos between `8:30` and `11:00`, uses the configured narration engine, pulls copyright-friendly photos from Pexels, applies smooth constant-30fps movement and card-to-chapter transitions, adds a generated royalty-free background bed with ducking, renders a 1920x1080 production video or 1280x720 test preview, writes metadata/chapters/tags plus an asset-rights manifest, and schedules the YouTube upload for the next day at `LONG_PUBLISH_TIME`.
+The long-form part generates English videos between `8:30` and `11:00`, uses the configured narration engine, pulls copyright-friendly photos from Pexels, applies smooth constant-30fps movement, short crossfades, card-to-chapter transitions, and occasional static evidence cards, adds a generated royalty-free background bed with ducking, renders a 1920x1080 production video or 1280x720 test preview, writes metadata/chapters/tags plus an asset-rights manifest, and schedules the YouTube upload for the next day at `LONG_PUBLISH_TIME`.
 
 Outputs are written to `output/<run_id>/`:
 

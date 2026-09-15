@@ -326,10 +326,14 @@ class FFmpegService:
             else (self.settings.long_output_width, self.settings.long_output_height)
         )
         segment_paths: list[Path] = []
+        crossfade_seconds = 0.22
+        segment_render_durations: list[float] = []
         for index, segment in enumerate(plan.segments, start=1):
             segment_path = segments_dir / f"long-segment-{index:03d}.mp4"
+            render_duration = round(segment.duration_seconds + (crossfade_seconds if index > 1 else 0.0), 2)
+            segment_render_durations.append(render_duration)
             segment_filter = self._long_segment_filter(
-                duration_seconds=segment.duration_seconds,
+                duration_seconds=render_duration,
                 variant=index,
             )
             if segment.clip_path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}:
@@ -339,7 +343,7 @@ class FFmpegService:
                 write_text(caption_path, self._clean_drawtext_text(segment.on_screen_text or segment.reason))
                 photo_filter = (
                     self._long_overview_filter(
-                        duration_seconds=segment.duration_seconds,
+                        duration_seconds=render_duration,
                         title_path=title_path,
                         caption_path=caption_path,
                         width=width,
@@ -350,13 +354,14 @@ class FFmpegService:
                     )
                     if segment.clip_path.name == "long-overview.jpg"
                     else self._long_photo_filter(
-                        duration_seconds=segment.duration_seconds,
+                        duration_seconds=render_duration,
                         variant=index,
                         title_path=title_path,
                         caption_path=caption_path,
                         width=width,
                         height=height,
                         reveal=segment.visual_type == "transition",
+                        motion=segment.motion,
                     )
                 )
                 run_command(
@@ -366,7 +371,7 @@ class FFmpegService:
                         "-f",
                         "lavfi",
                         "-i",
-                        f"color=c=white:s={width}x{height}:r=30:d={segment.duration_seconds:.2f}",
+                        f"color=c=white:s={width}x{height}:r=30:d={render_duration:.2f}",
                         "-loop",
                         "1",
                         "-framerate",
@@ -378,7 +383,7 @@ class FFmpegService:
                         "-map",
                         "[v]",
                         "-t",
-                        f"{segment.duration_seconds:.2f}",
+                        f"{render_duration:.2f}",
                         "-r",
                         "30",
                         "-fps_mode",
@@ -409,7 +414,7 @@ class FFmpegService:
                         "-i",
                         str(segment.clip_path),
                         "-t",
-                        f"{segment.duration_seconds:.2f}",
+                        f"{render_duration:.2f}",
                         "-vf",
                         segment_filter,
                         "-r",
@@ -439,22 +444,37 @@ class FFmpegService:
             concat_lines.append(f"file '{resolved_path}'")
         write_text(concat_file, "\n".join(concat_lines) + "\n")
         rough_cut_path = working_dir / "long-rough-cut.mp4"
+        filter_parts = [f"[{index}:v]fps=30,settb=AVTB[v{index}]" for index in range(len(segment_paths))]
+        current_label = "v0"
+        current_duration = segment_render_durations[0]
+        for index in range(1, len(segment_paths)):
+            offset = max(current_duration - crossfade_seconds, 0.0)
+            next_label = f"vx{index}"
+            filter_parts.append(
+                f"[{current_label}][v{index}]xfade=transition=fade:duration={crossfade_seconds:.2f}:"
+                f"offset={offset:.2f},fps=30,settb=AVTB[{next_label}]"
+            )
+            current_label = next_label
+            current_duration = offset + segment_render_durations[index]
+        filter_parts.append(f"[{current_label}]format=yuv420p[vout]")
+        video_inputs: list[str] = []
+        for path in segment_paths:
+            video_inputs.extend(["-i", str(path)])
         run_command(
             [
                 self.settings.ffmpeg_binary,
                 "-y",
-                "-f",
-                "concat",
-                "-safe",
-                "0",
-                "-i",
-                str(concat_file),
+                *video_inputs,
                 "-i",
                 str(audio_path),
+                "-filter_complex",
+                ";".join(filter_parts),
                 "-map",
-                "0:v:0",
+                "[vout]",
                 "-map",
-                "1:a:0",
+                f"{len(segment_paths)}:a:0",
+                "-t",
+                f"{plan.total_duration_seconds:.2f}",
                 "-c:v",
                 "libx264",
                 "-threads",
@@ -692,6 +712,7 @@ class FFmpegService:
         width: int,
         height: int,
         reveal: bool = False,
+        motion: bool = True,
     ) -> str:
         card_width = round(width * 0.40625)
         card_height = round(height * 0.5)
@@ -700,16 +721,28 @@ class FFmpegService:
         caption_y = round(height * 0.80)
         title_size = round(width * 0.0234)
         caption_size = round(width * 0.0195)
-        motion_scale = 1.10 if reveal else 1.08
+        motion_scale = 1.10 if reveal else 1.06
+        if not motion:
+            motion_scale = 1.0
         source_width = round(card_width * motion_scale)
         source_height = round(card_height * motion_scale)
         pan_x = round(source_width * 0.04)
         pan_y = round(source_height * 0.03)
         title_file = self._escape_filter_path(title_path)
         caption_file = self._escape_filter_path(caption_path)
+        crop_x = (
+            f"(iw-{card_width})/2+{pan_x}*sin(t*0.35)"
+            if motion
+            else f"(iw-{card_width})/2"
+        )
+        crop_y = (
+            f"(ih-{card_height})/2+{pan_y}*cos(t*0.28)"
+            if motion
+            else f"(ih-{card_height})/2"
+        )
         return (
             f"[1:v]scale={source_width}:{source_height}:force_original_aspect_ratio=increase,"
-            f"crop={card_width}:{card_height}:x='(iw-{card_width})/2+{pan_x}*sin(t*0.35)':y='(ih-{card_height})/2+{pan_y}*cos(t*0.28)',"
+            f"crop={card_width}:{card_height}:x='{crop_x}':y='{crop_y}',"
             "eq=saturation=1.1:contrast=1.05:brightness=0.01,"
             "unsharp=5:5:0.45:3:3:0.0[photo];"
             f"[0:v][photo]overlay=x={card_x}:y={card_y}:shortest=1[card];"
@@ -718,7 +751,6 @@ class FFmpegService:
             f"{duration_seconds:.2f})',"
             f"drawtext=font='Arial':textfile='{caption_file}':fontcolor=black:"
             f"fontsize={caption_size}:x=(w-text_w)/2:y={caption_y}:expansion=none:enable='between(t,0,{duration_seconds:.2f})',"
-            f"fade=t=in:st=0:d=0.18:color=white,fade=t=out:st={max(duration_seconds - 0.18, 0):.2f}:d=0.18:color=white,"
             "fps=30,settb=AVTB,format=yuv420p[v]"
         )
 
@@ -742,13 +774,13 @@ class FFmpegService:
             return (
                 f"[1:v]scale={zoom_width}:{zoom_height}:force_original_aspect_ratio=increase,"
                 f"crop={width}:{height}:x={crop_x}:y={crop_y},"
-                f"fade=t=in:st=0:d={min(0.18, duration_seconds / 2):.2f}:color=white,fps=30,settb=AVTB,format=yuv420p[v]"
+                "fps=30,settb=AVTB,format=yuv420p[v]"
             )
         return (
             f"[1:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
             f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=white[overview];"
             f"[0:v][overview]overlay=x=0:y=0[card];"
-                "[card]fade=t=in:st=0:d=0.2:color=white,fps=30,settb=AVTB,format=yuv420p[v]"
+                "[card]fps=30,settb=AVTB,format=yuv420p[v]"
         )
 
     @staticmethod
