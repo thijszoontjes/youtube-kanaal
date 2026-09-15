@@ -702,10 +702,17 @@ class OllamaService:
         normalized: list[dict[str, object]] = []
         minimum_words, maximum_words = (36, 42) if test_mode else (315, 390)
         for index, section in enumerate(sections, start=1):
+            specific_blocks = _SPECIFIC_LONG_BLOCKS.get(topic.strip().lower(), ())
+            if index <= len(specific_blocks):
+                planned_title, planned_queries = specific_blocks[index - 1]
+                title = planned_title
+            else:
+                title = str(section.get("title") or f"{topic.title()} Detail {index}")[:64]
             narration = self._fit_section_words(
                 str(section.get("narration", "")),
                 topic,
                 index,
+                focus=title,
                 minimum_words=minimum_words,
                 maximum_words=maximum_words,
                 test_mode=test_mode,
@@ -714,13 +721,8 @@ class OllamaService:
             visual_queries = [str(query).strip() for query in queries if str(query).strip()] if isinstance(queries, list) else []
             visual_queries.extend(self._quoted_visual_queries(str(section.get("narration", ""))))
             visual_queries.extend([topic, f"{topic} {bucket}", f"{topic} documentary b-roll"])
-            specific_blocks = _SPECIFIC_LONG_BLOCKS.get(topic.strip().lower(), ())
             if index <= len(specific_blocks):
-                planned_title, planned_queries = specific_blocks[index - 1]
-                title = planned_title
                 visual_queries = [*planned_queries, *visual_queries]
-            else:
-                title = str(section.get("title") or f"{topic.title()} Detail {index}")[:64]
             normalized.append(
                 {
                     "title": title,
@@ -750,26 +752,39 @@ class OllamaService:
         total_words = sum(len(str(section["narration"]).split()) for section in normalized)
         if test_mode:
             index = 0
+            addition_index = 0
             while total_words < 220:
                 words = str(normalized[index]["narration"]).split()
                 if len(words) < maximum_words:
-                    normalized[index]["narration"] = f"{normalized[index]['narration']} This changes the bigger picture."
+                    normalized[index]["narration"] = self._clean_narration(
+                        f"{normalized[index]['narration']} {self._reason_extension(topic, str(normalized[index]['title']), addition_index, test_mode=True)}"
+                    )
+                    addition_index += 1
                     total_words = sum(len(str(section["narration"]).split()) for section in normalized)
                 index = (index + 1) % len(normalized)
-            while total_words > 250:
+            # The intro is added to these section words in GeneratedLongVideo.narration.
+            # Leave room for it so the complete one-minute test stays within 220-250 words.
+            while total_words > 235:
                 longest = max(range(len(normalized)), key=lambda i: len(str(normalized[i]["narration"]).split()))
                 words = str(normalized[longest]["narration"]).split()
                 normalized[longest]["narration"] = " ".join(words[:36]).rstrip(" ,;:") + "."
                 total_words = sum(len(str(section["narration"]).split()) for section in normalized)
             return [LongVideoSection.model_validate(section) for section in normalized]
         index = 0
+        addition_index = 0
         while total_words < 2200:
-            addition = (
-                f" That detail matters because it changes how {topic} fits into the bigger story, "
-                "and it gives the visuals another layer instead of just repeating the same angle."
+            addition = self._reason_extension(
+                topic,
+                str(normalized[index]["title"]),
+                addition_index,
+                test_mode=False,
             )
-            normalized[index]["narration"] = f"{normalized[index]['narration']}{addition}"
-            total_words += len(addition.split())
+            before = len(str(normalized[index]["narration"]).split())
+            normalized[index]["narration"] = self._clean_narration(
+                f"{normalized[index]['narration']} {addition}"
+            )
+            total_words += len(str(normalized[index]["narration"]).split()) - before
+            addition_index += 1
             index = (index + 1) % len(normalized)
         while total_words > 2700:
             longest = max(range(len(normalized)), key=lambda i: len(str(normalized[i]["narration"]).split()))
@@ -787,6 +802,7 @@ class OllamaService:
         topic: str,
         index: int,
         *,
+        focus: str | None = None,
         minimum_words: int = 190,
         maximum_words: int = 225,
         test_mode: bool = False,
@@ -797,16 +813,53 @@ class OllamaService:
         words = cleaned.split()
         if len(words) > maximum_words:
             return " ".join(words[:maximum_words]).rstrip(" ,;:") + "."
+        focus = focus or topic
+        addition_index = 0
         while len(words) < minimum_words:
-            extension = (
-                f" For {topic}, that detail changes the bigger picture."
-                if test_mode
-                else f" For {topic}, that small point is useful because it connects the explanation "
-                "to something you can actually picture on screen."
+            extension = self._reason_extension(
+                topic,
+                focus,
+                addition_index,
+                test_mode=test_mode,
             )
             cleaned = f"{cleaned} {extension}"
+            cleaned = self._clean_narration(cleaned)
             words = cleaned.split()
+            addition_index += 1
         return cleaned
+
+    @staticmethod
+    def _reason_extension(topic: str, focus: str, index: int, *, test_mode: bool) -> str:
+        focus_text = focus.lower().strip() or topic
+        if test_mode:
+            extensions = (
+                f"The reason {focus_text} responds well is that a simple movement can load it directly.",
+                f"That matters because direct resistance makes progress easier to see and measure.",
+                f"The useful difference is consistency: the same movement can create tension again and again.",
+                f"This is why {focus_text} deserves its own block instead of being rushed past in a list.",
+                f"In practice, the result comes from controlled tension, not from a complicated routine.",
+                f"That cause and effect explains why beginners can understand this muscle quickly.",
+            )
+        else:
+            extensions = (
+                f"The reason {focus_text} matters is that it shows the cause behind the visible result.",
+                f"That cause and effect is useful because it explains why the same pattern keeps appearing.",
+                f"The practical consequence is easier to see when {focus_text} stays separate from the next idea.",
+                f"This is why the detail deserves a full explanation instead of another quick list item.",
+                f"The deeper point is not just what happens, but which mechanism makes it happen.",
+                f"That mechanism also explains why the viewer should notice this part before the story moves on.",
+                f"A concrete example makes the reason clearer and keeps the explanation tied to something visible.",
+                f"The result is easier to predict once that underlying reason is understood.",
+                f"This connection gives the chapter a purpose instead of making it a collection of facts.",
+                f"The important takeaway is the explanation behind the effect, not merely the effect itself.",
+                f"That is the difference between recognizing the subject and understanding why it works.",
+                f"Keeping this logic together also prevents the next chapter from arriving before the point is complete.",
+            )
+        if index < len(extensions):
+            return extensions[index]
+        return (
+            f"Another reason this belongs in the chapter is that it connects {focus_text} to the main question about {topic}."
+        )
 
     def _clean_long_title(self, title: str, topic: str) -> str:
         cleaned = " ".join(title.split()).strip()
@@ -907,6 +960,7 @@ class OllamaService:
         cleaned = re.sub(r"\s*Pexels search queries?:.*$", "", cleaned, flags=re.IGNORECASE).strip()
         sentences = _SENTENCE_SPLIT_RE.split(cleaned)
         filtered_sentences = []
+        seen_sentences: set[str] = set()
         for sentence in sentences:
             stripped = sentence.strip()
             lowered = stripped.lower()
@@ -916,6 +970,10 @@ class OllamaService:
                 continue
             if any(fragment in lowered for fragment in _STOCK_OUTRO_FRAGMENTS):
                 continue
+            sentence_key = re.sub(r"[^a-z0-9]+", " ", lowered).strip()
+            if sentence_key in seen_sentences:
+                continue
+            seen_sentences.add(sentence_key)
             filtered_sentences.append(stripped)
         return " ".join(filtered_sentences).strip()
 

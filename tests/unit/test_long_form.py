@@ -96,3 +96,14 @@ def test_long_audio_ranges_follow_real_subtitle_timing() -> None:
     ranges = _build_long_audio_ranges(cues, [2, 4], 9.0)
 
     assert ranges == [(0.0, 2.0), (2.0, 9.0)]
+
+
+def test_long_audio_ranges_wait_for_active_subtitle_before_switching() -> None:
+    cues = [
+        SubtitleCue(start_seconds=0.0, end_seconds=4.0, text="intro words still speaking"),
+        SubtitleCue(start_seconds=4.0, end_seconds=7.0, text="chapter words"),
+    ]
+
+    ranges = _build_long_audio_ranges(cues, [2, 2], 7.0)
+
+    assert ranges == [(0.0, 4.0), (4.0, 7.0)]

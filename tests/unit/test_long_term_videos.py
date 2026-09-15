@@ -116,6 +116,24 @@ def test_long_narration_removes_search_instructions_and_keeps_visual_queries() -
     ]
 
 
+def test_long_narration_removes_duplicate_sentences_and_adds_reason() -> None:
+    service = OllamaService(load_settings(mock_mode=True))
+
+    content = service._fit_section_words(
+        "Chest responds to pressing. Chest responds to pressing.",
+        "easiest muscles to grow",
+        1,
+        focus="CHEST",
+        minimum_words=36,
+        maximum_words=42,
+        test_mode=True,
+    )
+
+    assert content.lower().count("chest responds to pressing") == 1
+    assert "the reason chest responds well" in content.lower()
+    assert "bigger picture" not in content.lower()
+
+
 def test_cli_make_long_test_renders_local_one_minute_package(cli_runner, configured_env) -> None:
     result = cli_runner.invoke(app, ["make-long-test", "--mock-mode"])
 

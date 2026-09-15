@@ -57,8 +57,10 @@ def _build_long_audio_ranges(
         consumed = 0
         for cue, cue_words in zip(cues, cue_word_counts):
             if offset <= consumed + cue_words:
-                fraction = (offset - consumed) / cue_words
-                return min(max(cue.start_seconds + (cue.end_seconds - cue.start_seconds) * fraction, 0.0), total_duration)
+                # Never cut a chapter inside an active subtitle cue. Waiting for
+                # the cue to finish keeps the spoken explanation and its image
+                # together instead of switching while the sentence is still heard.
+                return min(max(cue.end_seconds, 0.0), total_duration)
             consumed += cue_words
         return total_duration
 

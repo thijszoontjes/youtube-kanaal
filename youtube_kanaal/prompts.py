@@ -215,6 +215,8 @@ def build_long_content_generation_prompt(
         - The chapter title, narration, and first visual query must name the same specific subtopic.
         - Stay on that one subtopic for the entire chapter; do not introduce the next subtopic before the chapter ends.
         - Each chapter must answer a distinct question, use a concrete example, and end with a useful conclusion.
+        - Spend most of each chapter explaining WHY the subtopic behaves that way, is easy or difficult, or matters; do not only list names, symptoms, or exercises.
+        - Every sentence must add a new point. Never repeat a sentence, paragraph, conclusion, or filler phrase to reach the word count.
         - The final chapter should answer the opening question without repeating every chapter.
         - Write claims conservatively. Do not invent citations, studies, numbers, or sources.
         {duration_instructions}
