@@ -109,6 +109,9 @@ class StubChatterboxService:
         output_path.write_bytes(b"chatterbox")
         return output_path
 
+    def synthesize_long(self, *, text: str, output_path: Path, logger=None) -> Path:
+        return self.synthesize(text=text, output_path=output_path, logger=logger)
+
 
 def test_narration_service_uses_kokoro_by_default_when_ready() -> None:
     settings = Settings(narration_engine="kokoro")
@@ -279,6 +282,27 @@ def test_narration_service_uses_chatterbox_when_reference_audio_and_runtime_exis
 
     assert result.engine_used == "chatterbox"
     assert chatterbox.calls == 1
+
+
+def test_long_form_can_use_chatterbox_without_changing_shorts_engine(tmp_path) -> None:
+    sample_path = tmp_path / "memo.wav"
+    sample_path.write_bytes(b"voice")
+    settings = Settings(narration_engine="kokoro", long_narration_engine="chatterbox")
+    chatterbox = StubChatterboxService(sources=[sample_path])
+    service = NarrationService(
+        settings,
+        piper_service=StubPiperService(ready=True),
+        chatterbox_service=chatterbox,
+    )
+
+    result = service.synthesize(
+        text="hello",
+        output_path=tmp_path / "out.wav",
+        long_form=True,
+        engine_override=settings.long_narration_engine,
+    )
+
+    assert result.engine_used == "chatterbox"
 
 
 def test_narration_service_falls_back_from_chatterbox_when_runtime_is_missing(tmp_path) -> None:

@@ -173,6 +173,7 @@ class LongPipeline(ShortPipeline):
                 output_path=raw_path,
                 logger=runtime.logger,
                 long_form=True,
+                engine_override=self.settings.long_narration_engine,
             )
             self.ffmpeg.normalize_audio(input_path=raw_path, output_path=normalized_path)
             current_duration = self.ffmpeg.audio_duration_seconds(normalized_path)

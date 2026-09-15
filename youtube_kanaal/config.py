@@ -79,6 +79,7 @@ class Settings(BaseSettings):
 
     ffmpeg_binary: str = Field(default="ffmpeg", validation_alias=AliasChoices("FFMPEG_BINARY"))
     narration_engine: str = Field(default="kokoro", validation_alias=AliasChoices("NARRATION_ENGINE"))
+    long_narration_engine: str = Field(default="chatterbox", validation_alias=AliasChoices("LONG_NARRATION_ENGINE"))
     kokoro_voice: str = Field(default="af_heart", validation_alias=AliasChoices("KOKORO_VOICE"))
     kokoro_lang_code: str = Field(default="a", validation_alias=AliasChoices("KOKORO_LANG_CODE"))
     kokoro_speed: float = Field(default=1.05, ge=0.5, le=2.0, validation_alias=AliasChoices("KOKORO_SPEED"))
@@ -304,12 +305,12 @@ class Settings(BaseSettings):
             raise ValueError("DEFAULT_PRIVACY_STATUS must be private, unlisted, or public.")
         return normalized
 
-    @field_validator("narration_engine")
+    @field_validator("narration_engine", "long_narration_engine")
     @classmethod
     def _validate_narration_engine(cls, value: str) -> str:
         normalized = value.strip().lower()
         if normalized not in {"kokoro", "piper", "xtts", "chatterbox"}:
-            raise ValueError("NARRATION_ENGINE must be kokoro, piper, xtts, or chatterbox.")
+            raise ValueError("Narration engines must be kokoro, piper, xtts, or chatterbox.")
         return normalized
 
     @field_validator("kokoro_lang_code", "kokoro_device")

@@ -68,8 +68,13 @@ class NarrationService:
         self.xtts = xtts_service or XTTSService(settings)
         self.chatterbox = chatterbox_service or ChatterboxService(settings)
 
-    def inspect(self, *, logger: logging.Logger | None = None) -> NarrationInspection:
-        requested_engine = self.settings.narration_engine
+    def inspect(
+        self,
+        *,
+        logger: logging.Logger | None = None,
+        engine_override: str | None = None,
+    ) -> NarrationInspection:
+        requested_engine = (engine_override or self.settings.narration_engine).strip().lower()
         kokoro_ready, kokoro_reason = self.kokoro.runtime_ready()
         piper_ready, piper_reason = self.piper.runtime_ready()
         if requested_engine == "piper":
@@ -181,8 +186,9 @@ class NarrationService:
         beats: list[dict[str, object]] | None = None,
         logger: logging.Logger | None = None,
         long_form: bool = False,
+        engine_override: str | None = None,
     ) -> NarrationSynthesisResult:
-        inspection = self.inspect(logger=logger)
+        inspection = self.inspect(logger=logger, engine_override=engine_override)
         if long_form and inspection.resolved_engine != inspection.requested_engine:
             raise PipelineStageError(
                 stage="narration_generation",
