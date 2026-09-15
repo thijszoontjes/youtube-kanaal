@@ -326,7 +326,7 @@ class FFmpegService:
             else (self.settings.long_output_width, self.settings.long_output_height)
         )
         segment_paths: list[Path] = []
-        crossfade_seconds = 0.22
+        crossfade_seconds = 0.40
         segment_render_durations: list[float] = []
         for index, segment in enumerate(plan.segments, start=1):
             segment_path = segments_dir / f"long-segment-{index:03d}.mp4"
@@ -718,10 +718,8 @@ class FFmpegService:
         card_height = round(height * 0.5)
         card_x = (width - card_width) // 2
         card_y = round(height * 0.19)
-        caption_y = round(height * 0.80)
         title_size = round(width * 0.0234)
-        caption_size = round(width * 0.0195)
-        motion_scale = 1.10 if reveal else 1.06
+        motion_scale = 1.18 if reveal else 1.06
         if not motion:
             motion_scale = 1.0
         source_width = round(card_width * motion_scale)
@@ -729,17 +727,20 @@ class FFmpegService:
         pan_x = round(source_width * 0.04)
         pan_y = round(source_height * 0.03)
         title_file = self._escape_filter_path(title_path)
-        caption_file = self._escape_filter_path(caption_path)
-        crop_x = (
-            f"(iw-{card_width})/2+{pan_x}*sin(t*0.35)"
-            if motion
-            else f"(iw-{card_width})/2"
-        )
-        crop_y = (
-            f"(ih-{card_height})/2+{pan_y}*cos(t*0.28)"
-            if motion
-            else f"(ih-{card_height})/2"
-        )
+        if reveal:
+            crop_x = f"(iw-{card_width})*0.62-(iw-{card_width})*0.12*(1-cos(t*1.8))"
+            crop_y = f"(ih-{card_height})*0.58-(ih-{card_height})*0.08*(1-cos(t*1.5))"
+        else:
+            crop_x = (
+                f"(iw-{card_width})/2+{pan_x}*sin(t*0.35)"
+                if motion
+                else f"(iw-{card_width})/2"
+            )
+            crop_y = (
+                f"(ih-{card_height})/2+{pan_y}*cos(t*0.28)"
+                if motion
+                else f"(ih-{card_height})/2"
+            )
         return (
             f"[1:v]scale={source_width}:{source_height}:force_original_aspect_ratio=increase,"
             f"crop={card_width}:{card_height}:x='{crop_x}':y='{crop_y}',"
@@ -747,10 +748,7 @@ class FFmpegService:
             "unsharp=5:5:0.45:3:3:0.0[photo];"
             f"[0:v][photo]overlay=x={card_x}:y={card_y}:shortest=1[card];"
             f"[card]drawtext=font='Arial':textfile='{title_file}':fontcolor=black:"
-            f"fontsize={title_size}:x=(w-text_w)/2:y={round(height * 0.03)}:expansion=none:enable='between(t,0,"
-            f"{duration_seconds:.2f})',"
-            f"drawtext=font='Arial':textfile='{caption_file}':fontcolor=black:"
-            f"fontsize={caption_size}:x=(w-text_w)/2:y={caption_y}:expansion=none:enable='between(t,0,{duration_seconds:.2f})',"
+            f"fontsize={title_size}:x=(w-text_w)/2:y={round(height * 0.03)}:expansion=none:enable='between(t,0,{duration_seconds:.2f})',"
             "fps=30,settb=AVTB,format=yuv420p[v]"
         )
 

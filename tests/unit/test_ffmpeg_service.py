@@ -109,3 +109,36 @@ def test_long_photo_filter_can_hold_a_static_evidence_card() -> None:
 
     assert "sin(t*0.35)" not in filter_graph
     assert "cos(t*0.28)" not in filter_graph
+
+
+def test_long_photo_filter_leaves_subtitles_to_the_timed_ass_track() -> None:
+    service = FFmpegService(Settings())
+
+    filter_graph = service._long_photo_filter(
+        duration_seconds=5,
+        variant=1,
+        title_path=Path("title.txt"),
+        caption_path=Path("caption.txt"),
+        width=1280,
+        height=720,
+    )
+
+    assert "caption.txt" not in filter_graph
+    assert "drawtext" in filter_graph
+
+
+def test_long_photo_filter_reveals_a_new_topic_with_smooth_motion() -> None:
+    service = FFmpegService(Settings())
+
+    filter_graph = service._long_photo_filter(
+        duration_seconds=5,
+        variant=1,
+        title_path=Path("title.txt"),
+        caption_path=Path("caption.txt"),
+        width=1280,
+        height=720,
+        reveal=True,
+    )
+
+    assert "cos(t*1.8)" in filter_graph
+    assert "scale=614:425" in filter_graph

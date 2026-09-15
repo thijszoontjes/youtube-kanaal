@@ -393,7 +393,7 @@ class LongPipeline(ShortPipeline):
                             focus_x=focus_x,
                             focus_y=focus_y,
                         )
-                    )
+                )
                 transition_duration = (
                     min(0.8, max(0.6, chapter_duration * 0.08), max(chapter_duration - return_duration - 0.5, 0.0))
                     if overview_path
@@ -403,7 +403,7 @@ class LongPipeline(ShortPipeline):
                     transition_asset = self._section_clip_pool(section, clips, content.topic, content.bucket)[0]
                     segments.append(
                         AssetPlanSegment(
-                            clip_path=overview_path,
+                            clip_path=transition_asset.local_path,
                             duration_seconds=transition_duration,
                             reason=f"CARD TO CHAPTER: {section.title}",
                             on_screen_text=section.title,
