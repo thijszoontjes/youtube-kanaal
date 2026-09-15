@@ -73,15 +73,6 @@ def _build_long_audio_ranges(
     ]
 
 
-def _subtitle_text_between(cues: list[SubtitleCue], start: float, end: float) -> str:
-    words: list[str] = []
-    for cue in cues:
-        if cue.end_seconds <= start or cue.start_seconds >= end:
-            continue
-        words.extend(cue.text.replace("\n", " ").split())
-    return " ".join(words[:12]).strip()
-
-
 class LongPipeline(ShortPipeline):
     """Long-form video generation pipeline built on the same services as Shorts."""
 
@@ -364,7 +355,6 @@ class LongPipeline(ShortPipeline):
                     )
                 )
 
-            section_cursors = [0 for _ in content.sections]
             for section_index, (section, (chapter_start, chapter_end)) in enumerate(
                 zip(content.sections, chapter_ranges),
                 start=1,
@@ -416,43 +406,25 @@ class LongPipeline(ShortPipeline):
                             focus_x=focus_x,
                             focus_y=focus_y,
                         )
-                    )
+                )
 
                 photo_start = min(chapter_end, chapter_start + return_duration + transition_duration)
-                photo_end = chapter_end
-                scene_start = photo_start
-                scene_index = 0
-                while photo_end - scene_start > 0.25:
-                    target_end = min(scene_start + self.settings.long_segment_max_seconds, photo_end)
-                    cue_boundaries = [
-                        cue.end_seconds
-                        for cue in subtitle_cues
-                        if scene_start + self.settings.long_segment_min_seconds <= cue.end_seconds <= target_end
-                    ]
-                    scene_end = max(cue_boundaries, default=target_end)
-                    if scene_end <= scene_start + 0.25:
-                        scene_end = target_end
-                    duration = scene_end - scene_start
-                    pool = self._section_clip_pool(section, clips, content.topic, content.bucket)
-                    clip = pool[section_cursors[section_index - 1] % len(pool)]
-                    section_cursors[section_index - 1] += 1
-                    phrase = _subtitle_text_between(subtitle_cues, scene_start, scene_end)
-                    segments.append(
-                        AssetPlanSegment(
-                            clip_path=clip.local_path,
-                            duration_seconds=max(0.5, duration),
-                            reason=f"{section.title}: {clip.query}",
-                            on_screen_text=phrase or section.title,
-                            scene_id=f"scene-{chapter_id}-{scene_index:02d}",
-                            chapter_id=chapter_id,
-                            narration_fragment=phrase or section.narration,
-                            visual_type="photo",
-                            asset_id=clip.source_id,
-                            motion=scene_index % 3 != 1,
-                        )
+                photo_duration = max(chapter_end - photo_start, 0.5)
+                primary_clip = self._section_clip_pool(section, clips, content.topic, content.bucket)[0]
+                segments.append(
+                    AssetPlanSegment(
+                        clip_path=primary_clip.local_path,
+                        duration_seconds=photo_duration,
+                        reason=f"{section.title}: {primary_clip.query}",
+                        on_screen_text=section.title,
+                        scene_id=f"scene-{chapter_id}-main",
+                        chapter_id=chapter_id,
+                        narration_fragment=section.narration,
+                        visual_type="photo",
+                        asset_id=primary_clip.source_id,
+                        motion=False,
                     )
-                    scene_start = scene_end
-                    scene_index += 1
+                )
             planned_duration = sum(segment.duration_seconds for segment in segments)
             duration_delta = total_duration - planned_duration
             if segments and abs(duration_delta) > 0.001:
@@ -984,9 +956,10 @@ class LongPipeline(ShortPipeline):
         return manifest_path
 
     def _long_visual_queries(self, topic: TopicChoice, content: GeneratedLongVideo) -> list[str]:
-        queries: list[str] = [topic.topic, f"{topic.topic} {topic.bucket}", f"{topic.topic} documentary"]
+        queries: list[str] = []
         for section in content.sections:
-            queries.extend(section.visual_queries)
+            queries.extend(section.visual_queries[:2])
+        queries.extend([topic.topic, f"{topic.topic} {topic.bucket}", f"{topic.topic} documentary"])
         queries.extend(content.keyword_queries())
         return list(dict.fromkeys(" ".join(query.split()).strip() for query in queries if query.strip()))[:16]
 

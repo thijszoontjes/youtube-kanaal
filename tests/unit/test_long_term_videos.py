@@ -37,6 +37,21 @@ def test_long_prompt_has_separate_one_minute_profile() -> None:
     assert '"intro"' in prompt
 
 
+def test_long_prompt_requires_specific_subtopics_and_visual_consistency() -> None:
+    topic = TopicChoice(
+        bucket="human body",
+        topic="nutrient deficiencies",
+        visual_queries=["nutrient deficiencies", "vitamin D"],
+        search_terms=["nutrient deficiencies", "vitamin D"],
+    )
+
+    prompt = build_long_content_generation_prompt(topic, [], target_duration_seconds=60)
+
+    assert "one specific named subtopic" in prompt
+    assert "vitamin D" in prompt
+    assert "same specific subtopic" in prompt
+
+
 def test_mock_one_minute_long_content_has_test_profile(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("MOCK_MODE", "true")
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "output"))

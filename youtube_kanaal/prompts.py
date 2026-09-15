@@ -207,6 +207,11 @@ def build_long_content_generation_prompt(
         - No emoji, no bullet labels inside narration, no stage directions.
         - Keep the tone conversational, curious, and clean.
         - Open with one concrete question or observation, then introduce the visual route before the chapters.
+        - Every chapter must focus on one specific named subtopic, item, character, nutrient, object, or mechanism.
+        - Good subtopics are "vitamin D", "zinc", and "iron" in a deficiency video, or "Iron Man" and "Captain America" in an Avengers video.
+        - Do not use generic chapter subjects such as "the bigger picture", "health effects", "the science", or "other details".
+        - The chapter title, narration, and first visual query must name the same specific subtopic.
+        - Stay on that one subtopic for the entire chapter; do not introduce the next subtopic before the chapter ends.
         - Each chapter must answer a distinct question, use a concrete example, and end with a useful conclusion.
         - The final chapter should answer the opening question without repeating every chapter.
         - Write claims conservatively. Do not invent citations, studies, numbers, or sources.
@@ -218,7 +223,8 @@ def build_long_content_generation_prompt(
         - thumbnail_text must be short, punchy, ALL CAPS, mobile-readable, and clickbait-curious without lying.
         - Make thumbnail_text visually different from the title; use 2-4 big words, not a sentence.
         - Good thumbnail_text examples: "WAIT WHAT?", "HIDDEN TRUTH", "THIS IS WRONG", "NOBODY SEES THIS", "THEY HID THIS".
-        - Every section needs 2-5 Pexels-friendly visual search queries.
+        - Every section needs 2-5 Pexels-friendly visual search queries for the same specific subtopic.
+        - Put the strongest literal search query first; never put the broad video topic first in a section's visual_queries.
         - Generate 8-20 tags without # symbols.
         - Facts must be complete sentences and distinct.
         - Avoid title similarity to these recent titles: {excluded}
