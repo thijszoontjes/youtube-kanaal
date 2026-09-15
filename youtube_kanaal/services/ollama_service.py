@@ -819,7 +819,18 @@ class OllamaService:
             cleaned = self._clean_narration(cleaned)
             words = cleaned.split()
             addition_index += 1
+        if not self._contains_reasoning(cleaned):
+            extension = self._reason_extension(topic, focus, addition_index, test_mode=test_mode)
+            available_words = maximum_words - len(extension.split())
+            if len(cleaned.split()) > available_words:
+                cleaned = self._trim_narration_to_words(cleaned, available_words)
+            cleaned = self._clean_narration(f"{cleaned} {extension}")
         return cleaned
+
+    @staticmethod
+    def _contains_reasoning(narration: str) -> bool:
+        lowered = narration.lower()
+        return any(marker in lowered for marker in ("because", "why", "reason", "which means", "allows", "so that"))
 
     @staticmethod
     def _reason_extension(topic: str, focus: str, index: int, *, test_mode: bool) -> str:

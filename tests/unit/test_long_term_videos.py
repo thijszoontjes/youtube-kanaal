@@ -134,6 +134,22 @@ def test_long_narration_removes_duplicate_sentences_and_adds_reason() -> None:
     assert "bigger picture" not in content.lower()
 
 
+def test_long_narration_adds_why_when_source_has_only_description() -> None:
+    service = OllamaService(load_settings(mock_mode=True))
+
+    content = service._fit_section_words(
+        "The back muscles support posture and movement.",
+        "easiest muscles to grow",
+        5,
+        focus="BACK",
+        minimum_words=34,
+        maximum_words=38,
+        test_mode=True,
+    )
+
+    assert service._contains_reasoning(content)
+
+
 def test_cli_make_long_test_renders_local_one_minute_package(cli_runner, configured_env) -> None:
     result = cli_runner.invoke(app, ["make-long-test", "--mock-mode"])
 
