@@ -76,3 +76,19 @@ def test_validate_long_video_accepts_explicit_preview_dimensions(monkeypatch: py
     )
 
     assert payload["streams"][0]["width"] == 1280
+
+
+def test_long_photo_filter_forces_smooth_constant_30fps() -> None:
+    service = FFmpegService(Settings())
+
+    filter_graph = service._long_photo_filter(
+        duration_seconds=5,
+        variant=1,
+        title_path=Path("title.txt"),
+        caption_path=Path("caption.txt"),
+        width=1280,
+        height=720,
+    )
+
+    assert "fps=30" in filter_graph
+    assert "settb=AVTB" in filter_graph

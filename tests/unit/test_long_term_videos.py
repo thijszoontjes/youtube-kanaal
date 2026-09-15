@@ -34,6 +34,7 @@ def test_long_prompt_has_separate_one_minute_profile() -> None:
     assert '"duration_profile": "test"' in prompt
     assert "220-250 words" in prompt
     assert "8:30 to 11:00" in prompt
+    assert '"intro"' in prompt
 
 
 def test_mock_one_minute_long_content_has_test_profile(tmp_path: Path, monkeypatch) -> None:

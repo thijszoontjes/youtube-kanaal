@@ -668,6 +668,10 @@ class OllamaService:
         payload["topic"] = topic.topic
         payload["title"] = self._clean_long_title(content.title, topic.topic)
         payload["thumbnail_text"] = self._clean_thumbnail_text(content.thumbnail_text, topic.topic)
+        payload["intro"] = self._normalize_sentence(
+            content.intro
+            or f"What is {topic.topic} really doing inside the body? In this video, we follow the clues chapter by chapter."
+        )
         payload["sections"] = self._fit_long_sections(
             [section.model_dump(mode="json") for section in content.sections],
             topic.topic,
@@ -1263,6 +1267,7 @@ class OllamaService:
             title=self._clean_long_title("", topic.topic),
             thumbnail_text=self._clean_thumbnail_text("", topic.topic),
             description=self._clean_long_description("", topic.topic),
+            intro=f"What is {topic.topic} really doing inside the body? In this video, we follow the clues chapter by chapter.",
             tags=[topic.topic, topic.bucket, "facts", "explainer", "documentary", "science", "education", "visual"],
             sections=sections,
             facts=self._fallback_long_facts(topic.topic, topic.bucket),
@@ -1284,6 +1289,7 @@ class OllamaService:
             title=self._clean_long_title("", topic.topic),
             thumbnail_text=self._clean_thumbnail_text("", topic.topic),
             description=self._clean_long_description("", topic.topic),
+            intro=f"What is {topic.topic} really changing inside the body? Let’s follow the clues chapter by chapter.",
             tags=[topic.topic, topic.bucket, "facts", "explainer", "documentary", "science", "education", "visual"],
             sections=sections,
             facts=self._fallback_long_facts(topic.topic, topic.bucket),

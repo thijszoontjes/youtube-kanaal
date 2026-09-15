@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from youtube_kanaal.config import Settings
 from youtube_kanaal.exceptions import PipelineStageError
 from youtube_kanaal.services.narration_service import NarrationService
@@ -169,6 +171,23 @@ def test_narration_service_falls_back_to_piper_when_kokoro_synthesis_fails(tmp_p
     assert "espeak-ng crashed" in (result.fallback_reason or "")
     assert piper.calls == 1
     assert kokoro.calls == 1
+
+
+def test_long_form_narration_refuses_kokoro_to_piper_fallback(tmp_path) -> None:
+    settings = Settings(narration_engine="kokoro", kokoro_fallback_to_piper=True)
+    kokoro = StubKokoroService(ready=False, reason="Kokoro package not installed")
+    piper = StubPiperService(ready=True)
+    service = NarrationService(
+        settings,
+        kokoro_service=kokoro,
+        piper_service=piper,
+        xtts_service=StubXTTSService(),
+    )
+
+    with pytest.raises(PipelineStageError, match="voice fallback is disabled"):
+        service.synthesize(text="hello", output_path=tmp_path / "out.wav", long_form=True)
+
+    assert piper.calls == 0
 
 
 def test_narration_service_falls_back_to_piper_when_xtts_samples_missing_and_piper_ready(tmp_path) -> None:

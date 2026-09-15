@@ -719,6 +719,7 @@ class GeneratedLongVideo(BaseModel):
     title: str = Field(min_length=25, max_length=90)
     thumbnail_text: str = Field(min_length=4, max_length=34)
     description: str = Field(min_length=120, max_length=2000)
+    intro: str = Field(default="", max_length=700)
     tags: list[str] = Field(min_length=8, max_length=20)
     sections: list[LongVideoSection] = Field(min_length=6, max_length=8)
     facts: list[str] = Field(min_length=6, max_length=12)
@@ -732,7 +733,7 @@ class GeneratedLongVideo(BaseModel):
             raise ValueError(f"Bucket must be one of {', '.join(ALLOWED_BUCKETS)}.")
         return normalized
 
-    @field_validator("topic", "title", "thumbnail_text", "description")
+    @field_validator("topic", "title", "thumbnail_text", "description", "intro")
     @classmethod
     def _validate_text_fields(cls, value: str) -> str:
         cleaned = _WHITESPACE_RE.sub(" ", value.strip())
@@ -784,7 +785,9 @@ class GeneratedLongVideo(BaseModel):
 
     @property
     def narration(self) -> str:
-        return "\n\n".join(section.narration for section in self.sections).strip()
+        parts = [self.intro.strip()] if self.intro.strip() else []
+        parts.extend(section.narration for section in self.sections)
+        return "\n\n".join(parts).strip()
 
     def estimated_duration_seconds(self) -> float:
         return round(len(self.narration.split()) / 2.6, 2)

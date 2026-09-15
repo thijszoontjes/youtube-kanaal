@@ -231,6 +231,7 @@ def build_long_content_generation_prompt(
           "duration_profile": "{'test' if target_duration_seconds is not None else 'long'}",
           "title": "<clickable SEO-friendly long-form title>",
           "thumbnail_text": "<2-5 word ALL CAPS thumbnail phrase>",
+          "intro": "<20-35 spoken words: a clear opening question followed by what the viewer will see>",
           "description": "<2-4 paragraph YouTube description>",
           "tags": ["tag 1", "tag 2", "tag 3", "tag 4", "tag 5", "tag 6", "tag 7", "tag 8"],
           "sections": [

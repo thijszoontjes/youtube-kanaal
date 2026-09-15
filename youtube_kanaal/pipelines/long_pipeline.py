@@ -456,6 +456,14 @@ class LongPipeline(ShortPipeline):
             heading = "WHAT THIS VIDEO COVERS"
             heading_box = draw.textbbox((0, 0), heading, font=title_font)
             draw.text(((width - (heading_box[2] - heading_box[0])) / 2, round(14 * scale)), heading, fill="black", font=title_font)
+            subheading = f"A CLEAR ROUTE THROUGH {content.topic.upper()}"[:72]
+            subheading_box = draw.textbbox((0, 0), subheading, font=label_font)
+            draw.text(
+                ((width - (subheading_box[2] - subheading_box[0])) / 2, round(50 * scale)),
+                subheading,
+                fill="#555555",
+                font=label_font,
+            )
 
             count = len(valid_clips)
             columns = 1 if count == 1 else 2 if count <= 4 else 3
@@ -906,15 +914,16 @@ class LongPipeline(ShortPipeline):
         return list(dict.fromkeys(" ".join(query.split()).strip() for query in queries if query.strip()))[:16]
 
     def _chapter_timestamps(self, content: GeneratedLongVideo, duration_seconds: float) -> list[tuple[float, str]]:
+        intro_words = len(content.intro.split())
         word_counts = [max(len(section.narration.split()), 1) for section in content.sections]
         total_words = sum(word_counts)
         chapters: list[tuple[float, str]] = []
-        cursor = 0.0
+        total_narration_words = max(intro_words + total_words, 1)
+        cursor = duration_seconds * (intro_words / total_narration_words)
+        chapter_duration = duration_seconds * (total_words / total_narration_words)
         for index, (section, word_count) in enumerate(zip(content.sections, word_counts)):
             chapters.append((round(cursor, 2), section.title))
-            cursor += duration_seconds * (word_count / total_words)
-            if index == 0 and chapters[0][0] != 0:
-                chapters[0] = (0.0, section.title)
+            cursor += chapter_duration * (word_count / total_words)
         return chapters
 
     def _metadata_text(

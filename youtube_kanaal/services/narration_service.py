@@ -183,6 +183,15 @@ class NarrationService:
         long_form: bool = False,
     ) -> NarrationSynthesisResult:
         inspection = self.inspect(logger=logger)
+        if long_form and inspection.resolved_engine != inspection.requested_engine:
+            raise PipelineStageError(
+                stage="narration_generation",
+                message=(
+                    f"Long-form narration requested {inspection.requested_engine}, "
+                    f"but only {inspection.resolved_engine} is available; voice fallback is disabled."
+                ),
+                probable_cause=inspection.fallback_reason or "The configured long-form voice runtime is not ready.",
+            )
         if inspection.resolved_engine == "kokoro":
             try:
                 if beats and hasattr(self.kokoro, "synthesize_beats"):

@@ -14,7 +14,7 @@ The supplied reference thumbnail is stored at `data/long-form-thumbnail-referenc
 
 This command always creates a local one-minute test package and never uploads it. Production long-form generation remains available through `generate-and-schedule` and uses the normal 8:30–11:00 minute duration range.
 
-The reference video's exact voice ID is not exposed by YouTube metadata. The branch therefore uses the configured local Chatterbox reference voice; reproducing the source voice exactly requires a licensed voice match or an authorized clean reference recording. Long-form runs always write SRT/VTT/ASS captions and burn the ASS/SRT captions into the MP4.
+The reference video's exact voice ID is not exposed by YouTube metadata. This branch uses the configured local Kokoro voice (`af_heart`) at a slower long-form speed; reproducing the source voice exactly requires a licensed voice match or an authorized clean reference recording. Long-form runs always write SRT/VTT/ASS captions, burn centered captions into the MP4, and render a clear opening overview before the chapter visuals.
 
 ## Quick Start
 
@@ -68,7 +68,7 @@ make daily-content-dry-run
 python -m youtube_kanaal daily-content --dry-run
 ```
 
-The long-form part generates English videos between `8:30` and `11:00`, uses the configured narration engine, pulls copyright-friendly photos from Pexels, applies the existing movement and transition editing, adds a generated royalty-free background bed with ducking, renders a 1280x720 video and 1920x1080 thumbnail, writes metadata/chapters/tags, and schedules the YouTube upload for the next day at `LONG_PUBLISH_TIME`.
+The long-form part generates English videos between `8:30` and `11:00`, uses the configured narration engine, pulls copyright-friendly photos from Pexels, applies smooth constant-30fps movement and card-to-chapter transitions, adds a generated royalty-free background bed with ducking, renders a 1920x1080 production video or 1280x720 test preview, writes metadata/chapters/tags plus an asset-rights manifest, and schedules the YouTube upload for the next day at `LONG_PUBLISH_TIME`.
 
 Outputs are written to `output/<run_id>/`:
 

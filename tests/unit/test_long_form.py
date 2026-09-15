@@ -27,6 +27,7 @@ def test_generated_long_video_accepts_required_duration_shape() -> None:
         topic="axolotls",
         title="Axolotls: The Strange Details Most People Miss",
         thumbnail_text="WEIRD SURVIVOR",
+        intro="What is really happening inside an axolotl? This video follows the clues chapter by chapter.",
         description=(
             "A long visual explainer about axolotls with chapters, stock footage, narration, and upload metadata. "
             "The package is built for an English channel format with clear pacing and mobile-readable thumbnail text."

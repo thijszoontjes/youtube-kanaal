@@ -379,6 +379,10 @@ class FFmpegService:
                         "[v]",
                         "-t",
                         f"{segment.duration_seconds:.2f}",
+                        "-r",
+                        "30",
+                        "-fps_mode",
+                        "cfr",
                         "-an",
                         "-c:v",
                         "libx264",
@@ -408,6 +412,10 @@ class FFmpegService:
                         f"{segment.duration_seconds:.2f}",
                         "-vf",
                         segment_filter,
+                        "-r",
+                        "30",
+                        "-fps_mode",
+                        "cfr",
                         "-an",
                         "-c:v",
                         "libx264",
@@ -457,6 +465,10 @@ class FFmpegService:
                 "18",
                 "-pix_fmt",
                 "yuv420p",
+                "-r",
+                "30",
+                "-fps_mode",
+                "cfr",
                 "-c:a",
                 "aac",
                 "-b:a",
@@ -486,6 +498,10 @@ class FFmpegService:
                 "18",
                 "-pix_fmt",
                 "yuv420p",
+                "-r",
+                "30",
+                "-fps_mode",
+                "cfr",
                 "-c:a",
                 "copy",
                 str(output_path),
@@ -703,7 +719,7 @@ class FFmpegService:
             f"drawtext=font='Arial':textfile='{caption_file}':fontcolor=black:"
             f"fontsize={caption_size}:x=(w-text_w)/2:y={caption_y}:expansion=none:enable='between(t,0,{duration_seconds:.2f})',"
             f"fade=t=in:st=0:d=0.18:color=white,fade=t=out:st={max(duration_seconds - 0.18, 0):.2f}:d=0.18:color=white,"
-            "format=yuv420p[v]"
+            "fps=30,settb=AVTB,format=yuv420p[v]"
         )
 
     def _long_overview_filter(
@@ -726,13 +742,13 @@ class FFmpegService:
             return (
                 f"[1:v]scale={zoom_width}:{zoom_height}:force_original_aspect_ratio=increase,"
                 f"crop={width}:{height}:x={crop_x}:y={crop_y},"
-                f"fade=t=in:st=0:d={min(0.18, duration_seconds / 2):.2f}:color=white,format=yuv420p[v]"
+                f"fade=t=in:st=0:d={min(0.18, duration_seconds / 2):.2f}:color=white,fps=30,settb=AVTB,format=yuv420p[v]"
             )
         return (
             f"[1:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
             f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=white[overview];"
             f"[0:v][overview]overlay=x=0:y=0[card];"
-            "[card]fade=t=in:st=0:d=0.2:color=white,format=yuv420p[v]"
+                "[card]fade=t=in:st=0:d=0.2:color=white,fps=30,settb=AVTB,format=yuv420p[v]"
         )
 
     @staticmethod
