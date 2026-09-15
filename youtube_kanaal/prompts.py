@@ -210,7 +210,7 @@ def build_long_content_generation_prompt(
         - Every chapter must focus on one specific named subtopic, item, character, nutrient, object, or mechanism.
         - Good subtopics are "vitamin D", "zinc", and "iron" in a deficiency video, or "Iron Man" and "Captain America" in an Avengers video.
         - Treat every chapter as a separate block in the opening overview tiles. Use a short, concrete label such as "CHEST", "BICEPS", "TRICEPS", "VITAMIN D", or "ZINC".
-        - For a topic such as "easiest muscles to grow", split the video into named blocks such as chest, biceps, triceps, shoulders, back, and legs. Do not use numbered parts as the block names.
+        - Use the topic's natural structure to choose the blocks yourself; the examples above are only examples, never fixed chapter data.
         - Do not use generic chapter subjects such as "the bigger picture", "health effects", "the science", or "other details".
         - The chapter title, narration, and first visual query must name the same specific subtopic.
         - Stay on that one subtopic for the entire chapter; do not introduce the next subtopic before the chapter ends.
@@ -221,9 +221,9 @@ def build_long_content_generation_prompt(
         - Write claims conservatively. Do not invent citations, studies, numbers, or sources.
         {duration_instructions}
         - Mention {topic.topic} early.
-        - Use controlled clickbait: the title should create curiosity without lying or overpromising.
+        - The title should state the exact topic naturally and create curiosity without lying or overpromising. Informative forms such as "These Are the Easiest Muscles to Grow" are valid.
         - Use full ALL CAPS for some titles, and use ALL CAPS emphasis words in others; do not make every title all caps.
-        - Avoid bland title shapes like "X Explained" or "A Visual Guide to X".
+        - Never use "Visual Guide", "X Explained", or "long-form" in the title.
         - thumbnail_text must be short, punchy, ALL CAPS, mobile-readable, and clickbait-curious without lying.
         - Make thumbnail_text visually different from the title; use 2-4 big words, not a sentence.
         - Good thumbnail_text examples: "WAIT WHAT?", "HIDDEN TRUTH", "THIS IS WRONG", "NOBODY SEES THIS", "THEY HID THIS".

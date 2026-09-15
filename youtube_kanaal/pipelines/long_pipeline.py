@@ -1021,11 +1021,10 @@ class LongPipeline(ShortPipeline):
     ) -> GeneratedLongVideo | None:
         topic_title = content.topic[:1].upper() + content.topic[1:]
         candidates = [
-            f"{topic_title}: A Visual Guide to the Details Most People Miss",
             f"The Full Story Behind {topic_title}",
-            f"{topic_title} Explained Through the Details That Matter",
             f"Why {topic_title} Is More Interesting Than It Looks",
-            f"{topic_title}: The Long-Form Visual Explainer",
+            f"What You Should Know About {topic_title}",
+            f"The Details That Change How You See {topic_title}",
         ]
         payload = content.model_dump(mode="json")
         for candidate in candidates:

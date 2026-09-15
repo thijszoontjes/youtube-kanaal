@@ -69,16 +69,47 @@ def test_easiest_muscles_topic_has_concrete_test_blocks(tmp_path: Path) -> None:
 
     content = service._fallback_test_long_content(topic)
 
-    assert [section.title for section in content.sections] == [
-        "CHEST",
-        "BICEPS",
-        "TRICEPS",
-        "SHOULDERS",
-        "BACK",
-        "LEGS",
-    ]
-    assert content.sections[0].visual_queries[0] == "chest muscle anatomy"
+    assert len(content.sections) == 6
+    assert content.sections[0].title == "Easiest Muscles To Grow Detail 1"
     assert "#EasiestMusclesToGrow" in content.upload_description([(0.0, "CHEST")])
+
+
+def test_long_sections_preserve_ai_selected_subtopics_and_queries() -> None:
+    service = OllamaService(load_settings(mock_mode=True))
+
+    sections = service._fit_long_sections(
+        [
+            {
+                "title": "VITAMIN D",
+                "narration": "Vitamin D changes how the body handles calcium. The reason this matters is that the mechanism affects the whole system.",
+                "visual_queries": ["vitamin D sunlight", "vitamin D molecule"],
+            },
+            {
+                "title": "ZINC",
+                "narration": "Zinc supports several cellular processes. The reason this matters is that those processes affect repair and growth.",
+                "visual_queries": ["zinc mineral supplement", "zinc molecule"],
+            },
+        ],
+        "nutrient deficiencies",
+        "human body",
+        test_mode=True,
+    )
+
+    assert sections[0].title == "VITAMIN D"
+    assert sections[1].title == "ZINC"
+    assert sections[0].visual_queries[:2] == ["vitamin D sunlight", "vitamin D molecule"]
+
+
+def test_long_title_removes_visual_guide_without_replacing_ai_topic() -> None:
+    service = OllamaService(load_settings(mock_mode=True))
+
+    title = service._clean_long_title(
+        "A Visual Guide to These Are the Easiest Muscles to Grow",
+        "easiest muscles to grow",
+    )
+
+    assert "visual guide" not in title.lower()
+    assert "easiest muscles to grow" in title.lower()
 
 
 def test_long_overview_uses_only_one_tile_per_chapter(tmp_path: Path) -> None:
@@ -172,7 +203,7 @@ def test_long_narration_removes_duplicate_sentences_and_adds_reason() -> None:
     )
 
     assert content.lower().count("chest responds to pressing") == 1
-    assert "chest is easy to train because" in content.lower()
+    assert "the reason this block works is that" in content.lower()
     assert "bigger picture" not in content.lower()
     assert "the reason is direct loading" not in content.lower()
 

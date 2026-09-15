@@ -59,16 +59,6 @@ _FORMULAIC_NARRATION_PREFIXES: tuple[str, ...] = (
     "fact three",
 )
 
-_SPECIFIC_LONG_BLOCKS: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
-    "easiest muscles to grow": (
-        ("CHEST", ("chest muscle anatomy", "chest workout gym")),
-        ("BICEPS", ("biceps muscle anatomy", "biceps curl gym")),
-        ("TRICEPS", ("triceps muscle anatomy", "triceps workout gym")),
-        ("SHOULDERS", ("shoulder muscle anatomy", "shoulder press gym")),
-        ("BACK", ("back muscles anatomy", "back workout gym")),
-        ("LEGS", ("leg muscles anatomy", "leg workout gym")),
-    ),
-}
 _GENERIC_TITLE_RE = re.compile(
     r"^\s*(?:3|three)\s+(?:quick\s+|wild\s+|surprising\s+|amazing\s+|interesting\s+)?facts\s+about\b",
     re.IGNORECASE,
@@ -702,12 +692,7 @@ class OllamaService:
         normalized: list[dict[str, object]] = []
         minimum_words, maximum_words = (34, 38) if test_mode else (315, 390)
         for index, section in enumerate(sections, start=1):
-            specific_blocks = _SPECIFIC_LONG_BLOCKS.get(topic.strip().lower(), ())
-            if index <= len(specific_blocks):
-                planned_title, planned_queries = specific_blocks[index - 1]
-                title = planned_title
-            else:
-                title = str(section.get("title") or f"{topic.title()} Detail {index}")[:64]
+            title = " ".join(str(section.get("title") or f"{topic.title()} Detail {index}").split())[:64]
             narration = self._fit_section_words(
                 str(section.get("narration", "")),
                 topic,
@@ -721,8 +706,6 @@ class OllamaService:
             visual_queries = [str(query).strip() for query in queries if str(query).strip()] if isinstance(queries, list) else []
             visual_queries.extend(self._quoted_visual_queries(str(section.get("narration", ""))))
             visual_queries.extend([topic, f"{topic} {bucket}", f"{topic} documentary b-roll"])
-            if index <= len(specific_blocks):
-                visual_queries = [*planned_queries, *visual_queries]
             normalized.append(
                 {
                     "title": title,
@@ -734,18 +717,15 @@ class OllamaService:
             index = len(normalized) + 1
             if test_mode and len(normalized) >= 6:
                 break
-            specific_blocks = _SPECIFIC_LONG_BLOCKS.get(topic.strip().lower(), ())
-            planned_title = specific_blocks[index - 1][0] if index <= len(specific_blocks) else f"{topic.title()} Detail {index}"
-            planned_queries = list(specific_blocks[index - 1][1]) if index <= len(specific_blocks) else [topic, f"{topic} {bucket}", f"{topic} documentary b-roll"]
             normalized.append(
                 {
-                    "title": planned_title,
+                    "title": f"{topic.title()} Detail {index}",
                     "narration": (
                         self._fallback_test_section(topic, index)
                         if test_mode
                         else self._fallback_long_section(topic, bucket, index)
                     ),
-                    "visual_queries": planned_queries,
+                    "visual_queries": [topic, f"{topic} {bucket}", f"{topic} documentary b-roll"],
                 }
             )
         normalized = normalized[:6] if test_mode else normalized[:7]
@@ -837,16 +817,8 @@ class OllamaService:
     def _reason_extension(topic: str, focus: str, index: int, *, test_mode: bool) -> str:
         focus_text = focus.lower().strip() or topic
         if test_mode:
-            specific_reason = {
-                "chest": "Chest is easy to train because pressing movements load it directly.",
-                "biceps": "Biceps are easy to train because curling movements load them directly.",
-                "triceps": "Triceps are easy to train because pressing movements load them directly.",
-                "shoulders": "Shoulders respond well because controlled presses and raises load them directly.",
-                "back": "The back responds well when rows and pulls create steady tension.",
-                "legs": "Legs respond well because squats and lunges create steady tension.",
-            }.get(focus_text)
             extensions = (
-                specific_reason or "The reason this block works is that simple movements create direct tension.",
+                "The reason this block works is that simple movements create direct tension.",
                 "That makes progress easier to see and measure.",
                 "Consistency matters because the movement repeats reliably.",
                 f"This is why the {focus_text} block deserves its own explanation.",
@@ -892,11 +864,14 @@ class OllamaService:
 
     def _clean_long_title(self, title: str, topic: str) -> str:
         cleaned = " ".join(title.split()).strip()
-        topic_title = topic[:1].upper() + topic[1:]
-        if 25 <= len(cleaned) <= 90 and not self._is_generic_title(cleaned) and self._clickable_title_score(cleaned) >= 1:
-            return self._style_clickable_title(cleaned, topic, [], max_length=90)
-        fallback = f"The Hidden Truth About {topic_title}"
-        return self._style_clickable_title(fallback, topic, [], max_length=90)
+        cleaned = re.sub(r"\b(?:a\s+)?visual\s+guide(?:\s+to)?\b", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s+([:!?])", r"\1", cleaned)
+        cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" -:;")
+        if 25 <= len(cleaned) <= 90 and not self._is_generic_title(cleaned):
+            return self._trim_title(cleaned, 90)
+        topic_title = self._display_topic(topic)
+        fallback = f"{topic_title}: What You Need to Know"
+        return self._trim_title(fallback, 90)
 
     def _clean_thumbnail_text(self, value: str, topic: str) -> str:
         cleaned = " ".join(value.upper().split()).strip()
@@ -1382,16 +1357,14 @@ class OllamaService:
         )
 
     def _fallback_test_long_content(self, topic: TopicChoice) -> GeneratedLongVideo:
-        specific_blocks = _SPECIFIC_LONG_BLOCKS.get(topic.topic.strip().lower(), ())
         raw_sections = [
             {
-                "title": specific_blocks[index - 1][0] if index <= len(specific_blocks) else f"{topic.topic.title()} Detail {index}",
+                "title": f"{topic.topic.title()} Detail {index}",
                 "narration": self._fallback_test_section(
                     topic.topic,
                     index,
-                    specific_blocks[index - 1][0].title() if index <= len(specific_blocks) else None,
                 ),
-                "visual_queries": list(specific_blocks[index - 1][1]) if index <= len(specific_blocks) else [topic.topic, f"{topic.topic} {topic.bucket}"],
+                "visual_queries": [topic.topic, f"{topic.topic} {topic.bucket}"],
             }
             for index in range(1, 7)
         ]
