@@ -30,7 +30,7 @@ def test_make_short_pipeline_creates_expected_artifacts(configured_env) -> None:
     assert result.downloads_copy_path is not None
     assert result.downloads_copy_path.exists()
     assert result.metadata_path.exists()
-    assert list((configured_env["cache_dir"] / "pexels").glob("*.mp4"))
+    assert not list((configured_env["cache_dir"] / "pexels").glob("*.mp4"))
 
     metadata = json.loads(result.metadata_path.read_text(encoding="utf-8"))
     planned_segments = metadata["stages"]["asset_planning"]["segments"]

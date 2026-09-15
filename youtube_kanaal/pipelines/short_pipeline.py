@@ -254,19 +254,20 @@ class ShortPipeline:
         upload_metadata: UploadMetadata,
         clips: list[VideoClipAsset] | None = None,
     ) -> dict[str, object]:
-        if not upload_metadata.uploaded:
-            return {"cleaned": False, "deleted_bytes": 0, "summary_path": None, "deleted_paths": []}
-        if self.settings.keep_uploaded_media:
+        """Remove source media after a successful render, retaining deliverables."""
+        if upload_metadata.uploaded and self.settings.keep_uploaded_media:
             return {"cleaned": False, "deleted_bytes": 0, "summary_path": None, "deleted_paths": []}
 
         candidates = [
-            runtime.artifacts.video_dir,
             runtime.artifacts.assets_dir,
             runtime.artifacts.audio_dir,
-            runtime.artifacts.subtitles_dir,
             runtime.artifacts.prompts_dir,
             runtime.artifacts.responses_dir,
         ]
+        # A local, not-yet-uploaded package must keep its final MP4. Once
+        # YouTube has accepted it, the rendered MP4 can be removed as well.
+        if upload_metadata.uploaded:
+            candidates.insert(0, runtime.artifacts.video_dir)
         pexels_cache_dir = self.settings.cache_dir / "pexels"
         pexels_clip_paths = list(dict.fromkeys(clip.local_path for clip in (clips or [])))
         try:
@@ -299,10 +300,12 @@ class ShortPipeline:
                 "retained": {
                     "topic": runtime.stage_summaries.get("topic_selection", {}).get("topic"),
                     "metadata_dir": str(runtime.artifacts.metadata_dir),
+                    "video_dir": str(runtime.artifacts.video_dir),
+                    "subtitles_dir": str(runtime.artifacts.subtitles_dir),
                     "database": str(self.settings.database_path),
                     "log_file": str(runtime.logging_bundle.human_log_path),
                 },
-                "reason": "Uploaded media is removed after successful upload to keep local storage small.",
+                "reason": "Source media is removed after a successful render; local deliverables are retained until upload.",
             }
             summary_path = write_json(runtime.artifacts.metadata_dir / "media_cleanup.json", summary)
             runtime.stage_summaries["uploaded_media_cleanup"] = {
@@ -311,7 +314,7 @@ class ShortPipeline:
                 "summary_path": str(summary_path),
             }
             runtime.logger.info(
-                "Uploaded media cleaned",
+                "Finished media cleaned",
                 extra={"run_id": runtime.run_id, "deleted_bytes": deleted_bytes, "deleted_paths": deleted_paths},
             )
             return {
@@ -326,7 +329,7 @@ class ShortPipeline:
                 {
                     "cleaned": False,
                     "error": str(exc),
-                    "reason": "Upload succeeded, but local media cleanup failed.",
+                    "reason": "The video finished, but local source-media cleanup failed.",
                 },
             )
             runtime.stage_summaries["uploaded_media_cleanup"] = {
@@ -1387,11 +1390,11 @@ class ShortPipeline:
 
 
 def validate_artifact_directory(run_id: str, run_dir: Path) -> ValidationResult:
-    required_files = [
-        run_dir / "audio" / "narration.wav",
-        run_dir / "subtitles" / "captions.srt",
-        run_dir / "metadata" / "run_metadata.json",
-    ]
+    cleanup_path = run_dir / "metadata" / "media_cleanup.json"
+    media_was_cleaned = cleanup_path.exists()
+    required_files = [run_dir / "subtitles" / "captions.srt", run_dir / "metadata" / "run_metadata.json"]
+    if not media_was_cleaned:
+        required_files.insert(0, run_dir / "audio" / "narration.wav")
     final_video_dir = run_dir / "video"
     mp4_files = list(final_video_dir.glob("*.mp4")) if final_video_dir.exists() else []
     checks: list[str] = []
@@ -1405,6 +1408,8 @@ def validate_artifact_directory(run_id: str, run_dir: Path) -> ValidationResult:
 
     if mp4_files:
         checks.append(f"Found final video: {mp4_files[0].name}")
+    elif media_was_cleaned:
+        checks.append("Final video/source media cleanup was recorded")
     else:
         errors.append(f"Missing final MP4 in {final_video_dir}")
 

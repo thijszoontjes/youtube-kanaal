@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from youtube_kanaal.cli import app
@@ -235,6 +236,14 @@ def test_cli_make_long_test_renders_local_one_minute_package(cli_runner, configu
     assert (run_dir / "subtitles" / "long_captions.srt").exists()
     assert (run_dir / "subtitles" / "long_captions.vtt").exists()
     assert (run_dir / "subtitles" / "long_captions.ass").exists()
+    assert (run_dir / "video").exists()
+    assert (run_dir / "subtitles").exists()
+    assert not (run_dir / "assets").exists()
+    assert not (run_dir / "audio").exists()
+    assert not (run_dir / "prompts").exists()
+    assert not (run_dir / "responses").exists()
+    cleanup = json.loads((run_dir / "metadata" / "media_cleanup.json").read_text(encoding="utf-8"))
+    assert cleanup["cleaned"] is True
 
 
 def test_mock_long_form_uses_photo_assets(configured_env) -> None:
