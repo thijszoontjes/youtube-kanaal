@@ -700,7 +700,7 @@ class OllamaService:
         test_mode: bool = False,
     ) -> list[LongVideoSection]:
         normalized: list[dict[str, object]] = []
-        minimum_words, maximum_words = (36, 42) if test_mode else (315, 390)
+        minimum_words, maximum_words = (34, 38) if test_mode else (315, 390)
         for index, section in enumerate(sections, start=1):
             specific_blocks = _SPECIFIC_LONG_BLOCKS.get(topic.strip().lower(), ())
             if index <= len(specific_blocks):
@@ -762,13 +762,6 @@ class OllamaService:
                     addition_index += 1
                     total_words = sum(len(str(section["narration"]).split()) for section in normalized)
                 index = (index + 1) % len(normalized)
-            # The intro is added to these section words in GeneratedLongVideo.narration.
-            # Leave room for it so the complete one-minute test stays within 220-250 words.
-            while total_words > 235:
-                longest = max(range(len(normalized)), key=lambda i: len(str(normalized[i]["narration"]).split()))
-                words = str(normalized[longest]["narration"]).split()
-                normalized[longest]["narration"] = " ".join(words[:36]).rstrip(" ,;:") + "."
-                total_words = sum(len(str(section["narration"]).split()) for section in normalized)
             return [LongVideoSection.model_validate(section) for section in normalized]
         index = 0
         addition_index = 0
@@ -812,7 +805,7 @@ class OllamaService:
             return self._fallback_test_section(topic, index) if test_mode else self._fallback_long_section(topic, "facts", index)
         words = cleaned.split()
         if len(words) > maximum_words:
-            return " ".join(words[:maximum_words]).rstrip(" ,;:") + "."
+            return self._trim_narration_to_words(cleaned, maximum_words)
         focus = focus or topic
         addition_index = 0
         while len(words) < minimum_words:
@@ -833,19 +826,19 @@ class OllamaService:
         focus_text = focus.lower().strip() or topic
         if test_mode:
             extensions = (
-                f"The reason {focus_text} responds well is that a simple movement can load it directly.",
-                f"That matters because direct resistance makes progress easier to see and measure.",
-                f"The useful difference is consistency: the same movement can create tension again and again.",
-                f"This is why {focus_text} deserves its own block instead of being rushed past in a list.",
-                f"In practice, the result comes from controlled tension, not from a complicated routine.",
-                f"That cause and effect explains why beginners can understand this muscle quickly.",
+                "The reason is direct loading creates clear tension.",
+                "That makes progress easier to see and measure.",
+                "Consistency matters because the movement repeats reliably.",
+                f"This is why the {focus_text} block deserves its own explanation.",
+                "Controlled tension matters more than a complicated routine.",
+                "That cause and effect helps beginners understand it quickly.",
             )
         else:
             extensions = (
-                f"The reason {focus_text} matters is that it shows the cause behind the visible result.",
+                "The reason this block matters is that it shows the cause behind the visible result.",
                 f"That cause and effect is useful because it explains why the same pattern keeps appearing.",
-                f"The practical consequence is easier to see when {focus_text} stays separate from the next idea.",
-                f"This is why the detail deserves a full explanation instead of another quick list item.",
+                f"The practical consequence is easier to see when the {focus_text} block stays separate from the next idea.",
+                "This is why the detail deserves a full explanation instead of another quick list item.",
                 f"The deeper point is not just what happens, but which mechanism makes it happen.",
                 f"That mechanism also explains why the viewer should notice this part before the story moves on.",
                 f"A concrete example makes the reason clearer and keeps the explanation tied to something visible.",
@@ -860,6 +853,22 @@ class OllamaService:
         return (
             f"Another reason this belongs in the chapter is that it connects {focus_text} to the main question about {topic}."
         )
+
+    @staticmethod
+    def _trim_narration_to_words(narration: str, maximum_words: int) -> str:
+        """Trim only at sentence boundaries so narration never ends mid-thought."""
+        sentences = [sentence.strip() for sentence in _SENTENCE_SPLIT_RE.split(narration) if sentence.strip()]
+        kept: list[str] = []
+        word_count = 0
+        for sentence in sentences:
+            sentence_words = len(sentence.split())
+            if word_count + sentence_words > maximum_words:
+                break
+            kept.append(sentence)
+            word_count += sentence_words
+        if kept:
+            return " ".join(kept).strip()
+        return " ".join(narration.split()[:maximum_words]).rstrip(" ,;:") + "."
 
     def _clean_long_title(self, title: str, topic: str) -> str:
         cleaned = " ".join(title.split()).strip()

@@ -124,13 +124,13 @@ def test_long_narration_removes_duplicate_sentences_and_adds_reason() -> None:
         "easiest muscles to grow",
         1,
         focus="CHEST",
-        minimum_words=36,
-        maximum_words=42,
+        minimum_words=34,
+        maximum_words=38,
         test_mode=True,
     )
 
     assert content.lower().count("chest responds to pressing") == 1
-    assert "the reason chest responds well" in content.lower()
+    assert "the reason is direct loading" in content.lower()
     assert "bigger picture" not in content.lower()
 
 

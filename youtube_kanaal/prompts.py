@@ -185,7 +185,7 @@ def build_long_content_generation_prompt(
     duration_instructions = (
         "- duration_profile must be \"test\".\n"
         "        - Include exactly 6 short chapters.\n"
-        "        - Each section narration should be 36-42 words.\n"
+        "        - Each section narration should be 34-38 words.\n"
         "        - Total narration should be 220-250 words for a roughly 1-minute render at a relaxed pace."
         if target_duration_seconds is not None
         else "- duration_profile must be \"long\".\n"
