@@ -184,12 +184,12 @@ def build_long_content_generation_prompt(
     excluded = ", ".join(excluded_titles[-20:]) if excluded_titles else "None"
     duration_instructions = (
         "- duration_profile must be \"test\".\n"
-        "        - Include exactly 6 short sections.\n"
+        "        - Include exactly 6 short chapters.\n"
         "        - Each section narration should be 36-42 words.\n"
         "        - Total narration should be 220-250 words for a roughly 1-minute render at a relaxed pace."
         if target_duration_seconds is not None
         else "- duration_profile must be \"long\".\n"
-        "        - Include exactly 7 sections.\n"
+        "        - Include exactly 7 chapters.\n"
         "        - Each section narration should be 315-390 words.\n"
         "        - Total narration should be 2200-2700 words for an 8:30-11:00 render at a relaxed pace."
     )
@@ -206,7 +206,10 @@ def build_long_content_generation_prompt(
         - English only.
         - No emoji, no bullet labels inside narration, no stage directions.
         - Keep the tone conversational, curious, and clean.
-        - Open with a strong hook, then build through clear segments with visual variety.
+        - Open with one concrete question or observation, then introduce the visual route before the chapters.
+        - Each chapter must answer a distinct question, use a concrete example, and end with a useful conclusion.
+        - The final chapter should answer the opening question without repeating every chapter.
+        - Write claims conservatively. Do not invent citations, studies, numbers, or sources.
         {duration_instructions}
         - Mention {topic.topic} early.
         - Use controlled clickbait: the title should create curiosity without lying or overpromising.
@@ -233,7 +236,7 @@ def build_long_content_generation_prompt(
           "sections": [
             {{
               "title": "<chapter title>",
-              "narration": "<500-650 spoken words>",
+              "narration": "<spoken chapter text in the requested word range>",
               "visual_queries": ["<query 1>", "<query 2>"]
             }}
           ],

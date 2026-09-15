@@ -53,3 +53,26 @@ def test_validate_long_video_rejects_materially_short_duration(monkeypatch: pyte
 
     with pytest.raises(PipelineStageError, match="outside 510-660s"):
         service.validate_long_video(Path("rendered.mp4"), min_seconds=510, max_seconds=660)
+
+
+def test_validate_long_video_accepts_explicit_preview_dimensions(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = FFmpegService(Settings())
+
+    monkeypatch.setattr(
+        service,
+        "_probe_video",
+        lambda *_args, **_kwargs: {
+            "streams": [{"width": 1280, "height": 720, "duration": "60.00"}],
+            "format": {"duration": "60.00"},
+        },
+    )
+
+    payload = service.validate_long_video(
+        Path("rendered.mp4"),
+        min_seconds=60,
+        max_seconds=60,
+        expected_width=1280,
+        expected_height=720,
+    )
+
+    assert payload["streams"][0]["width"] == 1280

@@ -191,6 +191,12 @@ class NarrationService:
                     self.kokoro.synthesize(text=text, output_path=output_path, logger=logger)
                 return NarrationSynthesisResult(output_path=output_path, inspection=inspection)
             except Exception as exc:
+                if long_form:
+                    raise PipelineStageError(
+                        stage="narration_generation",
+                        message="Long-form Kokoro synthesis failed without changing voice engines.",
+                        probable_cause=str(exc),
+                    ) from exc
                 if self.settings.kokoro_fallback_to_piper and inspection.piper_ready:
                     fallback_reason = self._fallback_reason_from_exception(exc)
                     if logger:
@@ -219,6 +225,12 @@ class NarrationService:
                 self.xtts.synthesize(text=text, output_path=output_path, logger=logger)
                 return NarrationSynthesisResult(output_path=output_path, inspection=inspection)
             except Exception as exc:
+                if long_form:
+                    raise PipelineStageError(
+                        stage="narration_generation",
+                        message="Long-form XTTS synthesis failed without changing voice engines.",
+                        probable_cause=str(exc),
+                    ) from exc
                 if self.settings.xtts_fallback_to_piper and inspection.piper_ready:
                     fallback_reason = self._fallback_reason_from_exception(exc)
                     if logger:
@@ -250,6 +262,12 @@ class NarrationService:
                     self.chatterbox.synthesize(text=text, output_path=output_path, logger=logger)
                 return NarrationSynthesisResult(output_path=output_path, inspection=inspection)
             except Exception as exc:
+                if long_form:
+                    raise PipelineStageError(
+                        stage="narration_generation",
+                        message="Long-form Chatterbox synthesis failed without changing voice engines.",
+                        probable_cause=str(exc),
+                    ) from exc
                 if self.settings.chatterbox_fallback_to_piper and inspection.piper_ready:
                     fallback_reason = self._fallback_reason_from_exception(exc)
                     if logger:

@@ -308,6 +308,7 @@ class FFmpegService:
         subtitle_path: Path,
         working_dir: Path,
         output_path: Path,
+        preview_mode: bool = False,
     ) -> Path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         if self.settings.mock_mode:
@@ -319,6 +320,11 @@ class FFmpegService:
 
         segments_dir = working_dir / "segments"
         segments_dir.mkdir(parents=True, exist_ok=True)
+        width, height = (
+            (self.settings.long_preview_width, self.settings.long_preview_height)
+            if preview_mode
+            else (self.settings.long_output_width, self.settings.long_output_height)
+        )
         segment_paths: list[Path] = []
         for index, segment in enumerate(plan.segments, start=1):
             segment_path = segments_dir / f"long-segment-{index:03d}.mp4"
@@ -336,6 +342,11 @@ class FFmpegService:
                         duration_seconds=segment.duration_seconds,
                         title_path=title_path,
                         caption_path=caption_path,
+                        width=width,
+                        height=height,
+                        focus_x=segment.focus_x,
+                        focus_y=segment.focus_y,
+                        zoom_transition=segment.visual_type == "transition",
                     )
                     if segment.clip_path.name == "long-overview.jpg"
                     else self._long_photo_filter(
@@ -343,6 +354,9 @@ class FFmpegService:
                         variant=index,
                         title_path=title_path,
                         caption_path=caption_path,
+                        width=width,
+                        height=height,
+                        reveal=segment.visual_type == "transition",
                     )
                 )
                 run_command(
@@ -352,7 +366,7 @@ class FFmpegService:
                         "-f",
                         "lavfi",
                         "-i",
-                        f"color=c=white:s=1280x720:r=30:d={segment.duration_seconds:.2f}",
+                        f"color=c=white:s={width}x{height}:r=30:d={segment.duration_seconds:.2f}",
                         "-loop",
                         "1",
                         "-framerate",
@@ -453,7 +467,7 @@ class FFmpegService:
             timeout_seconds=1800,
             stage="video_rendering",
         )
-        subtitle_filter = self._subtitle_filter(subtitle_path, original_size=(1280, 720))
+        subtitle_filter = self._subtitle_filter(subtitle_path, original_size=(width, height))
         run_command(
             [
                 self.settings.ffmpeg_binary,
@@ -555,17 +569,25 @@ class FFmpegService:
             )
         return payload
 
-    def validate_long_video(self, video_path: Path, *, min_seconds: int, max_seconds: int) -> dict[str, object]:
+    def validate_long_video(
+        self,
+        video_path: Path,
+        *,
+        min_seconds: int,
+        max_seconds: int,
+        expected_width: int = 1280,
+        expected_height: int = 720,
+    ) -> dict[str, object]:
         payload = self._probe_video(video_path, stage="validation")
         stream = payload["streams"][0]
         width = int(stream.get("width") or 0)
         height = int(stream.get("height") or 0)
         duration = float(stream.get("duration") or payload.get("format", {}).get("duration") or 0)
-        if width != 1280 or height != 720:
+        if width != expected_width or height != expected_height:
             raise PipelineStageError(
                 stage="validation",
                 message=f"Rendered long-form video has unexpected dimensions {width}x{height}.",
-                probable_cause="The FFmpeg long-form render did not produce a 1280x720 frame.",
+                probable_cause=f"The FFmpeg long-form render did not produce a {expected_width}x{expected_height} frame.",
             )
         min_allowed = min_seconds - LONG_VIDEO_DURATION_TOLERANCE_SECONDS
         max_allowed = max_seconds + LONG_VIDEO_DURATION_TOLERANCE_SECONDS
@@ -651,21 +673,35 @@ class FFmpegService:
         variant: int,
         title_path: Path,
         caption_path: Path,
+        width: int,
+        height: int,
+        reveal: bool = False,
     ) -> str:
-        caption_y = 575
+        card_width = round(width * 0.40625)
+        card_height = round(height * 0.5)
+        card_x = (width - card_width) // 2
+        card_y = round(height * 0.19)
+        caption_y = round(height * 0.80)
+        title_size = round(width * 0.0234)
+        caption_size = round(width * 0.0195)
+        motion_scale = 1.10 if reveal else 1.08
+        source_width = round(card_width * motion_scale)
+        source_height = round(card_height * motion_scale)
+        pan_x = round(source_width * 0.04)
+        pan_y = round(source_height * 0.03)
         title_file = self._escape_filter_path(title_path)
         caption_file = self._escape_filter_path(caption_path)
         return (
-            "[1:v]scale=600:420:force_original_aspect_ratio=increase,"
-            "crop=520:360:x='(iw-520)/2+8*sin(t*0.35)':y='(ih-360)/2+6*cos(t*0.28)',"
+            f"[1:v]scale={source_width}:{source_height}:force_original_aspect_ratio=increase,"
+            f"crop={card_width}:{card_height}:x='(iw-{card_width})/2+{pan_x}*sin(t*0.35)':y='(ih-{card_height})/2+{pan_y}*cos(t*0.28)',"
             "eq=saturation=1.1:contrast=1.05:brightness=0.01,"
             "unsharp=5:5:0.45:3:3:0.0[photo];"
-            "[0:v][photo]overlay=x=380:y=135:shortest=1[card];"
+            f"[0:v][photo]overlay=x={card_x}:y={card_y}:shortest=1[card];"
             f"[card]drawtext=font='Arial':textfile='{title_file}':fontcolor=black:"
-            "fontsize=30:x=(w-text_w)/2:y=22:expansion=none:enable='between(t,0,"
+            f"fontsize={title_size}:x=(w-text_w)/2:y={round(height * 0.03)}:expansion=none:enable='between(t,0,"
             f"{duration_seconds:.2f})',"
             f"drawtext=font='Arial':textfile='{caption_file}':fontcolor=black:"
-            f"fontsize=25:x=(w-text_w)/2:y={caption_y}:expansion=none:enable='between(t,0,{duration_seconds:.2f})',"
+            f"fontsize={caption_size}:x=(w-text_w)/2:y={caption_y}:expansion=none:enable='between(t,0,{duration_seconds:.2f})',"
             f"fade=t=in:st=0:d=0.18:color=white,fade=t=out:st={max(duration_seconds - 0.18, 0):.2f}:d=0.18:color=white,"
             "format=yuv420p[v]"
         )
@@ -676,13 +712,26 @@ class FFmpegService:
         duration_seconds: float,
         title_path: Path,
         caption_path: Path,
+        width: int,
+        height: int,
+        focus_x: float = 0.5,
+        focus_y: float = 0.5,
+        zoom_transition: bool = False,
     ) -> str:
-        title_file = self._escape_filter_path(title_path)
-        caption_file = self._escape_filter_path(caption_path)
+        if zoom_transition:
+            zoom_width = round(width * 1.18)
+            zoom_height = round(height * 1.18)
+            crop_x = round((zoom_width - width) * focus_x)
+            crop_y = round((zoom_height - height) * focus_y)
+            return (
+                f"[1:v]scale={zoom_width}:{zoom_height}:force_original_aspect_ratio=increase,"
+                f"crop={width}:{height}:x={crop_x}:y={crop_y},"
+                f"fade=t=in:st=0:d={min(0.18, duration_seconds / 2):.2f}:color=white,format=yuv420p[v]"
+            )
         return (
-            "[1:v]scale=1100:600:force_original_aspect_ratio=decrease,"
-            "pad=1100:600:(ow-iw)/2:(oh-ih)/2:color=white[overview];"
-            "[0:v][overview]overlay=x=90:y=55[card];"
+            f"[1:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=white[overview];"
+            f"[0:v][overview]overlay=x=0:y=0[card];"
             "[card]fade=t=in:st=0:d=0.2:color=white,format=yuv420p[v]"
         )
 

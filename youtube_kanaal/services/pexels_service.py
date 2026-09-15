@@ -260,6 +260,9 @@ class PexelsService:
                     score=round((2.0 if width >= height else 0.5) + min(width / 1000, 2.0), 2),
                     photographer=str(user) if user else None,
                     photographer_url=str(photo.get("photographer_url")) if photo.get("photographer_url") else None,
+                    license_name="Pexels License",
+                    license_url="https://www.pexels.com/license/",
+                    rights_status="provider_license",
                 )
             )
         return photos

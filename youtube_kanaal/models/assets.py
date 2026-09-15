@@ -58,6 +58,9 @@ class ImageAsset(BaseModel):
     score: float = Field(default=0, ge=0)
     photographer: str | None = None
     photographer_url: str | None = None
+    license_name: str | None = None
+    license_url: str | None = None
+    rights_status: str = "unverified"
 
     @property
     def is_portrait(self) -> bool:
@@ -75,6 +78,13 @@ class AssetPlanSegment(BaseModel):
     transition: str = "cut"
     visual_variant: Literal["primary", "punch", "cutaway", "proof", "reveal"] = "primary"
     on_screen_text: str = ""
+    scene_id: str = "scene-unknown"
+    chapter_id: str = "chapter-unknown"
+    narration_fragment: str = ""
+    visual_type: Literal["overview", "photo", "transition", "diagram", "broll"] = "photo"
+    asset_id: str | None = None
+    focus_x: float = Field(default=0.5, ge=0.0, le=1.0)
+    focus_y: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
 class AssetPlan(BaseModel):

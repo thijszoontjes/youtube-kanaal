@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import shutil
 import textwrap
@@ -271,74 +272,134 @@ class LongPipeline(ShortPipeline):
                     probable_cause="Pexels returned no usable photos for the selected topic.",
                 )
             overview_path = self._create_long_overview(runtime, clips, content)
-            overview_duration = min(4.0, max(3.0, narration.duration_seconds * 0.08)) if overview_path else 0.0
-            clip_count = len(clips)
-            segment_duration = narration.duration_seconds / clip_count
-            segment_duration = max(self.settings.long_segment_min_seconds, min(segment_duration, self.settings.long_segment_max_seconds))
             segments: list[AssetPlanSegment] = []
+            total_duration = narration.duration_seconds
+            overview_intro = min(8.0, max(6.0, total_duration * 0.08)) if overview_path else 0.0
+            chapter_audio_duration = max(total_duration - overview_intro, 0.5)
+            section_word_counts = [max(len(section.narration.split()), 1) for section in content.sections]
+            total_section_words = sum(section_word_counts)
+            chapter_durations = [chapter_audio_duration * (count / total_section_words) for count in section_word_counts]
+            overview_cards = runtime.stage_summaries.get("overview_cards", [])
+            card_by_chapter = {
+                str(card.get("chapter_id")): card
+                for card in overview_cards
+                if isinstance(card, dict)
+            }
             if overview_path:
                 overview_titles = ", ".join(section.title for section in content.sections[:8])
                 segments.append(
                     AssetPlanSegment(
                         clip_path=overview_path,
-                        duration_seconds=overview_duration,
+                        duration_seconds=overview_intro,
                         reason=f"OVERVIEW: {overview_titles}",
                         on_screen_text="Everything covered in this video",
                         visual_variant="reveal",
+                        scene_id="scene-overview-intro",
+                        chapter_id="overview",
+                        visual_type="overview",
+                        asset_id="overview",
                     )
                 )
-            remaining = max(narration.duration_seconds - overview_duration, 0.5)
-            voice_cursor = 0.0
-            index = 0
-            section_word_counts = [max(len(section.narration.split()), 1) for section in content.sections]
-            total_section_words = sum(section_word_counts)
-            section_boundaries: list[tuple[float, float]] = []
-            boundary_cursor = 0.0
-            for word_count in section_word_counts:
-                section_start = narration.duration_seconds * (boundary_cursor / total_section_words)
-                boundary_cursor += word_count
-                section_end = narration.duration_seconds * (boundary_cursor / total_section_words)
-                section_boundaries.append((section_start, section_end))
+
             section_cursors = [0 for _ in content.sections]
-            while remaining > 0.25:
-                midpoint = voice_cursor + min(segment_duration, remaining) / 2
-                section_index = next(
-                    (candidate for candidate, (_, section_end) in enumerate(section_boundaries) if midpoint <= section_end),
-                    len(content.sections) - 1,
-                )
-                section = content.sections[section_index]
-                section_start, section_end = section_boundaries[section_index]
-                duration = min(segment_duration, remaining, max(section_end - voice_cursor, 0.5))
-                pool = self._section_clip_pool(section, clips, content.topic)
-                clip = pool[section_cursors[section_index] % len(pool)]
-                section_cursors[section_index] += 1
-                section_words = section.narration.split()
-                progress = min(max((voice_cursor - section_start) / max(section_end - section_start, 0.1), 0.0), 1.0)
-                phrase_start = min(int(progress * len(section_words)), max(len(section_words) - 8, 0))
-                words_per_segment = max(5, min(10, len(section_words) // 3))
-                phrase = " ".join(section_words[phrase_start : phrase_start + words_per_segment]).strip()
-                segments.append(
-                    AssetPlanSegment(
-                        clip_path=clip.local_path,
-                        duration_seconds=max(0.5, duration),
-                        reason=f"{section.title}: {clip.query}",
-                        on_screen_text=phrase or section.title,
+            for section_index, (section, chapter_duration) in enumerate(zip(content.sections, chapter_durations), start=1):
+                chapter_id = f"chapter-{section_index:02d}"
+                card = card_by_chapter.get(chapter_id, {})
+                focus_x = float(card.get("focus_x", 0.5)) if card else 0.5
+                focus_y = float(card.get("focus_y", 0.5)) if card else 0.5
+                return_duration = 0.0
+                if overview_path and section_index > 1:
+                    return_duration = min(2.0, max(1.5, chapter_duration * 0.18))
+                    segments.append(
+                        AssetPlanSegment(
+                            clip_path=overview_path,
+                            duration_seconds=return_duration,
+                            reason=f"RETURN OVERVIEW: {section.title}",
+                            on_screen_text=section.title,
+                            visual_variant="reveal",
+                            scene_id=f"scene-{chapter_id}-overview",
+                            chapter_id=chapter_id,
+                            narration_fragment=section.title,
+                            visual_type="overview",
+                            asset_id="overview",
+                            focus_x=focus_x,
+                            focus_y=focus_y,
+                        )
                     )
-                )
-                remaining -= duration
-                voice_cursor += duration
-                index += 1
+                transition_duration = min(0.8, max(0.6, chapter_duration * 0.08)) if overview_path else 0.0
+                if overview_path and chapter_duration > transition_duration + 0.8:
+                    transition_asset = self._section_clip_pool(section, clips, content.topic, content.bucket)[0]
+                    segments.append(
+                        AssetPlanSegment(
+                            clip_path=overview_path,
+                            duration_seconds=transition_duration,
+                            reason=f"CARD TO CHAPTER: {section.title}",
+                            on_screen_text=section.title,
+                            visual_variant="reveal",
+                            scene_id=f"scene-{chapter_id}-transition",
+                            chapter_id=chapter_id,
+                            narration_fragment=section.title,
+                            visual_type="transition",
+                            asset_id=transition_asset.source_id,
+                            focus_x=focus_x,
+                            focus_y=focus_y,
+                        )
+                    )
+
+                section_words = section.narration.split()
+                scene_remaining = max(chapter_duration - return_duration - transition_duration, 0.5)
+                scene_index = 0
+                while scene_remaining > 0.25:
+                    duration = min(
+                        self.settings.long_segment_max_seconds,
+                        max(self.settings.long_segment_min_seconds, scene_remaining),
+                    )
+                    duration = min(duration, scene_remaining)
+                    pool = self._section_clip_pool(section, clips, content.topic, content.bucket)
+                    clip = pool[section_cursors[section_index - 1] % len(pool)]
+                    section_cursors[section_index - 1] += 1
+                    progress = 1.0 - (scene_remaining / max(chapter_duration, 0.1))
+                    phrase_start = min(int(progress * len(section_words)), max(len(section_words) - 10, 0))
+                    phrase = " ".join(section_words[phrase_start : phrase_start + 10]).strip()
+                    segments.append(
+                        AssetPlanSegment(
+                            clip_path=clip.local_path,
+                            duration_seconds=max(0.5, duration),
+                            reason=f"{section.title}: {clip.query}",
+                            on_screen_text=phrase or section.title,
+                            scene_id=f"scene-{chapter_id}-{scene_index:02d}",
+                            chapter_id=chapter_id,
+                            narration_fragment=phrase or section.narration,
+                            visual_type="photo",
+                            asset_id=clip.source_id,
+                        )
+                    )
+                    scene_remaining -= duration
+                    scene_index += 1
+            planned_duration = sum(segment.duration_seconds for segment in segments)
+            duration_delta = total_duration - planned_duration
+            if segments and abs(duration_delta) > 0.001:
+                last_segment = segments[-1]
+                adjusted_duration = last_segment.duration_seconds + duration_delta
+                if adjusted_duration >= 0.5:
+                    last_segment.duration_seconds = adjusted_duration
             plan = AssetPlan(segments=segments, total_duration_seconds=narration.duration_seconds)
             runtime.stage_summaries["asset_planning"] = plan.model_dump(mode="json")
             return plan
 
+    def _long_frame_size(self, runtime: "LongPipelineRuntime") -> tuple[int, int]:
+        if runtime.request.test_duration_seconds is not None:
+            return self.settings.long_preview_width, self.settings.long_preview_height
+        return self.settings.long_output_width, self.settings.long_output_height
+
     @staticmethod
-    def _section_clip_pool(section: LongVideoSection, clips: list[ImageAsset], topic: str) -> list[ImageAsset]:
+    def _section_clip_pool(section: LongVideoSection, clips: list[ImageAsset], topic: str, bucket: str = "") -> list[ImageAsset]:
         """Prefer photos returned for this chapter over generic topic photos."""
         normalize = lambda value: " ".join(value.lower().split())
         section_queries = {normalize(query) for query in section.visual_queries if query.strip()}
         generic_queries = {
             normalize(topic),
+            normalize(bucket),
             normalize(f"{topic} {section.title}"),
             normalize(f"{topic} human body"),
             normalize(f"{topic} {section.title} human body"),
@@ -382,29 +443,33 @@ class LongPipeline(ShortPipeline):
             if not valid_clips:
                 return None
 
-            canvas = Image.new("RGB", (1280, 720), "white")
+            width, height = self._long_frame_size(runtime)
+            canvas = Image.new("RGB", (width, height), "white")
             draw = ImageDraw.Draw(canvas)
+            scale = min(width / 1280, height / 720)
             try:
-                title_font = ImageFont.truetype("Arial.ttf", 28)
-                label_font = ImageFont.truetype("Arial.ttf", 18)
+                title_font = ImageFont.truetype("Arial.ttf", max(24, round(28 * scale)))
+                label_font = ImageFont.truetype("Arial.ttf", max(16, round(18 * scale)))
             except OSError:
                 title_font = ImageFont.load_default()
                 label_font = ImageFont.load_default()
             heading = "WHAT THIS VIDEO COVERS"
             heading_box = draw.textbbox((0, 0), heading, font=title_font)
-            draw.text(((1280 - (heading_box[2] - heading_box[0])) / 2, 14), heading, fill="black", font=title_font)
+            draw.text(((width - (heading_box[2] - heading_box[0])) / 2, round(14 * scale)), heading, fill="black", font=title_font)
 
             count = len(valid_clips)
-            columns = 1 if count == 1 else 4
+            columns = 1 if count == 1 else 2 if count <= 4 else 3
             rows = (count + columns - 1) // columns
-            tile_width = 640 if count == 1 else 280
-            tile_height = 500 if count == 1 else 230
-            gap_x = 24 if count == 1 else 18
-            gap_y = 24 if count == 1 else 18
+            margin_x = round(44 * scale)
+            gap_x = round(24 * scale)
+            gap_y = round(20 * scale)
+            tile_width = (width - 2 * margin_x - (columns - 1) * gap_x) // columns
+            tile_height = round((height - round(120 * scale) - (rows - 1) * gap_y) / rows)
             total_width = columns * tile_width + (columns - 1) * gap_x
             total_height = rows * tile_height + (rows - 1) * gap_y
-            start_x = (1280 - total_width) // 2
-            start_y = max(62, (720 - total_height) // 2 + 18)
+            start_x = (width - total_width) // 2
+            start_y = max(round(62 * scale), (height - total_height) // 2 + round(18 * scale))
+            overview_cards: list[dict[str, object]] = []
             for index, clip in enumerate(valid_clips):
                 with Image.open(clip.local_path).convert("RGB") as source:
                     tile = ImageOps.fit(source, (tile_width, tile_height), method=Image.Resampling.LANCZOS)
@@ -416,13 +481,29 @@ class LongPipeline(ShortPipeline):
                 label_lines = textwrap.wrap(label, width=24)[:2] or [label]
                 label_text = "\n".join(label_lines)
                 label_box = draw.multiline_textbbox((0, 0), label_text, font=label_font, spacing=1)
-                label_height = label_box[3] - label_box[1] + 10
+                label_height = label_box[3] - label_box[1] + round(10 * scale)
                 label_top = y + tile_height - label_height
                 draw.rectangle((x, label_top, x + tile_width, y + tile_height), fill="white")
-                draw.multiline_text((x + 8, label_top + 4), label_text, fill="black", font=label_font, spacing=1)
+                draw.multiline_text((x + round(8 * scale), label_top + round(4 * scale)), label_text, fill="black", font=label_font, spacing=1)
+                chapter_id = f"chapter-{index + 1:02d}"
+                overview_cards.append(
+                    {
+                        "chapter_id": chapter_id,
+                        "title": label,
+                        "asset_id": clip.source_id,
+                        "local_path": str(clip.local_path),
+                        "x": x,
+                        "y": y,
+                        "width": tile_width,
+                        "height": tile_height,
+                        "focus_x": 0.5,
+                        "focus_y": 0.5,
+                    }
+                )
 
             output_path = runtime.artifacts.video_dir / "long-overview.jpg"
             canvas.save(output_path, quality=95, subsampling=0)
+            runtime.stage_summaries["overview_cards"] = overview_cards
             return output_path
         except (ImportError, OSError, ValueError):
             return None
@@ -443,6 +524,7 @@ class LongPipeline(ShortPipeline):
                 subtitle_path=subtitles.ass_path or subtitles.srt_path,
                 working_dir=runtime.artifacts.video_dir,
                 output_path=final_video_path,
+                preview_mode=runtime.request.test_duration_seconds is not None,
             )
             runtime.stage_summaries["video_rendering"] = {"output_path": str(output_path), "audio_path": str(audio_path)}
             return output_path
@@ -453,8 +535,29 @@ class LongPipeline(ShortPipeline):
                 final_video_path,
                 min_seconds=runtime.request.test_duration_seconds or self.settings.min_long_duration_seconds,
                 max_seconds=runtime.request.test_duration_seconds or self.settings.max_long_duration_seconds,
+                expected_width=(self.settings.long_preview_width if runtime.request.test_duration_seconds is not None else self.settings.long_output_width),
+                expected_height=(self.settings.long_preview_height if runtime.request.test_duration_seconds is not None else self.settings.long_output_height),
             )
             write_json(runtime.artifacts.metadata_dir / "validation.json", payload)
+            stream = payload.get("streams", [{}])[0] if isinstance(payload.get("streams"), list) else {}
+            report = {
+                "video_path": str(final_video_path),
+                "checks": {
+                    "duration": True,
+                    "resolution": {
+                        "expected": [
+                            self.settings.long_preview_width if runtime.request.test_duration_seconds is not None else self.settings.long_output_width,
+                            self.settings.long_preview_height if runtime.request.test_duration_seconds is not None else self.settings.long_output_height,
+                        ],
+                        "actual": [stream.get("width"), stream.get("height")],
+                        "passed": True,
+                    },
+                    "captions": bool(runtime.stage_summaries.get("subtitle_generation")),
+                    "assets_manifest": False,
+                },
+                "warnings": [],
+            }
+            write_json(runtime.artifacts.metadata_dir / "validation_report.json", report)
             runtime.stage_summaries["validation"] = payload
             return payload
 
@@ -585,6 +688,25 @@ class LongPipeline(ShortPipeline):
     ) -> LongRunResult:
         with self._long_stage(runtime, "persistence", {"topic": topic.topic, "title": content.title}):
             chapters = self._chapter_timestamps(content, narration.duration_seconds)
+            assets_manifest_path = self._write_assets_manifest(
+                runtime=runtime,
+                clips=clips,
+                narration=narration,
+                thumbnail_path=thumbnail_path,
+                final_video_path=final_video_path,
+            )
+            validation_report_path = runtime.artifacts.metadata_dir / "validation_report.json"
+            validation_report = {}
+            if validation_report_path.exists():
+                import json
+
+                validation_report = json.loads(validation_report_path.read_text(encoding="utf-8"))
+            validation_report.setdefault("checks", {})["assets_manifest"] = assets_manifest_path.exists()
+            validation_report["checks"]["timeline"] = {
+                "passed": bool(runtime.stage_summaries.get("asset_planning", {}).get("segments")),
+                "scene_count": len(runtime.stage_summaries.get("asset_planning", {}).get("segments", [])),
+            }
+            write_json(validation_report_path, validation_report)
             metadata_path = runtime.artifacts.metadata_dir / "metadata.json"
             upload_status_path = runtime.artifacts.metadata_dir / "upload_status.json"
             metadata = {
@@ -600,6 +722,8 @@ class LongPipeline(ShortPipeline):
                 "video_path": str(final_video_path),
                 "thumbnail_path": str(thumbnail_path),
                 "validation": validation_payload,
+                "validation_report_path": str(validation_report_path),
+                "assets_manifest_path": str(assets_manifest_path),
                 "upload": upload_metadata.model_dump(mode="json"),
                 "stages": runtime.stage_summaries,
             }
@@ -704,6 +828,75 @@ class LongPipeline(ShortPipeline):
             )
             runtime.stage_summaries["persistence"] = result.model_dump(mode="json")
             return result
+
+    def _write_assets_manifest(
+        self,
+        *,
+        runtime: "LongPipelineRuntime",
+        clips: list[ImageAsset],
+        narration: NarrationAsset,
+        thumbnail_path: Path,
+        final_video_path: Path,
+    ) -> Path:
+        checked_at = _utc_now_iso()
+        assets: list[dict[str, object]] = []
+
+        def add_asset(
+            *,
+            asset_id: str,
+            asset_type: str,
+            path: Path,
+            rights_status: str,
+            source_url: str | None = None,
+            license_name: str | None = None,
+            license_url: str | None = None,
+            edits: list[str] | None = None,
+        ) -> None:
+            digest = None
+            if path.exists():
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            assets.append(
+                {
+                    "asset_id": asset_id,
+                    "type": asset_type,
+                    "local_path": str(path),
+                    "sha256": digest,
+                    "source_url": source_url,
+                    "license_name": license_name,
+                    "license_url": license_url,
+                    "rights_status": rights_status,
+                    "checked_at": checked_at,
+                    "edits": edits or [],
+                }
+            )
+
+        for clip in clips:
+            add_asset(
+                asset_id=clip.source_id,
+                asset_type="pexels_photo",
+                path=clip.local_path,
+                source_url=clip.source_url,
+                license_name=clip.license_name,
+                license_url=clip.license_url,
+                rights_status=clip.rights_status,
+                edits=["center_crop", "subtle_pan_zoom", "caption_overlay"],
+            )
+        add_asset(
+            asset_id="thumbnail-reference",
+            asset_type="user_thumbnail_reference",
+            path=thumbnail_path,
+            rights_status="user_supplied_verify_before_commercial_use",
+            edits=["converted_to_jpeg"],
+        )
+        add_asset(asset_id="narration", asset_type="generated_audio", path=narration.normalized_path, rights_status="generated_local_tts")
+        music_path = runtime.artifacts.audio_dir / "long_music_bed.wav"
+        if music_path.exists():
+            add_asset(asset_id="music-bed", asset_type="generated_music_bed", path=music_path, rights_status="generated_procedural")
+        add_asset(asset_id="final-video", asset_type="rendered_video", path=final_video_path, rights_status="derived_from_manifested_assets")
+        manifest_path = runtime.artifacts.metadata_dir / "assets_manifest.json"
+        write_json(manifest_path, {"generated_at": checked_at, "assets": assets})
+        runtime.stage_summaries["assets_manifest"] = {"path": str(manifest_path), "asset_count": len(assets)}
+        return manifest_path
 
     def _long_visual_queries(self, topic: TopicChoice, content: GeneratedLongVideo) -> list[str]:
         queries: list[str] = [topic.topic, f"{topic.topic} {topic.bucket}", f"{topic.topic} documentary"]

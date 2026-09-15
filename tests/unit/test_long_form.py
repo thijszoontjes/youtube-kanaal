@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from youtube_kanaal.models import GeneratedLongVideo, LongRunRequest, LongVideoSection
+from pathlib import Path
+
+from youtube_kanaal.models import AssetPlanSegment, GeneratedLongVideo, LongRunRequest, LongVideoSection
 
 
 def _section(index: int) -> LongVideoSection:
@@ -49,3 +51,21 @@ def test_long_run_request_dry_run_disables_upload() -> None:
     request = LongRunRequest(upload=True, dry_run=True)
 
     assert request.upload is False
+
+
+def test_long_asset_plan_segment_keeps_scene_chapter_and_asset_identity() -> None:
+    segment = AssetPlanSegment(
+        clip_path=Path("chapter-photo.jpg"),
+        duration_seconds=6.5,
+        reason="Chapter 01: matching visual",
+        scene_id="scene-chapter-01-00",
+        chapter_id="chapter-01",
+        narration_fragment="The first concrete detail.",
+        visual_type="photo",
+        asset_id="pexels-123",
+    )
+
+    assert segment.scene_id == "scene-chapter-01-00"
+    assert segment.chapter_id == "chapter-01"
+    assert segment.asset_id == "pexels-123"
+    assert segment.narration_fragment.startswith("The first")
