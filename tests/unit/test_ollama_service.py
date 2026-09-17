@@ -116,6 +116,106 @@ def test_long_form_generation_requests_enough_output_tokens(tmp_path) -> None:
     assert captured["options"]["num_predict"] == 4608
 
 
+def test_long_form_retries_a_short_invalid_draft_with_a_repair_prompt(tmp_path) -> None:
+    topic = TopicChoice(
+        bucket="history",
+        topic="the Library of Alexandria",
+        visual_queries=["Library of Alexandria", "ancient library"],
+        search_terms=["Library of Alexandria"],
+    )
+    valid_content = OllamaService(Settings(mock_mode=True))._fallback_long_content(topic)
+    invalid_payload = valid_content.model_dump(mode="json")
+    invalid_payload["title"] = "The Mysterious Case of the Lost Knowledge: Uncovering the Secrets of the Library of Alexandria"
+    invalid_payload["sections"] = [
+        {
+            **section,
+            "narration": "A short chapter about the Library of Alexandria.",
+        }
+        for section in invalid_payload["sections"]
+    ]
+    responses = iter(
+        [
+            {"response": json.dumps(invalid_payload)},
+            {"response": valid_content.model_dump_json()},
+        ]
+    )
+    captured_prompts: list[str] = []
+
+    class FakeResponse:
+        def __init__(self, payload: dict[str, str]) -> None:
+            self.payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, str]:
+            return self.payload
+
+    class FakeClient:
+        def post(self, path: str, **kwargs: object) -> FakeResponse:
+            captured_prompts.append(kwargs["json"]["prompt"])
+            return FakeResponse(next(responses))
+
+    service = OllamaService(Settings(_env_file=None))
+    service.client = FakeClient()
+    result = service._generate_model(
+        prompt="initial prompt",
+        stage="long_content_generation",
+        prompt_output_path=tmp_path / "long_content_generation.json",
+        model_cls=GeneratedLongVideo,
+    )
+
+    assert result.title == valid_content.title
+    assert len(captured_prompts) == 2
+    assert "7-9 chapters" in captured_prompts[1]
+
+
+def test_long_form_expands_a_chapter_with_short_continuations() -> None:
+    service = OllamaService(Settings(_env_file=None))
+    continuations = [
+        " ".join(
+            f"Detail {batch} explains a new historical clue for chapter {index} today carefully."
+            for index in range(1, 7)
+        )
+        for batch in range(1, 6)
+    ]
+
+    class FakeResponse:
+        def __init__(self, continuation: str) -> None:
+            self.continuation = continuation
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, str]:
+            return {"response": json.dumps({"continuation": self.continuation})}
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def post(self, path: str, **kwargs: object) -> FakeResponse:
+            continuation = continuations[self.calls]
+            self.calls += 1
+            return FakeResponse(continuation)
+
+    client = FakeClient()
+    service.client = client
+    initial = "The library became a meeting point for scholars who compared texts and debated ideas."
+
+    narration, queries = service._expand_long_section(
+        topic="the Library of Alexandria",
+        title="The Founding of the Library",
+        narration=initial,
+        visual_queries=["ancient library", "Alexandria harbor"],
+    )
+
+    assert 315 <= len(narration.split()) <= 390
+    assert len(narration) <= 2500
+    assert queries == ["ancient library", "Alexandria harbor"]
+    assert client.calls == 5
+
+
 def test_generated_long_sections_are_not_padded_with_stock_reason_text() -> None:
     service = OllamaService(Settings(mock_mode=True))
 

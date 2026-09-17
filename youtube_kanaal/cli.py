@@ -17,7 +17,7 @@ from youtube_kanaal.config import Settings, load_settings, project_root
 from youtube_kanaal.db import Database
 from youtube_kanaal.exceptions import PipelineStageError, YoutubeKanaalError
 from youtube_kanaal.models import BatchRequest, LongRunRequest, ShortRunRequest
-from youtube_kanaal.models.content import TOPIC_CATALOG
+from youtube_kanaal.models.content import TOPIC_SELECTION_CATALOG
 from youtube_kanaal.pipelines import LongPipeline, ShortPipeline, validate_artifact_directory
 from youtube_kanaal.services.doctor import DoctorService
 from youtube_kanaal.services.ffmpeg_service import FFmpegService
@@ -675,12 +675,12 @@ def list_topics(
 ) -> None:
     """List the curated topic catalog used by topic selection and forced topics."""
 
-    rows = list(TOPIC_CATALOG.items())
+    rows = list(TOPIC_SELECTION_CATALOG.items())
     if bucket:
         normalized_bucket = bucket.strip().lower()
         rows = [(name, topics) for name, topics in rows if name == normalized_bucket]
         if not rows:
-            available = ", ".join(TOPIC_CATALOG)
+            available = ", ".join(TOPIC_SELECTION_CATALOG)
             raise typer.BadParameter(f"Unknown bucket '{bucket}'. Available buckets: {available}")
 
     table = Table(title="Topic Catalog")

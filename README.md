@@ -16,6 +16,22 @@ This command always creates a local one-minute test package and never uploads it
 
 The reference video's exact voice ID is not exposed by YouTube metadata. This branch uses the configured local Kokoro voice (`af_heart`) at a slower long-form speed; reproducing the source voice exactly requires a licensed voice match or an authorized clean reference recording. Long-form runs always write SRT/VTT/ASS captions, burn centered captions into the MP4, and render a clear opening overview before the chapter visuals.
 
+## Topic selection
+
+Automatic topic selection uses the familiar-topic pool in `youtube_kanaal/models/content.py`; internal buckets such as `history` or `space` are never shown to viewers. Obscure subjects such as the Library of Alexandria are therefore excluded from automatic runs, while explicit `--topic` choices remain supported.
+
+To add a topic without changing Python code, add it to `data/topic_catalog_extra.json` under an existing bucket and start a new run:
+
+```json
+{
+  "history": ["World War II"],
+  "architecture": ["the Eiffel Tower"],
+  "technology": ["streaming services"]
+}
+```
+
+The new topics are available after the next process start and are included in automatic selection. Use `YOUTUBE_TOPIC_EXTRA_PATH` when the additions should live in another JSON file.
+
 ## Quick Start
 
 ## Daily Content Run

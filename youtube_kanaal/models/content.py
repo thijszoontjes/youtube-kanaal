@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import os
 import re
+from pathlib import Path
 from typing import ClassVar, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -306,6 +309,193 @@ TOPIC_CATALOG: dict[str, list[str]] = {
         "robot arms",
     ],
 }
+
+
+def _load_topic_catalog_extensions() -> dict[str, list[str]]:
+    """Load optional user topics without making code changes for each addition."""
+    default_path = Path(__file__).resolve().parents[2] / "data" / "topic_catalog_extra.json"
+    path = Path(os.environ.get("YOUTUBE_TOPIC_EXTRA_PATH", default_path)).expanduser()
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    extensions: dict[str, list[str]] = {}
+    for bucket, raw_topics in payload.items():
+        if bucket not in ALLOWED_BUCKETS or not isinstance(raw_topics, list):
+            continue
+        topics = [" ".join(str(topic).split()).strip() for topic in raw_topics if str(topic).strip()]
+        if topics:
+            extensions[bucket] = list(dict.fromkeys(topics))
+    return extensions
+
+
+_TOPIC_CATALOG_EXTENSIONS = _load_topic_catalog_extensions()
+for _bucket, _topics in _TOPIC_CATALOG_EXTENSIONS.items():
+    TOPIC_CATALOG.setdefault(_bucket, []).extend(
+        topic for topic in _topics if topic.lower() not in {item.lower() for item in TOPIC_CATALOG[_bucket]}
+    )
+
+
+# Automatic selection intentionally uses familiar anchors. The broader
+# TOPIC_CATALOG remains available for an explicit --topic choice.
+TOPIC_SELECTION_CATALOG: dict[str, list[str]] = {
+    "animals": [
+        "dogs",
+        "cats",
+        "sharks",
+        "dolphins",
+        "penguins",
+        "lions",
+        "elephants",
+        "octopuses",
+        "wolves",
+    ],
+    "space": [
+        "the Sun",
+        "the Moon",
+        "Mars",
+        "Saturn",
+        "black holes",
+        "rockets",
+        "solar eclipses",
+        "astronauts",
+    ],
+    "geography": [
+        "Japan",
+        "the Sahara Desert",
+        "the Amazon River",
+        "Mount Everest",
+        "the Grand Canyon",
+        "Antarctica",
+        "Hawaii",
+        "the Nile River",
+    ],
+    "history": [
+        "ancient Rome",
+        "ancient Egypt",
+        "the Great Wall of China",
+        "the Vikings",
+        "Apollo 11",
+        "the Titanic",
+        "Pompeii",
+        "the Renaissance",
+    ],
+    "inventions": [
+        "the airplane",
+        "the camera",
+        "GPS",
+        "the internet",
+        "the light bulb",
+        "the telephone",
+        "the microwave oven",
+        "the battery",
+    ],
+    "ocean": [
+        "blue whales",
+        "sea turtles",
+        "dolphins",
+        "sharks",
+        "coral reefs",
+        "icebergs",
+        "mangroves",
+        "tides",
+    ],
+    "food": [
+        "chocolate",
+        "sushi",
+        "coffee",
+        "honey",
+        "cheese",
+        "pasta",
+        "potatoes",
+        "bananas",
+    ],
+    "human body": [
+        "the human brain",
+        "sleep",
+        "muscles",
+        "the heart",
+        "your eyes",
+        "bones",
+        "blood",
+        "DNA",
+    ],
+    "weather": [
+        "lightning",
+        "tornadoes",
+        "rainbows",
+        "hurricanes",
+        "snowflakes",
+        "thunderstorms",
+        "clouds",
+        "fog",
+    ],
+    "architecture": [
+        "skyscrapers",
+        "bridges",
+        "castles",
+        "windmills",
+        "the Colosseum",
+        "lighthouses",
+        "suspension bridges",
+        "ancient temples",
+    ],
+    "gaming": [
+        "Fortnite",
+        "Minecraft",
+        "Roblox",
+        "Tetris",
+        "Pac-Man",
+        "Super Mario",
+        "Pokemon",
+        "FIFA",
+    ],
+    "sports": [
+        "football",
+        "basketball",
+        "Formula 1",
+        "tennis",
+        "swimming",
+        "boxing",
+        "volleyball",
+        "skiing",
+    ],
+    "vehicles": [
+        "supercars",
+        "motorcycles",
+        "bullet trains",
+        "helicopters",
+        "submarines",
+        "cruise ships",
+        "classic cars",
+        "bicycles",
+    ],
+    "technology": [
+        "robots",
+        "drones",
+        "smartphones",
+        "virtual reality",
+        "solar panels",
+        "satellites",
+        "smart homes",
+        "touchscreens",
+    ],
+}
+for _bucket, _topics in _TOPIC_CATALOG_EXTENSIONS.items():
+    TOPIC_SELECTION_CATALOG.setdefault(_bucket, []).extend(
+        topic
+        for topic in _topics
+        if topic.lower() not in {item.lower() for item in TOPIC_SELECTION_CATALOG.get(_bucket, [])}
+    )
+
+for _bucket, _topics in TOPIC_SELECTION_CATALOG.items():
+    TOPIC_CATALOG.setdefault(_bucket, []).extend(
+        topic for topic in _topics if topic.lower() not in {item.lower() for item in TOPIC_CATALOG[_bucket]}
+    )
 
 _BANNED_PHRASES: tuple[str, ...] = (
     "some people say",
@@ -722,7 +912,7 @@ class GeneratedLongVideo(BaseModel):
     description: str = Field(min_length=120, max_length=2000)
     intro: str = Field(default="", max_length=700)
     tags: list[str] = Field(min_length=8, max_length=20)
-    sections: list[LongVideoSection] = Field(min_length=6, max_length=8)
+    sections: list[LongVideoSection] = Field(min_length=6, max_length=9)
     facts: list[str] = Field(min_length=6, max_length=12)
     duration_profile: Literal["long", "test"] = "long"
 
@@ -775,6 +965,11 @@ class GeneratedLongVideo(BaseModel):
 
     @model_validator(mode="after")
     def _validate_long_duration_shape(self) -> "GeneratedLongVideo":
+        expected_minimum, expected_maximum = (6, 6) if self.duration_profile == "test" else (7, 9)
+        if not expected_minimum <= len(self.sections) <= expected_maximum:
+            raise ValueError(
+                f"{self.duration_profile.title()} videos require {expected_minimum}-{expected_maximum} chapters."
+            )
         word_count = len(self.narration.split())
         if self.duration_profile == "test":
             if not 100 <= word_count <= 420:

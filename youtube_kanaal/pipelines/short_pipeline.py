@@ -965,7 +965,9 @@ class ShortPipeline:
 
     def _preferred_topic(self, preferred_topic: str, preferred_bucket: str | None) -> TopicChoice:
         normalized_topic = preferred_topic.strip().lower()
-        for bucket, topics in self._topic_catalog_items():
+        from youtube_kanaal.models.content import TOPIC_CATALOG
+
+        for bucket, topics in TOPIC_CATALOG.items():
             if normalized_topic in {topic.lower() for topic in topics}:
                 chosen_bucket = preferred_bucket.strip().lower() if preferred_bucket else bucket
                 return TopicChoice(
@@ -1008,9 +1010,9 @@ class ShortPipeline:
         return all(bucket == candidate_bucket.lower() for bucket in latest_three)
 
     def _topic_catalog_items(self) -> list[tuple[str, list[str]]]:
-        from youtube_kanaal.models.content import TOPIC_CATALOG
+        from youtube_kanaal.models.content import TOPIC_SELECTION_CATALOG
 
-        return list(TOPIC_CATALOG.items())
+        return list(TOPIC_SELECTION_CATALOG.items())
 
     def _retitle_requested_topic_content(
         self,

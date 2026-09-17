@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from youtube_kanaal.models import AssetPlanSegment, GeneratedLongVideo, LongRunRequest, LongVideoSection
 from youtube_kanaal.pipelines.long_pipeline import _build_long_audio_ranges
 from youtube_kanaal.utils.subtitles import SubtitleCue
@@ -48,6 +50,30 @@ def test_generated_long_video_accepts_required_duration_shape() -> None:
 
     assert 510 <= content.estimated_duration_seconds() <= 660
     assert len(content.sections) == 7
+
+
+@pytest.mark.parametrize("chapter_count", [7, 8, 9])
+def test_generated_long_video_accepts_seven_to_nine_chapters(chapter_count: int) -> None:
+    content = GeneratedLongVideo(
+        bucket="animals",
+        topic="axolotls",
+        title="Axolotls: The Strange Details Most People Miss",
+        thumbnail_text="WEIRD SURVIVOR",
+        intro="What is really happening inside an axolotl? This video follows the clues chapter by chapter.",
+        description="A chapter-based axolotl explainer with concrete biology, visual evidence, and a clear narrative arc. Each section connects one visible trait to the mechanism that makes it possible.",
+        tags=["axolotls", "animals", "science", "wildlife", "facts", "education", "biology", "explainer"],
+        sections=[_section(index) for index in range(1, chapter_count + 1)],
+        facts=[
+            "Axolotls can be explained through several distinct visual details.",
+            "Axolotls support a longer chapter-based story.",
+            "Axolotls work well with underwater B-roll.",
+            "Axolotls have enough context for a long explainer.",
+            "Axolotls can be packaged with searchable metadata.",
+            "Axolotls fit the existing channel theme.",
+        ],
+    )
+
+    assert len(content.sections) == chapter_count
 
 
 def test_long_run_request_dry_run_disables_upload() -> None:

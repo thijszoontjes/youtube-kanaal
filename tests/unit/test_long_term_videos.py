@@ -59,6 +59,20 @@ def test_long_prompt_requires_specific_subtopics_and_visual_consistency() -> Non
     assert "CHEST" in prompt
 
 
+def test_production_long_prompt_allows_seven_to_nine_chapters() -> None:
+    topic = TopicChoice(
+        bucket="history",
+        topic="the Titanic",
+        visual_queries=["Titanic ship", "Titanic wreck"],
+        search_terms=["the Titanic"],
+    )
+
+    prompt = build_long_content_generation_prompt(topic, [])
+
+    assert "7-9 chapters" in prompt
+    assert "2200-3500 words" in prompt
+
+
 def test_easiest_muscles_topic_has_concrete_test_blocks(tmp_path: Path) -> None:
     assert "easiest muscles to grow" in TOPIC_CATALOG["human body"]
 

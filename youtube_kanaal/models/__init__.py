@@ -16,6 +16,7 @@ from youtube_kanaal.models.content import (
     ShortBeat,
     TopicChoice,
     TOPIC_CATALOG,
+    TOPIC_SELECTION_CATALOG,
 )
 from youtube_kanaal.models.run import (
     BatchRequest,
@@ -33,6 +34,7 @@ from youtube_kanaal.models.run import (
 __all__ = [
     "ALLOWED_BUCKETS",
     "TOPIC_CATALOG",
+    "TOPIC_SELECTION_CATALOG",
     "AssetPlan",
     "AssetPlanSegment",
     "ImageAsset",

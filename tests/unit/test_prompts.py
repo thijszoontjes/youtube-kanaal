@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from youtube_kanaal.models.content import TopicChoice
+from youtube_kanaal.models.content import TOPIC_SELECTION_CATALOG, TopicChoice, _load_topic_catalog_extensions
 from youtube_kanaal.prompts import build_content_generation_prompt, build_topic_selection_prompt
 
 
@@ -9,6 +9,25 @@ def test_topic_prompt_contains_catalog_and_exclusions() -> None:
     assert "Choose exactly one topic from this curated catalog" in prompt
     assert "axolotls" in prompt
     assert "Saturn" in prompt
+    assert "the Library of Alexandria" not in prompt
+    assert "globally recognizable" in prompt
+
+
+def test_automatic_topic_catalog_prefers_familiar_subjects() -> None:
+    selected_topics = {topic for topics in TOPIC_SELECTION_CATALOG.values() for topic in topics}
+
+    assert "the Library of Alexandria" not in selected_topics
+    assert "the Titanic" in selected_topics
+
+
+def test_topic_catalog_extensions_are_loaded_from_json(tmp_path, monkeypatch) -> None:
+    extra_path = tmp_path / "topics.json"
+    extra_path.write_text('{"history": ["the Eiffel Tower", "the Eiffel Tower"]}', encoding="utf-8")
+    monkeypatch.setenv("YOUTUBE_TOPIC_EXTRA_PATH", str(extra_path))
+
+    extensions = _load_topic_catalog_extensions()
+
+    assert extensions == {"history": ["the Eiffel Tower"]}
 
 
 def test_content_prompt_contains_recent_titles() -> None:

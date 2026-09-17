@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from textwrap import dedent
 
-from youtube_kanaal.models.content import TOPIC_CATALOG, TopicChoice
+from youtube_kanaal.models.content import TOPIC_SELECTION_CATALOG, TopicChoice
 
 
 _SHORT_STORY_STYLES = (
@@ -15,7 +15,7 @@ _SHORT_STORY_STYLES = (
 
 def build_topic_selection_prompt(excluded_topics: list[str]) -> str:
     catalog_lines = []
-    for bucket, topics in TOPIC_CATALOG.items():
+    for bucket, topics in TOPIC_SELECTION_CATALOG.items():
         catalog_lines.append(f"- {bucket}: {', '.join(topics)}")
     excluded_line = ", ".join(excluded_topics[-20:]) if excluded_topics else "None"
     return dedent(
@@ -26,7 +26,11 @@ def build_topic_selection_prompt(excluded_topics: list[str]) -> str:
         {chr(10).join(catalog_lines)}
 
         Constraints:
-        - Choose from the catalog only.
+        - Choose from the familiar-topic catalog only.
+        - The subject must be recognizable to a broad general audience without specialist knowledge.
+        - Prefer globally recognizable animals, places, foods, inventions, sports, technology, or historical events.
+        - Reject niche institutions, obscure ancient locations, academic subtopics, and local subjects.
+        - The bucket is an internal category; never use it as the video topic or title.
         - Avoid recent topics: {excluded_line}
         - Pick a topic with one clear surprise, contradiction, mystery, comparison, or visible transformation.
         - The topic must be recognizable in the first second and have literal visual proof available as stock footage.
@@ -189,9 +193,9 @@ def build_long_content_generation_prompt(
         "        - Total narration should be 220-250 words for a roughly 1-minute render at a relaxed pace."
         if target_duration_seconds is not None
         else "- duration_profile must be \"long\".\n"
-        "        - Include exactly 7 chapters.\n"
+        "        - Include 7-9 chapters. Choose the number that fits the topic naturally.\n"
         "        - Each section narration should be 315-390 words.\n"
-        "        - Total narration should be 2200-2700 words for an 8:30-11:00 render at a relaxed pace."
+        "        - Total narration should be 2200-3500 words for an 8:30-11:00 render at a relaxed pace."
     )
     return dedent(
         f"""
