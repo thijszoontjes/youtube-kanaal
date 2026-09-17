@@ -570,15 +570,16 @@ def daily_video(
 def make_long_test(
     topic: str = typer.Option("easiest muscles to grow", help="Catalog topic for the one-minute test video."),
     bucket: str = typer.Option("human body", help="Catalog bucket for the test topic."),
-    thumbnail_path: Optional[Path] = typer.Option(None, "--thumbnail-path", help="Optional reference thumbnail."),
+    thumbnail_path: Optional[Path] = typer.Option(
+        None,
+        "--thumbnail-path",
+        help="Deprecated and ignored; the thumbnail is always frame 1 of the rendered video.",
+    ),
     debug: bool = typer.Option(False, help="Enable verbose logging."),
     mock_mode: bool = typer.Option(False, help="Use deterministic mock services."),
 ) -> None:
     """Render one local one-minute long-form test; never uploads to YouTube."""
 
-    if thumbnail_path is None:
-        default_thumbnail = project_root() / "data" / "long-form-thumbnail-reference.png"
-        thumbnail_path = default_thumbnail if default_thumbnail.exists() else None
     console.print("Rendering one-minute long-form test video; upload=no.")
     _run_long_pipeline(
         LongRunRequest(

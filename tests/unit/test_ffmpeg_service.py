@@ -142,3 +142,53 @@ def test_long_photo_filter_reveals_a_new_topic_with_smooth_motion() -> None:
 
     assert "cos(t*1.8)" in filter_graph
     assert "scale=614:425" in filter_graph
+
+
+def test_extract_frame_uses_requested_timestamp_and_high_quality_jpeg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run_command(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr("youtube_kanaal.services.ffmpeg_service.run_command", fake_run_command)
+    video_path = tmp_path / "video.mp4"
+    video_path.write_bytes(b"not-a-placeholder")
+    output_path = tmp_path / "first-frame.jpg"
+
+    FFmpegService(Settings()).extract_frame(
+        video_path=video_path,
+        output_path=output_path,
+        timestamp_seconds=0.0,
+    )
+
+    command = captured["command"]
+    assert command[command.index("-ss") + 1] == "0.00"
+    assert command[command.index("-frames:v") + 1] == "1"
+    assert command[command.index("-q:v") + 1] == "2"
+
+
+def test_long_photo_variants_change_the_visual_card_size() -> None:
+    service = FFmpegService(Settings())
+    primary = service._long_photo_filter(
+        duration_seconds=6.0,
+        variant=1,
+        title_path=Path("title.txt"),
+        caption_path=Path("caption.txt"),
+        width=1920,
+        height=1080,
+        visual_variant="primary",
+    )
+    punch = service._long_photo_filter(
+        duration_seconds=6.0,
+        variant=2,
+        title_path=Path("title.txt"),
+        caption_path=Path("caption.txt"),
+        width=1920,
+        height=1080,
+        visual_variant="punch",
+    )
+
+    assert primary != punch
+    assert "scale=827:572" in primary
+    assert "scale=1140:801" in punch

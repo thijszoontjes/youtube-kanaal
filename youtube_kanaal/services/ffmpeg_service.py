@@ -360,6 +360,7 @@ class FFmpegService:
                         caption_path=caption_path,
                         width=width,
                         height=height,
+                        visual_variant=segment.visual_variant,
                         reveal=segment.visual_type == "transition",
                         motion=segment.motion,
                     )
@@ -546,6 +547,8 @@ class FFmpegService:
                 str(video_path),
                 "-frames:v",
                 "1",
+                "-q:v",
+                "2",
                 str(output_path),
             ],
             timeout_seconds=120,
@@ -711,13 +714,21 @@ class FFmpegService:
         caption_path: Path,
         width: int,
         height: int,
+        visual_variant: str = "primary",
         reveal: bool = False,
         motion: bool = True,
     ) -> str:
-        card_width = round(width * 0.40625)
-        card_height = round(height * 0.5)
+        card_width_ratio, card_height_ratio, card_y_ratio = {
+            "primary": (0.40625, 0.50, 0.19),
+            "cutaway": (0.49, 0.58, 0.15),
+            "proof": (0.445, 0.64, 0.10),
+            "punch": (0.56, 0.70, 0.07),
+            "reveal": (0.46, 0.56, 0.14),
+        }.get(visual_variant, (0.40625, 0.50, 0.19))
+        card_width = round(width * card_width_ratio)
+        card_height = round(height * card_height_ratio)
         card_x = (width - card_width) // 2
-        card_y = round(height * 0.19)
+        card_y = round(height * card_y_ratio)
         title_size = round(width * 0.0234)
         motion_scale = 1.18 if reveal else 1.06
         if not motion:

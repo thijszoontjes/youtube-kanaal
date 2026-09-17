@@ -62,6 +62,16 @@ class Settings(BaseSettings):
         default="llama3.2:3b",
         validation_alias=AliasChoices("OLLAMA_MODEL"),
     )
+    ollama_keep_alive: str = Field(default="15m", validation_alias=AliasChoices("OLLAMA_KEEP_ALIVE"))
+    ollama_context_length: int = Field(default=4096, ge=1024, validation_alias=AliasChoices("OLLAMA_CONTEXT_LENGTH"))
+    ollama_long_context_length: int = Field(default=8192, ge=4096, validation_alias=AliasChoices("OLLAMA_LONG_CONTEXT_LENGTH"))
+    ollama_long_max_output_tokens: int = Field(
+        default=4608,
+        ge=1024,
+        le=8192,
+        validation_alias=AliasChoices("OLLAMA_LONG_MAX_OUTPUT_TOKENS"),
+    )
+    ollama_temperature: float = Field(default=0.2, ge=0.0, le=2.0, validation_alias=AliasChoices("OLLAMA_TEMPERATURE"))
     pexels_api_key: str | None = Field(default=None, validation_alias=AliasChoices("PEXELS_API_KEY"))
 
     youtube_client_secret_path: Path = Field(
@@ -213,7 +223,7 @@ class Settings(BaseSettings):
     )
 
     network_timeout_seconds: int = Field(default=30, validation_alias=AliasChoices("NETWORK_TIMEOUT_SECONDS"))
-    ollama_timeout_seconds: int = Field(default=300, validation_alias=AliasChoices("OLLAMA_TIMEOUT_SECONDS"))
+    ollama_timeout_seconds: int = Field(default=900, validation_alias=AliasChoices("OLLAMA_TIMEOUT_SECONDS"))
     retry_attempts: int = Field(default=3, validation_alias=AliasChoices("RETRY_ATTEMPTS"))
     allow_placeholder_video: bool = Field(
         default=False,
@@ -249,7 +259,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("MAX_LONG_DURATION_SECONDS"),
     )
     long_publish_time: str = Field(default="17:00", validation_alias=AliasChoices("LONG_PUBLISH_TIME"))
-    long_broll_clip_count: int = Field(default=32, ge=12, le=80, validation_alias=AliasChoices("LONG_BROLL_CLIP_COUNT"))
+    long_broll_clip_count: int = Field(default=40, ge=12, le=80, validation_alias=AliasChoices("LONG_BROLL_CLIP_COUNT"))
     long_segment_min_seconds: float = Field(default=4.0, ge=3.0, le=30.0, validation_alias=AliasChoices("LONG_SEGMENT_MIN_SECONDS"))
     long_segment_max_seconds: float = Field(default=6.0, ge=5.0, le=45.0, validation_alias=AliasChoices("LONG_SEGMENT_MAX_SECONDS"))
     long_output_width: int = Field(default=1920, ge=640, le=3840, validation_alias=AliasChoices("LONG_OUTPUT_WIDTH"))

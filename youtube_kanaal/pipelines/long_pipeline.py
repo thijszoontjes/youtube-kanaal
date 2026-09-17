@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import shutil
 import textwrap
 from contextlib import contextmanager
@@ -141,7 +142,7 @@ class LongPipeline(ShortPipeline):
             plan = self.plan_long_assets(runtime, clips, narration, content, subtitles)
             final_video_path = self.render_long_video(runtime, plan, mixed_audio, subtitles, content)
             validation_payload = self.validate_long_output(runtime, final_video_path)
-            thumbnail_path = self.generate_thumbnail(runtime, clips, content)
+            thumbnail_path = self.generate_thumbnail(runtime, final_video_path)
             upload_metadata = self.upload_long_if_requested(runtime, final_video_path, thumbnail_path, content)
             result = self.persist_long_run(
                 runtime=runtime,
@@ -403,7 +404,8 @@ class LongPipeline(ShortPipeline):
                         )
                 )
                 if transition_duration >= 0.5:
-                    transition_asset = self._section_clip_pool(section, clips, content.topic, content.bucket)[0]
+                    section_pool = self._section_clip_pool(section, clips, content.topic, content.bucket)
+                    transition_asset = section_pool[1] if len(section_pool) > 1 else section_pool[0]
                     segments.append(
                         AssetPlanSegment(
                             clip_path=transition_asset.local_path,
@@ -422,21 +424,26 @@ class LongPipeline(ShortPipeline):
                 )
 
                 photo_duration = max(chapter_duration - return_duration - transition_duration, 0.0)
-                primary_clip = self._section_clip_pool(section, clips, content.topic, content.bucket)[0]
-                segments.append(
-                    AssetPlanSegment(
-                        clip_path=primary_clip.local_path,
-                        duration_seconds=photo_duration,
-                        reason=f"{section.title}: {primary_clip.query}",
-                        on_screen_text=section.title,
-                        scene_id=f"scene-{chapter_id}-main",
-                        chapter_id=chapter_id,
-                        narration_fragment=section.narration,
-                        visual_type="photo",
-                        asset_id=primary_clip.source_id,
-                        motion=False,
+                section_pool = self._section_clip_pool(section, clips, content.topic, content.bucket)
+                visual_durations = self._visual_cut_durations(photo_duration)
+                visual_variants = ("primary", "cutaway", "proof", "punch")
+                for visual_index, visual_duration in enumerate(visual_durations, start=1):
+                    clip = section_pool[(visual_index - 1) % len(section_pool)]
+                    segments.append(
+                        AssetPlanSegment(
+                            clip_path=clip.local_path,
+                            duration_seconds=visual_duration,
+                            reason=f"{section.title}: {clip.query}",
+                            on_screen_text=section.title,
+                            scene_id=f"scene-{chapter_id}-photo-{visual_index:02d}",
+                            chapter_id=chapter_id,
+                            narration_fragment=section.narration if visual_index == 1 else "",
+                            visual_type="photo",
+                            visual_variant=visual_variants[(visual_index - 1) % len(visual_variants)],
+                            asset_id=clip.source_id,
+                            motion=True,
+                        )
                     )
-                )
             planned_duration = sum(segment.duration_seconds for segment in segments)
             duration_delta = total_duration - planned_duration
             if segments and abs(duration_delta) > 0.001:
@@ -447,6 +454,17 @@ class LongPipeline(ShortPipeline):
             plan = AssetPlan(segments=segments, total_duration_seconds=narration.duration_seconds)
             runtime.stage_summaries["asset_planning"] = plan.model_dump(mode="json")
             return plan
+
+    @staticmethod
+    def _visual_cut_durations(duration_seconds: float, target_seconds: float = 6.5) -> list[float]:
+        """Split a chapter into human-paced visual beats instead of one static card."""
+        if duration_seconds <= 0:
+            return []
+        count = max(1, math.ceil(duration_seconds / target_seconds))
+        base_duration = duration_seconds / count
+        durations = [round(base_duration, 2) for _ in range(count)]
+        durations[-1] = round(duration_seconds - sum(durations[:-1]), 2)
+        return durations
 
     def _long_frame_size(self, runtime: "LongPipelineRuntime") -> tuple[int, int]:
         if runtime.request.test_duration_seconds is not None:
@@ -640,42 +658,22 @@ class LongPipeline(ShortPipeline):
     def generate_thumbnail(
         self,
         runtime: "LongPipelineRuntime",
-        clips: list[ImageAsset],
-        content: GeneratedLongVideo,
+        final_video_path: Path,
     ) -> Path:
-        with self._long_stage(runtime, "thumbnail_generation", {"topic": content.topic}):
-            if runtime.request.thumbnail_path:
-                thumbnail_path = runtime.artifacts.metadata_dir / "thumbnail.jpg"
-                try:
-                    from PIL import Image
-
-                    Image.open(runtime.request.thumbnail_path).convert("RGB").save(
-                        thumbnail_path,
-                        quality=96,
-                        subsampling=0,
-                        optimize=True,
-                    )
-                except (ImportError, OSError):
-                    shutil.copy2(runtime.request.thumbnail_path, thumbnail_path)
-                runtime.stage_summaries["thumbnail_generation"] = {
-                    "path": str(thumbnail_path),
-                    "size": "reference image",
-                    "reference_path": str(runtime.request.thumbnail_path),
-                }
-                return thumbnail_path
-
-            background_path = runtime.artifacts.assets_dir / "thumbnail_background.jpg"
-            if clips:
-                shutil.copy2(clips[0].local_path, background_path)
+        with self._long_stage(runtime, "thumbnail_generation", {"source": "first_video_frame"}):
             thumbnail_path = runtime.artifacts.metadata_dir / "thumbnail.jpg"
-            output_path = self.thumbnail.generate(
-                title_text=content.thumbnail_text,
-                topic=content.topic,
-                background_path=background_path,
+            self.ffmpeg.extract_frame(
+                video_path=final_video_path,
                 output_path=thumbnail_path,
+                timestamp_seconds=0.0,
             )
-            runtime.stage_summaries["thumbnail_generation"] = {"path": str(output_path), "size": "1920x1080"}
-            return output_path
+            runtime.stage_summaries["thumbnail_generation"] = {
+                "path": str(thumbnail_path),
+                "size": "first frame",
+                "source_video_path": str(final_video_path),
+                "timestamp_seconds": 0.0,
+            }
+            return thumbnail_path
 
     def upload_long_if_requested(
         self,
@@ -977,7 +975,7 @@ class LongPipeline(ShortPipeline):
     def _long_visual_queries(self, topic: TopicChoice, content: GeneratedLongVideo) -> list[str]:
         queries: list[str] = []
         for section in content.sections:
-            queries.extend(section.visual_queries[:2])
+            queries.extend(section.visual_queries)
         queries.extend([topic.topic, f"{topic.topic} {topic.bucket}", f"{topic.topic} documentary"])
         queries.extend(content.keyword_queries())
         return list(dict.fromkeys(" ".join(query.split()).strip() for query in queries if query.strip()))[:16]

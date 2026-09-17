@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from youtube_kanaal.cli import app
 from youtube_kanaal.models import GeneratedLongVideo, ImageAsset, LongRunRequest, TOPIC_CATALOG, TopicChoice
 from youtube_kanaal.prompts import build_long_content_generation_prompt
@@ -150,6 +152,14 @@ def test_long_overview_uses_only_one_tile_per_chapter(tmp_path: Path) -> None:
     selected = pipeline._select_long_overview_clips(clips, content)
 
     assert [clip.source_id for clip in selected] == [f"chapter-{index}" for index in range(6)]
+
+
+def test_long_chapters_change_visuals_every_few_seconds() -> None:
+    durations = LongPipeline._visual_cut_durations(120.0)
+
+    assert len(durations) > 1
+    assert all(3.0 <= duration <= 10.0 for duration in durations)
+    assert sum(durations) == pytest.approx(120.0)
 
 
 def test_mock_one_minute_long_content_has_test_profile(tmp_path: Path, monkeypatch) -> None:

@@ -18,7 +18,12 @@ def test_settings_default_to_fast_local_ollama_model_and_longer_timeout() -> Non
     settings = Settings(_env_file=None)
 
     assert settings.ollama_model == "llama3.2:3b"
-    assert settings.ollama_timeout_seconds == 300
+    assert settings.ollama_keep_alive == "15m"
+    assert settings.ollama_context_length == 4096
+    assert settings.ollama_long_context_length == 8192
+    assert settings.ollama_long_max_output_tokens == 4608
+    assert settings.ollama_temperature == 0.2
+    assert settings.ollama_timeout_seconds == 900
 
 
 def test_settings_reject_invalid_duration_window() -> None:
