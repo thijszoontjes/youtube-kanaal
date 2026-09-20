@@ -511,7 +511,10 @@ class OllamaService:
         # Small local models reliably produce short continuations, but often
         # ignore a request for a 315-word rewrite. Build the chapter in small
         # semantic pieces instead of adding stock filler text.
-        for _ in range(8):
+        # llama3.2:3b often returns fewer than the requested 50-70 words per
+        # continuation. Allow a few extra small continuations before failing
+        # the chapter, while the existing 390-word cap still bounds output.
+        for _ in range(12):
             word_count = len(expanded.split())
             if word_count >= 315:
                 break

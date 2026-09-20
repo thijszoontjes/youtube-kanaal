@@ -216,6 +216,49 @@ def test_long_form_expands_a_chapter_with_short_continuations() -> None:
     assert client.calls == 5
 
 
+def test_long_form_expands_past_eight_short_continuations() -> None:
+    service = OllamaService(Settings(_env_file=None))
+    continuations = [
+        f"Detail {index} adds useful mechanism context here today."
+        for index in range(8)
+    ] + [
+        "This final detail explains how the mechanism changes the outcome in a concrete example."
+    ]
+
+    class FakeResponse:
+        def __init__(self, continuation: str) -> None:
+            self.continuation = continuation
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, str]:
+            return {"response": json.dumps({"continuation": self.continuation})}
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def post(self, path: str, **kwargs: object) -> FakeResponse:
+            continuation = continuations[self.calls]
+            self.calls += 1
+            return FakeResponse(continuation)
+
+    client = FakeClient()
+    service.client = client
+    initial = " ".join(f"Detail {index} explains this mechanism clearly today." for index in range(35))
+
+    narration, _ = service._expand_long_section(
+        topic="the immune system",
+        title="Immune System",
+        narration=initial,
+        visual_queries=["immune system"],
+    )
+
+    assert 315 <= len(narration.split()) <= 390
+    assert client.calls == 9
+
+
 def test_generated_long_sections_are_not_padded_with_stock_reason_text() -> None:
     service = OllamaService(Settings(mock_mode=True))
 
