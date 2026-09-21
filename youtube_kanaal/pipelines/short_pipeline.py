@@ -358,20 +358,32 @@ class ShortPipeline:
                 "attempted_topics": len(additional_excluded_topics or []),
             },
         ):
+            preferred_buckets = self._preferred_topic_buckets(recent_buckets)
             if runtime.request.preferred_topic:
                 topic = self._preferred_topic(runtime.request.preferred_topic, runtime.request.preferred_bucket)
             else:
-                topic = self.ollama.choose_topic(
-                    excluded_topics=excluded_topics,
-                    prompt_path=runtime.artifacts.prompts_dir / "topic_selection.txt",
-                    response_path=runtime.artifacts.responses_dir / "topic_selection.json",
-                )
+                topic_kwargs = {
+                    "excluded_topics": excluded_topics,
+                    "prompt_path": runtime.artifacts.prompts_dir / "topic_selection.txt",
+                    "response_path": runtime.artifacts.responses_dir / "topic_selection.json",
+                }
+                if preferred_buckets:
+                    topic_kwargs["preferred_buckets"] = preferred_buckets
+                topic = self.ollama.choose_topic(**topic_kwargs)
                 if is_near_duplicate(topic.topic, excluded_topics, self.settings.similarity_threshold):
                     topic = self._fallback_topic_excluding(excluded_topics)
+                if preferred_buckets and topic.bucket not in preferred_buckets:
+                    topic = self._fallback_topic_excluding(
+                        excluded_topics,
+                        only_buckets=set(preferred_buckets),
+                    )
                 if self._bucket_is_overused(topic.bucket, recent_buckets):
                     topic = self._fallback_topic_excluding(excluded_topics, avoid_buckets={topic.bucket})
             runtime.stage_summaries["topic_selection"] = topic.model_dump(mode="json")
             return topic
+
+    def _preferred_topic_buckets(self, recent_buckets: list[str]) -> list[str] | None:
+        return None
 
     def select_topic_and_content(self, runtime: PipelineRuntime) -> tuple[TopicChoice, GeneratedShort]:
         if runtime.request.content_path is not None:
@@ -987,11 +999,13 @@ class ShortPipeline:
         excluded_topics: list[str],
         *,
         avoid_buckets: set[str] | None = None,
+        only_buckets: set[str] | None = None,
     ) -> TopicChoice:
         excluded = {item.lower() for item in excluded_topics}
         avoided = {bucket.lower() for bucket in (avoid_buckets or set())}
+        allowed = {bucket.lower() for bucket in (only_buckets or set())}
         for bucket, topics in self._topic_catalog_items():
-            if bucket.lower() in avoided:
+            if bucket.lower() in avoided or (allowed and bucket.lower() not in allowed):
                 continue
             for topic in topics:
                 if topic.lower() not in excluded:

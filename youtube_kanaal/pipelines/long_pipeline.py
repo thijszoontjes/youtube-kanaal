@@ -39,6 +39,30 @@ from youtube_kanaal.utils.subtitles import SubtitleCue, parse_srt_text
 from youtube_kanaal.utils.similarity import is_near_duplicate, normalize_for_similarity
 
 
+LONG_FORM_THEME_ROTATION: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("extreme science", ("space", "ocean", "weather")),
+    ("dark history", ("history", "geography", "architecture")),
+    ("mysteries and danger", ("technology", "inventions", "vehicles")),
+    ("human limits", ("human body", "sports", "food")),
+    ("animals and nature", ("animals", "ocean", "geography")),
+)
+
+
+def _theme_buckets_after(recent_buckets: list[str]) -> list[str]:
+    for recent_bucket in recent_buckets:
+        for index, (_, buckets) in enumerate(LONG_FORM_THEME_ROTATION):
+            if recent_bucket.lower() in {bucket.lower() for bucket in buckets}:
+                return list(LONG_FORM_THEME_ROTATION[(index + 1) % len(LONG_FORM_THEME_ROTATION)][1])
+    return list(LONG_FORM_THEME_ROTATION[0][1])
+
+
+def _long_form_theme(bucket: str) -> str:
+    for theme, buckets in LONG_FORM_THEME_ROTATION:
+        if bucket.lower() in {item.lower() for item in buckets}:
+            return theme
+    return "general explainer"
+
+
 def _build_long_audio_ranges(
     cues: list[SubtitleCue],
     word_counts: list[int],
@@ -108,6 +132,9 @@ class LongPipeline(ShortPipeline):
         )
         self.thumbnail = thumbnail_service or ThumbnailService(settings)
 
+    def _preferred_topic_buckets(self, recent_buckets: list[str]) -> list[str]:
+        return _theme_buckets_after(self.database.recent_long_buckets(limit=20))
+
     def run(self, request: LongRunRequest) -> LongRunResult:
         run_id = _new_run_id()
         artifacts = RunArtifacts.create(self.settings, run_id)
@@ -134,6 +161,7 @@ class LongPipeline(ShortPipeline):
 
         try:
             topic = self.select_topic(runtime)  # type: ignore[arg-type]
+            runtime.stage_summaries["topic_selection"]["theme"] = _long_form_theme(topic.bucket)
             content = self.generate_long_content(runtime, topic)
             narration = self.generate_long_narration(runtime, content)
             subtitles = self.generate_long_subtitles(runtime, content, narration)
@@ -814,6 +842,7 @@ class LongPipeline(ShortPipeline):
                 run_id=runtime.run_id,
                 created_at=completed_at,
                 normalized_topic=normalize_for_similarity(topic.topic),
+                content_type="long",
             )
             self.database.record_asset(
                 run_id=runtime.run_id,

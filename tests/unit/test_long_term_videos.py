@@ -13,7 +13,7 @@ from youtube_kanaal.services.pexels_service import PexelsService
 from youtube_kanaal.services.chatterbox_service import ChatterboxService
 from youtube_kanaal.config import load_settings
 from youtube_kanaal.db import Database
-from youtube_kanaal.pipelines.long_pipeline import LongPipeline
+from youtube_kanaal.pipelines.long_pipeline import LongPipeline, _theme_buckets_after
 
 
 def test_long_run_request_accepts_one_minute_test_and_thumbnail(tmp_path: Path) -> None:
@@ -59,6 +59,22 @@ def test_long_prompt_requires_specific_subtopics_and_visual_consistency() -> Non
     assert "CHEST" in prompt
 
 
+def test_long_prompt_requires_a_direct_two_sentence_intro() -> None:
+    topic = TopicChoice(
+        bucket="history",
+        topic="the Titanic",
+        visual_queries=["the Titanic", "Titanic wreck"],
+        search_terms=["the Titanic"],
+    )
+
+    prompt = build_long_content_generation_prompt(topic, [])
+
+    assert "at most two short sentences" in prompt
+    assert "Move straight into the first chapter" in prompt
+    assert '"join us on a journey"' in prompt
+    assert '"in this video"' in prompt
+
+
 def test_production_long_prompt_allows_seven_to_nine_chapters() -> None:
     topic = TopicChoice(
         bucket="history",
@@ -71,6 +87,25 @@ def test_production_long_prompt_allows_seven_to_nine_chapters() -> None:
 
     assert "7-9 chapters" in prompt
     assert "2200-3500 words" in prompt
+
+
+def test_long_prompt_prioritizes_clickworthy_title_patterns() -> None:
+    topic = TopicChoice(
+        bucket="space",
+        topic="black holes",
+        visual_queries=["black holes", "black hole accretion disk"],
+        search_terms=["black holes"],
+    )
+
+    prompt = build_long_content_generation_prompt(topic, [])
+
+    assert "Treat the title as the main click decision" in prompt
+    assert "What Would Happen If..." in prompt
+    assert "Never use a bland list title" in prompt
+
+
+def test_long_form_theme_rotation_moves_to_the_next_theme() -> None:
+    assert _theme_buckets_after(["space"]) == ["history", "geography", "architecture"]
 
 
 def test_easiest_muscles_topic_has_concrete_test_blocks(tmp_path: Path) -> None:
@@ -89,6 +124,42 @@ def test_easiest_muscles_topic_has_concrete_test_blocks(tmp_path: Path) -> None:
     assert len(content.sections) == 6
     assert content.sections[0].title == "Easiest Muscles To Grow Detail 1"
     assert "#EasiestMusclesToGrow" in content.upload_description([(0.0, "CHEST")])
+
+
+def test_database_remembers_long_form_buckets_separately(tmp_path: Path) -> None:
+    database = Database(tmp_path / "database.sqlite")
+    database.initialize()
+    database.record_topic(
+        topic="black holes",
+        bucket="space",
+        title="BLACK HOLES ARE HIDING SOMETHING",
+        run_id="long-run",
+        created_at="2026-09-21T10:00:00+00:00",
+        normalized_topic="black holes",
+        content_type="long",
+    )
+    database.record_topic(
+        topic="axolotls",
+        bucket="animals",
+        title="AXOLOTLS ARE STRANGER THAN THEY LOOK",
+        run_id="short-run",
+        created_at="2026-09-21T11:00:00+00:00",
+        normalized_topic="axolotls",
+    )
+
+    assert database.recent_long_buckets() == ["space"]
+
+
+def test_long_intro_drops_stock_roadmap_sentences_and_caps_at_two() -> None:
+    service = OllamaService(load_settings(mock_mode=True))
+
+    intro = service._normalize_long_intro(
+        "What makes the Titanic story so strange? In this video, we follow the clues chapter by chapter. "
+        "The ship's design still raises difficult questions today.",
+        "the Titanic",
+    )
+
+    assert intro == "What makes the Titanic story so strange? The ship's design still raises difficult questions today."
 
 
 def test_long_sections_preserve_ai_selected_subtopics_and_queries() -> None:
@@ -127,6 +198,7 @@ def test_long_title_removes_visual_guide_without_replacing_ai_topic() -> None:
 
     assert "visual guide" not in title.lower()
     assert "easiest muscles to grow" in title.lower()
+    assert "what you need to know" not in title.lower()
 
 
 def test_long_overview_uses_only_one_tile_per_chapter(tmp_path: Path) -> None:

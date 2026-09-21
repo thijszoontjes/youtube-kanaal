@@ -13,14 +13,22 @@ _SHORT_STORY_STYLES = (
 )
 
 
-def build_topic_selection_prompt(excluded_topics: list[str]) -> str:
+def build_topic_selection_prompt(
+    excluded_topics: list[str],
+    preferred_buckets: list[str] | None = None,
+) -> str:
     catalog_lines = []
     for bucket, topics in TOPIC_SELECTION_CATALOG.items():
         catalog_lines.append(f"- {bucket}: {', '.join(topics)}")
     excluded_line = ", ".join(excluded_topics[-20:]) if excluded_topics else "None"
+    preference_line = (
+        f"- For this long-form rotation, prefer one of these buckets: {', '.join(preferred_buckets)}.\n"
+        if preferred_buckets
+        else ""
+    )
     return dedent(
         f"""
-        You are generating safe, visual YouTube Shorts topics.
+        You are generating safe, visual YouTube topics.
 
         Choose exactly one topic from this curated catalog:
         {chr(10).join(catalog_lines)}
@@ -31,6 +39,7 @@ def build_topic_selection_prompt(excluded_topics: list[str]) -> str:
         - Prefer globally recognizable animals, places, foods, inventions, sports, technology, or historical events.
         - Reject niche institutions, obscure ancient locations, academic subtopics, and local subjects.
         - The bucket is an internal category; never use it as the video topic or title.
+        {preference_line}
         - Avoid recent topics: {excluded_line}
         - Pick a topic with one clear surprise, contradiction, mystery, comparison, or visible transformation.
         - The topic must be recognizable in the first second and have literal visual proof available as stock footage.
@@ -210,7 +219,9 @@ def build_long_content_generation_prompt(
         - English only.
         - No emoji, no bullet labels inside narration, no stage directions.
         - Keep the tone conversational, curious, and clean.
-        - Open with one concrete question or observation, then introduce the visual route before the chapters.
+        - Start immediately with the exact topic. The intro may contain at most two short sentences: a concrete question or observation, followed by brief context if needed.
+        - Move straight into the first chapter after the intro. Do not give a roadmap or explain what the viewer will see.
+        - Avoid filler such as "in this video", "join us on a journey", "follow the clues", or "chapter by chapter".
         - Every chapter must focus on one specific named subtopic, item, character, nutrient, object, or mechanism.
         - Good subtopics are "vitamin D", "zinc", and "iron" in a deficiency video, or "Iron Man" and "Captain America" in an Avengers video.
         - Treat every chapter as a separate block in the opening overview tiles. Use a short, concrete label such as "CHEST", "BICEPS", "TRICEPS", "VITAMIN D", or "ZINC".
@@ -226,6 +237,8 @@ def build_long_content_generation_prompt(
         {duration_instructions}
         - Mention {topic.topic} early.
         - The title should state the exact topic naturally and create curiosity without lying or overpromising. Informative forms such as "These Are the Easiest Muscles to Grow" are valid.
+        - Treat the title as the main click decision. Prefer a clear tension pattern such as "What Would Happen If...", "The Most Disturbing...", "Every... Explained", "The Worst... in History", or "Why... Is More Dangerous Than..." when it fits the exact topic.
+        - Never use a bland list title such as "Interesting Facts About...", "The History of...", or "Everything About...".
         - Use full ALL CAPS for some titles, and use ALL CAPS emphasis words in others; do not make every title all caps.
         - Never use "Visual Guide", "X Explained", or "long-form" in the title.
         - thumbnail_text must be short, punchy, ALL CAPS, mobile-readable, and clickbait-curious without lying.
@@ -245,7 +258,7 @@ def build_long_content_generation_prompt(
           "duration_profile": "{'test' if target_duration_seconds is not None else 'long'}",
           "title": "<clickable SEO-friendly long-form title>",
           "thumbnail_text": "<2-5 word ALL CAPS thumbnail phrase>",
-          "intro": "<20-35 spoken words: a clear opening question followed by what the viewer will see>",
+          "intro": "<20-35 spoken words: at most two short sentences that begin directly with the exact topic>",
           "description": "<2-4 paragraph YouTube description>",
           "tags": ["tag 1", "tag 2", "tag 3", "tag 4", "tag 5", "tag 6", "tag 7", "tag 8"],
           "sections": [

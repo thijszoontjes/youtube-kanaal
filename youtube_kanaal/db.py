@@ -57,6 +57,7 @@ class Database:
                     bucket TEXT NOT NULL,
                     title TEXT,
                     run_id TEXT NOT NULL,
+                    content_type TEXT NOT NULL DEFAULT 'short',
                     created_at TEXT NOT NULL
                 );
 
@@ -85,6 +86,13 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_assets_run_id ON assets (run_id);
                 """
             )
+            try:
+                connection.execute(
+                    "ALTER TABLE topics ADD COLUMN content_type TEXT NOT NULL DEFAULT 'short'"
+                )
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
 
     def insert_run(
         self,
@@ -179,15 +187,16 @@ class Database:
         run_id: str,
         created_at: str,
         normalized_topic: str,
+        content_type: str = "short",
     ) -> None:
         with self.connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO topics (
-                    normalized_topic, topic, bucket, title, run_id, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    normalized_topic, topic, bucket, title, run_id, content_type, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (normalized_topic, topic, bucket, title, run_id, created_at),
+                (normalized_topic, topic, bucket, title, run_id, content_type, created_at),
             )
 
     def record_asset(
@@ -276,6 +285,19 @@ class Database:
         with self.connect() as connection:
             rows = connection.execute(
                 "SELECT bucket FROM topics ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [row["bucket"] for row in rows if row["bucket"]]
+
+    def recent_long_buckets(self, limit: int = 20) -> list[str]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT bucket FROM topics
+                WHERE content_type = 'long'
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
                 (limit,),
             ).fetchall()
         return [row["bucket"] for row in rows if row["bucket"]]

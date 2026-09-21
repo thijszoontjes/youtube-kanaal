@@ -33,6 +33,11 @@ from youtube_kanaal.utils.files import write_json, write_text
 TModel = TypeVar("TModel", bound=BaseModel)
 _VALIDATION_ERROR_TYPES = (ValidationError, CoreValidationError)
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+_LONG_INTRO_STOCK_RE = re.compile(
+    r"\b(?:in this video|join us on a journey|follow the clues|chapter by chapter|"
+    r"we(?:'ll| will) explore|let(?:'s| us) explore)\b",
+    re.IGNORECASE,
+)
 _STOCK_OUTRO_PREFIXES: tuple[str, ...] = (
     "that is why ",
     "that's why ",
@@ -200,13 +205,14 @@ class OllamaService:
         excluded_topics: list[str],
         prompt_path: Path,
         response_path: Path,
+        preferred_buckets: list[str] | None = None,
     ) -> TopicChoice:
         if self.settings.mock_mode:
             choice = self._fallback_topic(excluded_topics)
             write_text(prompt_path, "mock-mode topic selection")
             write_json(response_path, choice.model_dump(mode="json"))
             return choice
-        prompt = build_topic_selection_prompt(excluded_topics)
+        prompt = build_topic_selection_prompt(excluded_topics, preferred_buckets)
         write_text(prompt_path, prompt)
         return self._generate_model(
             prompt=prompt,
@@ -939,7 +945,10 @@ class OllamaService:
         repaired["description"] = self._clean_unsafe_text(
             self._clean_long_description(str(repaired.get("description", "")), topic_value)
         )
-        repaired["intro"] = self._clean_unsafe_text(str(repaired.get("intro", "")))
+        repaired["intro"] = self._normalize_long_intro(
+            str(repaired.get("intro", "")),
+            topic_value,
+        )
 
         sections = repaired.get("sections")
         cleaned_sections: list[dict[str, object]] = []
@@ -1007,10 +1016,7 @@ class OllamaService:
         payload["topic"] = topic.topic
         payload["title"] = self._clean_long_title(content.title, topic.topic)
         payload["thumbnail_text"] = self._clean_thumbnail_text(content.thumbnail_text, topic.topic)
-        payload["intro"] = self._normalize_sentence(
-            content.intro
-            or f"What is {topic.topic} really doing inside the body? In this video, we follow the clues chapter by chapter."
-        )
+        payload["intro"] = self._normalize_long_intro(content.intro, topic.topic)
         payload["sections"] = self._fit_long_sections(
             [section.model_dump(mode="json") for section in content.sections],
             topic.topic,
@@ -1221,9 +1227,7 @@ class OllamaService:
         cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" -:;")
         if 25 <= len(cleaned) <= 90 and not self._is_generic_title(cleaned):
             return self._trim_title(cleaned, 90)
-        topic_title = self._display_topic(topic)
-        fallback = f"{topic_title}: What You Need to Know"
-        return self._trim_title(fallback, 90)
+        return self._trim_title(self._fallback_title(topic, []), 90)
 
     def _clean_thumbnail_text(self, value: str, topic: str) -> str:
         cleaned = " ".join(value.upper().split()).strip()
@@ -1306,6 +1310,15 @@ class OllamaService:
         if cleaned[-1] not in ".!?":
             cleaned = f"{cleaned}."
         return cleaned
+
+    def _normalize_long_intro(self, value: str, topic: str) -> str:
+        fallback = f"{topic} looks familiar, but its most important detail is easy to miss."
+        sentences = [
+            sentence.strip()
+            for sentence in _SENTENCE_SPLIT_RE.split(self._clean_narration(value))
+            if sentence.strip() and not _LONG_INTRO_STOCK_RE.search(sentence)
+        ]
+        return " ".join(sentences[:2]) or fallback
 
     def _clean_narration(self, narration: str) -> str:
         cleaned = " ".join(narration.split()).strip()
@@ -1711,7 +1724,7 @@ class OllamaService:
             title=self._clean_long_title("", topic.topic),
             thumbnail_text=self._clean_thumbnail_text("", topic.topic),
             description=self._clean_long_description("", topic.topic),
-            intro=f"What is {topic.topic} really doing inside the body? In this video, we follow the clues chapter by chapter.",
+            intro=f"{topic.topic} looks familiar, but its most important detail is easy to miss.",
             tags=[topic.topic, topic.bucket, "facts", "explainer", "documentary", "science", "education", "visual"],
             sections=sections,
             facts=self._fallback_long_facts(topic.topic, topic.bucket),
@@ -1736,7 +1749,7 @@ class OllamaService:
             title=self._clean_long_title("", topic.topic),
             thumbnail_text=self._clean_thumbnail_text("", topic.topic),
             description=self._clean_long_description("", topic.topic),
-            intro=f"What is {topic.topic} really changing inside the body? Let’s follow the clues chapter by chapter.",
+            intro=f"{topic.topic} looks familiar, but its most important detail is easy to miss.",
             tags=[topic.topic, topic.bucket, "facts", "explainer", "documentary", "science", "education", "visual"],
             sections=sections,
             facts=self._fallback_long_facts(topic.topic, topic.bucket),

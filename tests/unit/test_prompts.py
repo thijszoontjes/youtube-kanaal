@@ -13,6 +13,13 @@ def test_topic_prompt_contains_catalog_and_exclusions() -> None:
     assert "globally recognizable" in prompt
 
 
+def test_topic_prompt_can_prefer_long_form_buckets() -> None:
+    prompt = build_topic_selection_prompt([], ["space", "ocean", "weather"])
+
+    assert "For this long-form rotation" in prompt
+    assert "space, ocean, weather" in prompt
+
+
 def test_automatic_topic_catalog_prefers_familiar_subjects() -> None:
     selected_topics = {topic for topics in TOPIC_SELECTION_CATALOG.values() for topic in topics}
 
