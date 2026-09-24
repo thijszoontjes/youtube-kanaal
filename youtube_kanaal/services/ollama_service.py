@@ -18,6 +18,7 @@ from youtube_kanaal.models.content import (
     SHORT_MIN_WORDS,
     GeneratedLongVideo,
     GeneratedShort,
+    LongChapterPlan,
     LongVideoSection,
     TOPIC_CATALOG,
     TOPIC_SELECTION_CATALOG,
@@ -26,6 +27,7 @@ from youtube_kanaal.models.content import (
 from youtube_kanaal.prompts import (
     build_content_generation_prompt,
     build_long_content_generation_prompt,
+    build_long_chapter_plan_prompt,
     build_topic_selection_prompt,
 )
 from youtube_kanaal.utils.files import write_json, write_text
@@ -206,13 +208,14 @@ class OllamaService:
         prompt_path: Path,
         response_path: Path,
         preferred_buckets: list[str] | None = None,
+        long_form: bool = False,
     ) -> TopicChoice:
         if self.settings.mock_mode:
             choice = self._fallback_topic(excluded_topics)
             write_text(prompt_path, "mock-mode topic selection")
             write_json(response_path, choice.model_dump(mode="json"))
             return choice
-        prompt = build_topic_selection_prompt(excluded_topics, preferred_buckets)
+        prompt = build_topic_selection_prompt(excluded_topics, preferred_buckets, long_form=long_form)
         write_text(prompt_path, prompt)
         return self._generate_model(
             prompt=prompt,
@@ -280,17 +283,23 @@ class OllamaService:
         prompt_path: Path,
         response_path: Path,
         target_duration_seconds: int | None = None,
+        chapter_subjects: list[str] | None = None,
     ) -> GeneratedLongVideo:
         if self.settings.mock_mode:
             content = (
-                self._fallback_test_long_content(topic)
+                self._fallback_test_long_content(topic, chapter_subjects=chapter_subjects)
                 if target_duration_seconds is not None
-                else self._fallback_long_content(topic)
+                else self._fallback_long_content(topic, chapter_subjects=chapter_subjects)
             )
             write_text(prompt_path, "mock-mode long-form content generation")
             write_json(response_path, content.model_dump(mode="json"))
             return content
-        prompt = build_long_content_generation_prompt(topic, excluded_titles, target_duration_seconds)
+        prompt = build_long_content_generation_prompt(
+            topic,
+            excluded_titles,
+            target_duration_seconds,
+            chapter_subjects=chapter_subjects,
+        )
         write_text(prompt_path, prompt)
         content = self._generate_model(
             prompt=prompt,
@@ -299,7 +308,7 @@ class OllamaService:
             model_cls=GeneratedLongVideo,
         )
         try:
-            return self._normalize_generated_long(content, topic)
+            return self._normalize_generated_long(content, topic, chapter_subjects=chapter_subjects)
         except ValueError as exc:
             raise PipelineStageError(
                 stage="long_content_generation",
@@ -307,6 +316,80 @@ class OllamaService:
                 probable_cause=str(exc),
                 details_path=response_path,
             ) from exc
+
+    def generate_long_chapter_plan(
+        self,
+        *,
+        topic: TopicChoice,
+        prompt_path: Path,
+        response_path: Path,
+        target_duration_seconds: int | None = None,
+    ) -> list[str]:
+        expected_count = 6 if target_duration_seconds is not None else None
+        if self.settings.mock_mode:
+            count = expected_count or 7
+            return [f"{topic.topic.title()} Member {index}" for index in range(1, count + 1)]
+        prompt = build_long_chapter_plan_prompt(topic, target_duration_seconds)
+        write_text(prompt_path, prompt)
+        plan = self._generate_model(
+            prompt=prompt,
+            stage="long_chapter_plan",
+            prompt_output_path=response_path,
+            model_cls=LongChapterPlan,
+        )
+        if expected_count is not None and len(plan.subjects) != expected_count:
+            raise PipelineStageError(
+                stage="long_chapter_plan",
+                message=f"Expected {expected_count} chapter subjects, got {len(plan.subjects)}.",
+                details_path=response_path,
+            )
+        if expected_count is None and not 7 <= len(plan.subjects) <= 9:
+            raise PipelineStageError(
+                stage="long_chapter_plan",
+                message=f"Expected 7-9 chapter subjects, got {len(plan.subjects)}.",
+                details_path=response_path,
+            )
+        return self._sanitize_long_chapter_subjects(topic, plan.subjects, expected_count or len(plan.subjects))
+
+    def _sanitize_long_chapter_subjects(
+        self,
+        topic: TopicChoice,
+        subjects: list[str],
+        expected_count: int,
+    ) -> list[str]:
+        """Keep model plans member-based when a collection has a known vocabulary."""
+
+        if topic.topic.strip().casefold() != "sharks":
+            return subjects
+
+        known_members = [
+            "Great White Shark",
+            "Whale Shark",
+            "Hammerhead Shark",
+            "Tiger Shark",
+            "Goblin Shark",
+            "Oceanic Whitetip Shark",
+            "Mako Shark",
+            "Nurse Shark",
+        ]
+        known_member_names = {member.casefold(): member for member in known_members}
+        cleaned: list[str] = []
+        used = set()
+        for subject in subjects:
+            normalized = " ".join(subject.split()).strip()
+            if not normalized or normalized.casefold() not in known_member_names:
+                continue
+            key = normalized.casefold()
+            if key not in used:
+                cleaned.append(known_member_names[key])
+                used.add(key)
+        for member in known_members:
+            if len(cleaned) >= expected_count:
+                break
+            if member.casefold() not in used:
+                cleaned.append(member)
+                used.add(member.casefold())
+        return cleaned[:expected_count]
 
     def _generate_model(
         self,
@@ -405,6 +488,8 @@ class OllamaService:
             "Rewrite this long-form YouTube JSON draft and return JSON only. "
             "Keep the same topic and preserve supported factual claims, but fix every validation issue. "
             "The title must be 25-90 characters. Use 7-9 chapters. "
+            "Every chapter must have a unique chapter_subject; for collection or ranking topics, each subject must be a different named member, never another attribute of the same member. "
+            "The title must equal chapter_subject for each chapter. "
             "Each chapter narration must contain 315-390 words, and the total narration must contain 2200-3500 words. "
             "Each chapter must stay on one concrete subtopic, explain why it matters, and add new information. "
             "Do not repeat sentences, use generic filler, or mention this repair request. "
@@ -956,7 +1041,10 @@ class OllamaService:
             for index, section in enumerate(sections[:8], start=1):
                 if not isinstance(section, dict):
                     continue
-                title = self._normalize_sentence(str(section.get("title", "")).strip() or f"Part {index}")
+                chapter_subject = self._clean_chapter_subject(
+                    str(section.get("chapter_subject") or section.get("title") or f"Part {index}")
+                )
+                title = chapter_subject
                 raw_narration = str(section.get("narration", ""))
                 narration = self._clean_narration(raw_narration)
                 queries = section.get("visual_queries")
@@ -965,6 +1053,7 @@ class OllamaService:
                 if narration:
                     cleaned_sections.append(
                         {
+                            "chapter_subject": chapter_subject,
                             "title": title[:64],
                             "narration": narration,
                             "visual_queries": cleaned_queries or [topic_value, f"{topic_value} documentary"],
@@ -995,7 +1084,13 @@ class OllamaService:
         repaired["facts"] = self._dedupe_preserving_order(cleaned_facts)[:12]
         return repaired
 
-    def _normalize_generated_long(self, content: GeneratedLongVideo, topic: TopicChoice) -> GeneratedLongVideo:
+    def _normalize_generated_long(
+        self,
+        content: GeneratedLongVideo,
+        topic: TopicChoice,
+        *,
+        chapter_subjects: list[str] | None = None,
+    ) -> GeneratedLongVideo:
         minimum_count, maximum_count = (6, 6) if content.duration_profile == "test" else (7, 9)
         minimum_words, maximum_words = (34, 38) if content.duration_profile == "test" else (315, 390)
         if not minimum_count <= len(content.sections) <= maximum_count:
@@ -1007,7 +1102,7 @@ class OllamaService:
             for index, section in enumerate(content.sections)
             if not minimum_words <= len(section.narration.split()) <= maximum_words
         ]
-        if invalid_sections:
+        if invalid_sections and content.duration_profile != "test":
             raise ValueError(
                 f"Chapter narration must be {minimum_words}-{maximum_words} words; invalid chapters: {invalid_sections}."
             )
@@ -1022,7 +1117,8 @@ class OllamaService:
             topic.topic,
             topic.bucket,
             test_mode=content.duration_profile == "test",
-            pad_short_sections=False,
+            pad_short_sections=content.duration_profile == "test",
+            chapter_subjects=chapter_subjects,
         )
         return GeneratedLongVideo.model_validate(payload)
 
@@ -1034,11 +1130,19 @@ class OllamaService:
         *,
         test_mode: bool = False,
         pad_short_sections: bool = True,
+        chapter_subjects: list[str] | None = None,
     ) -> list[LongVideoSection]:
         normalized: list[dict[str, object]] = []
         minimum_words, maximum_words = (34, 38) if test_mode else (315, 390)
         for index, section in enumerate(sections, start=1):
-            title = " ".join(str(section.get("title") or f"{topic.title()} Detail {index}").split())[:64]
+            chapter_subject = (
+                self._clean_chapter_subject(chapter_subjects[index - 1])
+                if chapter_subjects and index <= len(chapter_subjects)
+                else self._clean_chapter_subject(
+                    str(section.get("chapter_subject") or section.get("title") or f"{topic.title()} Detail {index}")
+                )
+            )
+            title = chapter_subject[:64]
             raw_narration = self._clean_narration(str(section.get("narration", "")))
             if pad_short_sections:
                 narration = self._fit_section_words(
@@ -1058,6 +1162,7 @@ class OllamaService:
             visual_queries.extend([topic, f"{topic} {bucket}", f"{topic} documentary b-roll"])
             normalized.append(
                 {
+                    "chapter_subject": chapter_subject,
                     "title": title,
                     "narration": narration,
                     "visual_queries": list(dict.fromkeys(visual_queries))[:5],
@@ -1070,6 +1175,7 @@ class OllamaService:
                 break
             normalized.append(
                 {
+                    "chapter_subject": f"{topic.title()} Detail {index}",
                     "title": f"{topic.title()} Detail {index}",
                     "narration": (
                         self._fallback_test_section(topic, index)
@@ -1164,6 +1270,8 @@ class OllamaService:
             if len(cleaned.split()) > available_words:
                 cleaned = self._trim_narration_to_words(cleaned, available_words)
             cleaned = self._clean_narration(f"{cleaned} {extension}")
+        if len(cleaned.split()) > maximum_words:
+            cleaned = self._trim_narration_to_words(cleaned, maximum_words)
         return cleaned
 
     @staticmethod
@@ -1176,12 +1284,12 @@ class OllamaService:
         focus_text = focus.lower().strip() or topic
         if test_mode:
             extensions = (
-                "The reason this block works is that simple movements create direct tension.",
-                "That makes progress easier to see and measure.",
-                "Consistency matters because the movement repeats reliably.",
-                f"This is why the {focus_text} block deserves its own explanation.",
-                "Controlled tension matters more than a complicated routine.",
-                "That cause and effect helps beginners understand it quickly.",
+                f"The reason {focus_text} matters is clear: its form fits its environment.",
+                "That connection makes the animal easier to compare.",
+                "Habitat and food also explain its behavior.",
+                f"This is why {focus_text} deserves its own explanation.",
+                "The useful takeaway is cause and effect, not a list of body parts.",
+                "That context makes the animal easier to remember.",
             )
         else:
             extensions = (
@@ -1310,6 +1418,10 @@ class OllamaService:
         if cleaned[-1] not in ".!?":
             cleaned = f"{cleaned}."
         return cleaned
+
+    @staticmethod
+    def _clean_chapter_subject(value: str) -> str:
+        return " ".join(value.split()).strip(" .:;–-")[:64] or "Chapter"
 
     def _normalize_long_intro(self, value: str, topic: str) -> str:
         fallback = f"{topic} looks familiar, but its most important detail is easy to miss."
@@ -1708,12 +1820,22 @@ class OllamaService:
             subtitle_text=narration,
         )
 
-    def _fallback_long_content(self, topic: TopicChoice) -> GeneratedLongVideo:
+    def _fallback_long_content(
+        self,
+        topic: TopicChoice,
+        *,
+        chapter_subjects: list[str] | None = None,
+    ) -> GeneratedLongVideo:
         raw_sections = [
             {
-                "title": f"{topic.topic.title()} Detail {index}",
+                "title": chapter_subjects[index - 1] if chapter_subjects and index <= len(chapter_subjects) else f"{topic.topic.title()} Detail {index}",
+                "chapter_subject": chapter_subjects[index - 1] if chapter_subjects and index <= len(chapter_subjects) else f"{topic.topic.title()} Detail {index}",
                 "narration": self._fallback_long_section(topic.topic, topic.bucket, index),
-                "visual_queries": [topic.topic, f"{topic.topic} {topic.bucket}", f"{topic.topic} documentary"],
+                "visual_queries": [
+                    chapter_subjects[index - 1] if chapter_subjects and index <= len(chapter_subjects) else topic.topic,
+                    f"{topic.topic} {topic.bucket}",
+                    f"{topic.topic} documentary",
+                ],
             }
             for index in range(1, 8)
         ]
@@ -1730,15 +1852,24 @@ class OllamaService:
             facts=self._fallback_long_facts(topic.topic, topic.bucket),
         )
 
-    def _fallback_test_long_content(self, topic: TopicChoice) -> GeneratedLongVideo:
+    def _fallback_test_long_content(
+        self,
+        topic: TopicChoice,
+        *,
+        chapter_subjects: list[str] | None = None,
+    ) -> GeneratedLongVideo:
         raw_sections = [
             {
-                "title": f"{topic.topic.title()} Detail {index}",
+                "title": chapter_subjects[index - 1] if chapter_subjects and index <= len(chapter_subjects) else f"{topic.topic.title()} Detail {index}",
+                "chapter_subject": chapter_subjects[index - 1] if chapter_subjects and index <= len(chapter_subjects) else f"{topic.topic.title()} Detail {index}",
                 "narration": self._fallback_test_section(
                     topic.topic,
                     index,
                 ),
-                "visual_queries": [topic.topic, f"{topic.topic} {topic.bucket}"],
+                "visual_queries": [
+                    chapter_subjects[index - 1] if chapter_subjects and index <= len(chapter_subjects) else topic.topic,
+                    f"{topic.topic} {topic.bucket}",
+                ],
             }
             for index in range(1, 7)
         ]

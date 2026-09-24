@@ -19,6 +19,7 @@ def _section(index: int) -> LongVideoSection:
         * 6
     )
     return LongVideoSection(
+        chapter_subject=f"Animal {index}",
         title=f"Chapter {index} Detail",
         narration=text,
         visual_queries=["axolotl underwater", "axolotl close up"],
@@ -50,6 +51,32 @@ def test_generated_long_video_accepts_required_duration_shape() -> None:
 
     assert 510 <= content.estimated_duration_seconds() <= 660
     assert len(content.sections) == 7
+
+
+def test_generated_long_video_rejects_duplicate_chapter_subjects() -> None:
+    sections = [_section(index) for index in range(1, 8)]
+    sections[0].chapter_subject = "blue whale"
+    sections[1].chapter_subject = "blue whale"
+
+    with pytest.raises(ValueError, match="distinct chapter subjects"):
+        GeneratedLongVideo(
+            bucket="ocean",
+            topic="largest creatures",
+            title="The Largest Creatures in the Ocean Explained Clearly",
+            thumbnail_text="OCEAN GIANTS",
+            intro="Which animals truly dominate the ocean? The answer is stranger than most people expect.",
+            description="A chapter-based ocean explainer about the largest animals, with distinct species, visual evidence, and clear narration for every chapter.",
+            tags=["ocean", "animals", "wildlife", "science", "facts", "nature", "education", "explainer"],
+            sections=sections,
+            facts=[
+                "The ocean contains several different giant animals.",
+                "Each species uses a different survival strategy.",
+                "Large animals can occupy very different habitats.",
+                "Size does not always predict feeding behavior.",
+                "Visual comparisons make scale easier to understand.",
+                "A species-by-species structure keeps the story clear.",
+            ],
+        )
 
 
 @pytest.mark.parametrize("chapter_count", [7, 8, 9])

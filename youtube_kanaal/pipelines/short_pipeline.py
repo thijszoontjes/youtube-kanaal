@@ -345,6 +345,7 @@ class ShortPipeline:
         runtime: PipelineRuntime,
         *,
         additional_excluded_topics: list[str] | None = None,
+        long_form: bool = False,
     ) -> TopicChoice:
         recent_topics = self.database.recent_topics(limit=100)
         recent_buckets = self.database.recent_buckets(limit=4)
@@ -369,6 +370,8 @@ class ShortPipeline:
                 }
                 if preferred_buckets:
                     topic_kwargs["preferred_buckets"] = preferred_buckets
+                if long_form:
+                    topic_kwargs["long_form"] = True
                 topic = self.ollama.choose_topic(**topic_kwargs)
                 if is_near_duplicate(topic.topic, excluded_topics, self.settings.similarity_threshold):
                     topic = self._fallback_topic_excluding(excluded_topics)

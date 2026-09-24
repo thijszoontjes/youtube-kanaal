@@ -16,6 +16,7 @@ _SHORT_STORY_STYLES = (
 def build_topic_selection_prompt(
     excluded_topics: list[str],
     preferred_buckets: list[str] | None = None,
+    long_form: bool = False,
 ) -> str:
     catalog_lines = []
     for bucket, topics in TOPIC_SELECTION_CATALOG.items():
@@ -24,6 +25,11 @@ def build_topic_selection_prompt(
     preference_line = (
         f"- For this long-form rotation, prefer one of these buckets: {', '.join(preferred_buckets)}.\n"
         if preferred_buckets
+        else ""
+    )
+    long_form_line = (
+        "- This is a long-form collection video: choose a category, ranking, comparison, or plural topic that naturally contains at least 7 distinct named members. Reject a single species, person, place, or object when it cannot support different members per chapter.\n"
+        if long_form
         else ""
     )
     return dedent(
@@ -40,6 +46,7 @@ def build_topic_selection_prompt(
         - Reject niche institutions, obscure ancient locations, academic subtopics, and local subjects.
         - The bucket is an internal category; never use it as the video topic or title.
         {preference_line}
+        {long_form_line}
         - Avoid recent topics: {excluded_line}
         - Pick a topic with one clear surprise, contradiction, mystery, comparison, or visible transformation.
         - The topic must be recognizable in the first second and have literal visual proof available as stock footage.
@@ -189,10 +196,33 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
     ).strip()
 
 
+def build_long_chapter_plan_prompt(
+    topic: TopicChoice,
+    target_duration_seconds: int | None = None,
+) -> str:
+    chapter_count = "exactly 6" if target_duration_seconds is not None else "7-9"
+    return dedent(
+        f"""
+        Choose the chapter subjects for a long-form collection video about {topic.topic}.
+
+        Rules:
+        - Return exactly {chapter_count} different named members or items within the umbrella topic.
+        - Never return body parts, traits, mechanisms, or attributes of one member.
+        - For "sharks", return different shark types such as great white shark, whale shark, hammerhead shark, tiger shark, or goblin shark.
+        - Keep every subject short, concrete, visually searchable, and different from the others.
+        - Return strict JSON only.
+
+        JSON schema:
+        {{"subjects": ["<member 1>", "<member 2>", "<member 3>", "<member 4>", "<member 5>", "<member 6>"]}}
+        """
+    ).strip()
+
+
 def build_long_content_generation_prompt(
     topic: TopicChoice,
     excluded_titles: list[str],
     target_duration_seconds: int | None = None,
+    chapter_subjects: list[str] | None = None,
 ) -> str:
     excluded = ", ".join(excluded_titles[-20:]) if excluded_titles else "None"
     duration_instructions = (
@@ -205,6 +235,11 @@ def build_long_content_generation_prompt(
         "        - Include 7-9 chapters. Choose the number that fits the topic naturally.\n"
         "        - Each section narration should be 315-390 words.\n"
         "        - Total narration should be 2200-3500 words for an 8:30-11:00 render at a relaxed pace."
+    )
+    subject_instructions = (
+        f"- Use exactly these chapter_subject values in this order: {', '.join(chapter_subjects)}. Do not replace them with body parts, traits, or generic categories.\n"
+        if chapter_subjects
+        else ""
     )
     return dedent(
         f"""
@@ -219,18 +254,23 @@ def build_long_content_generation_prompt(
         - English only.
         - No emoji, no bullet labels inside narration, no stage directions.
         - Keep the tone conversational, curious, and clean.
+        {subject_instructions}
         - Start immediately with the exact topic. The intro may contain at most two short sentences: a concrete question or observation, followed by brief context if needed.
         - Move straight into the first chapter after the intro. Do not give a roadmap or explain what the viewer will see.
         - Avoid filler such as "in this video", "join us on a journey", "follow the clues", or "chapter by chapter".
-        - Every chapter must focus on one specific named subtopic, item, character, nutrient, object, or mechanism.
-        - Good subtopics are "vitamin D", "zinc", and "iron" in a deficiency video, or "Iron Man" and "Captain America" in an Avengers video.
-        - Treat every chapter as a separate block in the opening overview tiles. Use a short, concrete label such as "CHEST", "BICEPS", "TRICEPS", "VITAMIN D", or "ZINC".
+        - Every chapter must focus on one specific named member, item, character, nutrient, object, or mechanism.
+        - Long-form is always a collection structure: every chapter must have a unique concrete chapter_subject that is a different named member or item within the umbrella topic.
+        - For collection, ranking, comparison, plural, or "largest/most/dangerous/easiest" topics, use different members in every chapter. For example, "sharks" means great white shark, whale shark, hammerhead shark, tiger shark, and goblin shark; it does not mean teeth, jaws, speed, or other attributes of sharks.
+        - Never split one entity into multiple attribute chapters. If the selected topic is too narrow to contain distinct members, broaden it into the nearest natural collection before writing the chapters.
+        - Good chapter subjects are "great white shark", "whale shark", and "hammerhead shark" in a shark video, or "vitamin D", "zinc", and "iron" in a deficiency video.
+        - Treat every chapter as a separate block in the opening overview tiles. Use the exact short member label, such as "GREAT WHITE SHARK", "WHALE SHARK", or "VITAMIN D".
         - Use the topic's natural structure to choose the blocks yourself; the examples above are only examples, never fixed chapter data.
         - Do not use generic chapter subjects such as "the bigger picture", "health effects", "the science", or "other details".
-        - The chapter title, narration, and first visual query must name the same specific subtopic.
-        - Stay on that one subtopic for the entire chapter; do not introduce the next subtopic before the chapter ends.
+        - The chapter title, narration, and first visual query must name the same specific member or item.
+        - The chapter title must be the same short subject label as chapter_subject, and the narration must begin by naming that subject.
+        - Stay on that one member or item for the entire chapter; do not introduce the next member before the chapter ends.
         - Each chapter must answer a distinct question, use a concrete example, and end with a useful conclusion.
-        - Spend most of each chapter explaining WHY the subtopic behaves that way, is easy or difficult, or matters; do not only list names, symptoms, or exercises.
+        - Spend most of each chapter explaining WHY that member or item behaves that way or matters; do not turn the chapter into a list of body parts, traits, or unrelated facts.
         - Every sentence must add a new point. Never repeat a sentence, paragraph, conclusion, or filler phrase to reach the word count.
         - The final chapter should answer the opening question without repeating every chapter.
         - Write claims conservatively. Do not invent citations, studies, numbers, or sources.
@@ -263,7 +303,8 @@ def build_long_content_generation_prompt(
           "tags": ["tag 1", "tag 2", "tag 3", "tag 4", "tag 5", "tag 6", "tag 7", "tag 8"],
           "sections": [
             {{
-              "title": "<short concrete block label naming the exact subtopic>",
+              "chapter_subject": "<one unique named member, component, stage, or mechanism>",
+              "title": "<the same short concrete label as chapter_subject>",
               "narration": "<spoken chapter text in the requested word range>",
               "visual_queries": ["<query 1>", "<query 2>"]
             }}

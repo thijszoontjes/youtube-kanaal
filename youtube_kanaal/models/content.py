@@ -875,11 +875,12 @@ class GeneratedShort(BaseModel):
 
 
 class LongVideoSection(BaseModel):
+    chapter_subject: str = Field(default="", max_length=64)
     title: str = Field(min_length=3, max_length=64)
     narration: str = Field(min_length=40, max_length=2500)
     visual_queries: list[str] = Field(min_length=2, max_length=5)
 
-    @field_validator("title", "narration")
+    @field_validator("chapter_subject", "title", "narration")
     @classmethod
     def _validate_section_text(cls, value: str) -> str:
         cleaned = _WHITESPACE_RE.sub(" ", value.strip())
@@ -889,6 +890,12 @@ class LongVideoSection(BaseModel):
         if any(phrase in lowered for phrase in _BANNED_PHRASES):
             raise ValueError("Banned uncertainty or unsafe phrase detected.")
         return cleaned
+
+    @model_validator(mode="after")
+    def _default_chapter_subject(self) -> "LongVideoSection":
+        if not self.chapter_subject:
+            self.chapter_subject = self.title
+        return self
 
     @field_validator("visual_queries")
     @classmethod
@@ -902,6 +909,19 @@ class LongVideoSection(BaseModel):
                 deduped.append(item)
                 seen.add(key)
         return deduped[:5]
+
+
+class LongChapterPlan(BaseModel):
+    subjects: list[str] = Field(min_length=6, max_length=9)
+
+    @field_validator("subjects")
+    @classmethod
+    def _normalize_subjects(cls, values: list[str]) -> list[str]:
+        cleaned = [_WHITESPACE_RE.sub(" ", value.strip()).strip(" .:;–-") for value in values]
+        cleaned = [value[:64] for value in cleaned if value]
+        if len(cleaned) != len(set(value.casefold() for value in cleaned)):
+            raise ValueError("Chapter subjects must be distinct.")
+        return cleaned
 
 
 class GeneratedLongVideo(BaseModel):
@@ -974,9 +994,11 @@ class GeneratedLongVideo(BaseModel):
         if self.duration_profile == "test":
             if not 100 <= word_count <= 420:
                 raise ValueError("Test narration should be roughly 1 minute.")
-            return self
-        if not 1325 <= word_count <= 4500:
+        elif not 1325 <= word_count <= 4500:
             raise ValueError("Long-form narration should be suitable for an 8:30-11:00 video.")
+        subjects = [section.chapter_subject.casefold() for section in self.sections]
+        if len(subjects) != len(set(subjects)):
+            raise ValueError("Long-form videos require distinct chapter subjects.")
         return self
 
     @property

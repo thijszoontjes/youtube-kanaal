@@ -160,7 +160,7 @@ class LongPipeline(ShortPipeline):
         runtime.logger.info("Long-form run started", extra={"run_id": run_id, "started_at": started_at})
 
         try:
-            topic = self.select_topic(runtime)  # type: ignore[arg-type]
+            topic = self.select_topic(runtime, long_form=True)  # type: ignore[arg-type]
             runtime.stage_summaries["topic_selection"]["theme"] = _long_form_theme(topic.bucket)
             content = self.generate_long_content(runtime, topic)
             narration = self.generate_long_narration(runtime, content)
@@ -214,6 +214,13 @@ class LongPipeline(ShortPipeline):
     def generate_long_content(self, runtime: "LongPipelineRuntime", topic: TopicChoice) -> GeneratedLongVideo:
         recent_titles = self.database.recent_titles(limit=100)
         with self._long_stage(runtime, "long_content_generation", {"topic": topic.topic, "recent_titles": len(recent_titles)}):
+            chapter_subjects = self.ollama.generate_long_chapter_plan(
+                topic=topic,
+                prompt_path=runtime.artifacts.prompts_dir / "long_chapter_plan.txt",
+                response_path=runtime.artifacts.responses_dir / "long_chapter_plan.json",
+                target_duration_seconds=runtime.request.test_duration_seconds,
+            )
+            runtime.stage_summaries["chapter_subject_plan"] = chapter_subjects
             for _ in range(self.settings.retry_attempts):
                 content = self.ollama.generate_long_content(
                     topic=topic,
@@ -221,6 +228,7 @@ class LongPipeline(ShortPipeline):
                     prompt_path=runtime.artifacts.prompts_dir / "long_content_generation.txt",
                     response_path=runtime.artifacts.responses_dir / "long_content_generation.json",
                     target_duration_seconds=runtime.request.test_duration_seconds,
+                    chapter_subjects=chapter_subjects,
                 )
                 if not is_near_duplicate(content.title, recent_titles, self.settings.similarity_threshold):
                     runtime.stage_summaries["long_content_generation"] = content.model_dump(mode="json")

@@ -7,7 +7,11 @@ import pytest
 
 from youtube_kanaal.cli import app
 from youtube_kanaal.models import GeneratedLongVideo, ImageAsset, LongRunRequest, TOPIC_CATALOG, TopicChoice
-from youtube_kanaal.prompts import build_long_content_generation_prompt
+from youtube_kanaal.prompts import (
+    build_long_chapter_plan_prompt,
+    build_long_content_generation_prompt,
+    build_topic_selection_prompt,
+)
 from youtube_kanaal.services.ollama_service import OllamaService
 from youtube_kanaal.services.pexels_service import PexelsService
 from youtube_kanaal.services.chatterbox_service import ChatterboxService
@@ -52,11 +56,67 @@ def test_long_prompt_requires_specific_subtopics_and_visual_consistency() -> Non
 
     prompt = build_long_content_generation_prompt(topic, [], target_duration_seconds=60)
 
-    assert "one specific named subtopic" in prompt
+    assert "one specific named member" in prompt
     assert "vitamin D" in prompt
     assert "same specific subtopic" in prompt
     assert "separate block in the opening overview tiles" in prompt
-    assert "CHEST" in prompt
+    assert "GREAT WHITE SHARK" in prompt
+
+
+def test_long_prompt_requires_distinct_members_for_collection_topics() -> None:
+    topic = TopicChoice(
+        bucket="ocean",
+        topic="blue whales",
+        visual_queries=["largest ocean animals", "blue whale"],
+        search_terms=["largest ocean animals"],
+    )
+
+    prompt = build_long_content_generation_prompt(topic, [], target_duration_seconds=60)
+
+    assert '"chapter_subject"' in prompt
+    assert "different named member" in prompt
+    assert "Never split one entity into multiple attribute chapters" in prompt
+
+
+def test_long_topic_selection_requires_a_collection_topic() -> None:
+    prompt = build_topic_selection_prompt([], ["animals", "ocean"], long_form=True)
+
+    assert "long-form collection video" in prompt
+    assert "at least 7 distinct named members" in prompt
+    assert "Reject a single species" in prompt
+
+
+def test_long_chapter_plan_prompt_requires_members_not_attributes() -> None:
+    topic = TopicChoice(
+        bucket="animals",
+        topic="sharks",
+        visual_queries=["sharks", "shark species"],
+        search_terms=["sharks"],
+    )
+
+    prompt = build_long_chapter_plan_prompt(topic, target_duration_seconds=60)
+
+    assert "exactly 6 different named members" in prompt
+    assert "Never return body parts" in prompt
+    assert "great white shark" in prompt
+
+
+def test_shark_chapter_plan_replaces_an_attribute_with_a_species() -> None:
+    service = OllamaService(load_settings(mock_mode=True))
+    topic = TopicChoice(
+        bucket="animals",
+        topic="sharks",
+        visual_queries=["sharks", "shark species"],
+        search_terms=["sharks"],
+    )
+
+    subjects = service._sanitize_long_chapter_subjects(
+        topic,
+        ["Great White Shark", "Whale Shark", "Ocean Conservation"],
+        expected_count=3,
+    )
+
+    assert subjects == ["Great White Shark", "Whale Shark", "Hammerhead Shark"]
 
 
 def test_long_prompt_requires_a_direct_two_sentence_intro() -> None:
@@ -300,7 +360,7 @@ def test_long_narration_removes_duplicate_sentences_and_adds_reason() -> None:
     )
 
     assert content.lower().count("chest responds to pressing") == 1
-    assert "the reason this block works is that" in content.lower()
+    assert "the reason chest matters is clear" in content.lower()
     assert "bigger picture" not in content.lower()
     assert "the reason is direct loading" not in content.lower()
 
