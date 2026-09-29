@@ -201,6 +201,8 @@ def build_long_chapter_plan_prompt(
     target_duration_seconds: int | None = None,
 ) -> str:
     chapter_count = "exactly 6" if target_duration_seconds is not None else "7-9"
+    example_count = 6 if target_duration_seconds is not None else 7
+    subject_examples = ", ".join(f'"<member {index}>"' for index in range(1, example_count + 1))
     return dedent(
         f"""
         Choose the chapter subjects for a long-form collection video about {topic.topic}.
@@ -213,7 +215,7 @@ def build_long_chapter_plan_prompt(
         - Return strict JSON only.
 
         JSON schema:
-        {{"subjects": ["<member 1>", "<member 2>", "<member 3>", "<member 4>", "<member 5>", "<member 6>"]}}
+        {{"subjects": [{subject_examples}]}}
         """
     ).strip()
 
