@@ -874,11 +874,51 @@ class GeneratedShort(BaseModel):
         return "#" + "".join(word.capitalize() for word in words)
 
 
+class LongSourceReference(BaseModel):
+    title: str = Field(min_length=5, max_length=180)
+    publisher: str = Field(min_length=2, max_length=100)
+    url: str = Field(min_length=12, max_length=500)
+    supports: str = Field(min_length=10, max_length=500)
+    checked_at: str = Field(default="", max_length=40)
+
+    @field_validator("url")
+    @classmethod
+    def _validate_http_url(cls, value: str) -> str:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(value)
+        if parsed.scheme != "https" or not parsed.netloc:
+            raise ValueError("Source references must use an absolute HTTPS URL.")
+        return value
+
+
+class LongIllustrationPlan(BaseModel):
+    kind: Literal["bridge", "flow", "comparison", "timeline", "mechanism"] = "mechanism"
+    variant: str = Field(default="", max_length=40)
+    elements: list[str] = Field(default_factory=list, max_length=5)
+    relation: str = Field(default="", max_length=120)
+
+    @field_validator("variant", "relation")
+    @classmethod
+    def _clean_plan_text(cls, value: str) -> str:
+        cleaned = _WHITESPACE_RE.sub(" ", value.strip())
+        if _EMOJI_RE.search(cleaned):
+            raise ValueError("Illustration plan text must not contain emoji.")
+        return cleaned
+
+    @field_validator("elements")
+    @classmethod
+    def _clean_plan_elements(cls, values: list[str]) -> list[str]:
+        cleaned = [_WHITESPACE_RE.sub(" ", value.strip())[:48] for value in values if value.strip()]
+        return list(dict.fromkeys(cleaned))[:5]
+
+
 class LongVideoSection(BaseModel):
     chapter_subject: str = Field(default="", max_length=64)
     title: str = Field(min_length=3, max_length=64)
-    narration: str = Field(min_length=40, max_length=2500)
+    narration: str = Field(min_length=10, max_length=2500)
     visual_queries: list[str] = Field(min_length=2, max_length=5)
+    visual_plan: LongIllustrationPlan = Field(default_factory=LongIllustrationPlan)
 
     @field_validator("chapter_subject", "title", "narration")
     @classmethod
@@ -911,6 +951,31 @@ class LongVideoSection(BaseModel):
         return deduped[:5]
 
 
+class LongNarrationRevision(BaseModel):
+    """Compact response shape used to revise spoken copy without regenerating metadata."""
+
+    intro: str = Field(min_length=8, max_length=700)
+    narrations: list[str] = Field(min_length=6, max_length=6)
+
+    @field_validator("intro", "narrations")
+    @classmethod
+    def _clean_revision_text(cls, value):
+        if isinstance(value, list):
+            cleaned = [_WHITESPACE_RE.sub(" ", item.strip()) for item in value]
+            if any(len(item.split()) < 10 for item in cleaned):
+                raise ValueError("Every revised chapter narration must contain at least 10 words.")
+            if any(_EMOJI_RE.search(item) for item in cleaned):
+                raise ValueError("Emoji are not allowed in revised narration.")
+            if any(any(phrase in item.lower() for phrase in _BANNED_PHRASES) for item in cleaned):
+                raise ValueError("Banned uncertainty or unsafe phrase detected in revised narration.")
+            return cleaned
+        cleaned = _WHITESPACE_RE.sub(" ", value.strip())
+        lowered = cleaned.lower()
+        if _EMOJI_RE.search(cleaned) or any(phrase in lowered for phrase in _BANNED_PHRASES):
+            raise ValueError("Banned text detected in revised intro.")
+        return cleaned
+
+
 class LongChapterPlan(BaseModel):
     subjects: list[str] = Field(min_length=6, max_length=9)
 
@@ -934,6 +999,7 @@ class GeneratedLongVideo(BaseModel):
     tags: list[str] = Field(min_length=8, max_length=20)
     sections: list[LongVideoSection] = Field(min_length=6, max_length=9)
     facts: list[str] = Field(min_length=6, max_length=12)
+    sources: list[LongSourceReference] = Field(default_factory=list, max_length=12)
     duration_profile: Literal["long", "test"] = "long"
 
     @field_validator("bucket")

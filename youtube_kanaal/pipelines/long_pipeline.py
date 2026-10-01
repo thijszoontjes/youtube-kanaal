@@ -29,6 +29,7 @@ from youtube_kanaal.models import (
 )
 from youtube_kanaal.pipelines.short_pipeline import RunArtifacts, ShortPipeline, _new_run_id, _utc_now_iso
 from youtube_kanaal.services.ffmpeg_service import FFmpegService
+from youtube_kanaal.services.illustration_service import IllustrationService
 from youtube_kanaal.services.narration_service import NarrationService
 from youtube_kanaal.services.ollama_service import OllamaService
 from youtube_kanaal.services.pexels_service import PexelsService
@@ -45,6 +46,30 @@ LONG_FORM_THEME_ROTATION: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("mysteries and danger", ("technology", "inventions", "vehicles")),
     ("human limits", ("human body", "sports", "food")),
     ("animals and nature", ("animals", "ocean", "geography")),
+)
+
+_BRIDGE_SOURCE_NOTES: tuple[dict[str, str], ...] = (
+    {
+        "title": "6 Popular Types Of Bridges And How They Work",
+        "publisher": "Institution of Civil Engineers",
+        "url": "https://ice.org.uk/news-views-insights/inside-infrastructure/guide-to-types-of-bridges",
+        "supports": "General overview of beam, arch, truss, cantilever, cable-stayed, and suspension forms and their basic load paths.",
+        "checked_at": "2026-10-01",
+    },
+    {
+        "title": "Unit 08.04.08: Bridges",
+        "publisher": "Yale National Initiative",
+        "url": "https://teachers.yale.edu/curriculum/units/2008/4/8",
+        "supports": "Educational overview of six bridge forms and how their geometry relates to compression and tension.",
+        "checked_at": "2026-10-01",
+    },
+    {
+        "title": "Building Bridges Activity: Beam, Truss, Arch, and Suspension",
+        "publisher": "AIA New York Center for Architecture",
+        "url": "https://www.centerforarchitecture.org/k-12/resources/building-bridges-activity-beam-truss-arch-and-suspension/",
+        "supports": "Diagram-based educational material about four bridge forms and structural forces.",
+        "checked_at": "2026-10-01",
+    },
 )
 
 
@@ -162,8 +187,59 @@ class LongPipeline(ShortPipeline):
         try:
             topic = self.select_topic(runtime, long_form=True)  # type: ignore[arg-type]
             runtime.stage_summaries["topic_selection"]["theme"] = _long_form_theme(topic.bucket)
-            content = self.generate_long_content(runtime, topic)
+            source_notes = self._verified_source_notes(topic.topic)
+            source_status = "reviewed_reference_notes_available" if source_notes else "not_verified_for_topic"
+            write_json(
+                runtime.artifacts.metadata_dir / "research_sources.json",
+                {"status": source_status, "sources": source_notes},
+            )
+            runtime.stage_summaries["research_sources"] = {"status": source_status, "sources": source_notes}
+            speech_rate_wpm = 150.0
+            content = self.generate_long_content(runtime, topic, target_speech_rate_wpm=speech_rate_wpm)
             narration = self.generate_long_narration(runtime, content)
+            if runtime.request.visual_style == "illustrated_explainer":
+                attempts = max(1, self.settings.retry_attempts)
+                for attempt in range(1, attempts + 1):
+                    target_seconds = runtime.request.test_duration_seconds
+                    duration_fits = (
+                        target_seconds - 5 <= narration.duration_seconds <= target_seconds + 5
+                        if target_seconds is not None
+                        else self.settings.min_long_duration_seconds
+                        <= narration.duration_seconds
+                        <= self.settings.max_long_duration_seconds
+                    )
+                    if duration_fits:
+                        break
+                    if attempt == attempts:
+                        target_range = (
+                            f"{target_seconds}s ±5s"
+                            if target_seconds is not None
+                            else f"{self.settings.min_long_duration_seconds}-{self.settings.max_long_duration_seconds}s"
+                        )
+                        raise PipelineStageError(
+                            stage="narration_generation",
+                            message="Natural TTS narration did not fit the requested video duration after bounded rewrites.",
+                            probable_cause=(
+                                f"Requested duration {target_range}; final measured narration was "
+                                f"{narration.duration_seconds:.2f}s. No speech was trimmed or padded."
+                            ),
+                        )
+                    measured_wpm = len(content.narration.split()) * 60 / max(narration.duration_seconds, 0.1)
+                    runtime.logger.info(
+                        "Rewriting illustrated script to match measured TTS pace",
+                        extra={"attempt": attempt, "measured_wpm": round(measured_wpm, 1)},
+                    )
+                    content = self.generate_long_content(
+                        runtime,
+                        topic,
+                        target_speech_rate_wpm=measured_wpm,
+                        prior_content=content,
+                        revision_reason=(
+                            f"Measured narration was {narration.duration_seconds:.2f} seconds; "
+                            f"the target is {target_seconds if target_seconds is not None else 'the configured long-form range'} seconds."
+                        ),
+                    )
+                    narration = self.generate_long_narration(runtime, content)
             subtitles = self.generate_long_subtitles(runtime, content, narration)
             mixed_audio = self.mix_background_music(runtime, narration)
             clips = self.download_long_broll(runtime, topic, content)
@@ -211,14 +287,50 @@ class LongPipeline(ShortPipeline):
             )
             raise
 
-    def generate_long_content(self, runtime: "LongPipelineRuntime", topic: TopicChoice) -> GeneratedLongVideo:
+    def generate_long_content(
+        self,
+        runtime: "LongPipelineRuntime",
+        topic: TopicChoice,
+        *,
+        target_speech_rate_wpm: float = 150.0,
+        prior_content: GeneratedLongVideo | None = None,
+        revision_reason: str | None = None,
+    ) -> GeneratedLongVideo:
         recent_titles = self.database.recent_titles(limit=100)
         with self._long_stage(runtime, "long_content_generation", {"topic": topic.topic, "recent_titles": len(recent_titles)}):
-            chapter_subjects = self.ollama.generate_long_chapter_plan(
-                topic=topic,
-                prompt_path=runtime.artifacts.prompts_dir / "long_chapter_plan.txt",
-                response_path=runtime.artifacts.responses_dir / "long_chapter_plan.json",
-                target_duration_seconds=runtime.request.test_duration_seconds,
+            if runtime.request.script_path is not None:
+                supplied = GeneratedLongVideo.model_validate_json(runtime.request.script_path.read_text(encoding="utf-8"))
+                chapter_subjects = [section.chapter_subject for section in supplied.sections]
+                content = self.ollama.normalize_reviewed_long_content(
+                    supplied,
+                    topic,
+                    target_duration_seconds=runtime.request.test_duration_seconds,
+                    visual_style=runtime.request.visual_style,
+                    chapter_subjects=chapter_subjects,
+                    target_speech_rate_wpm=target_speech_rate_wpm,
+                    verified_source_notes=runtime.stage_summaries.get("research_sources", {}).get("sources", []),
+                )
+                write_text(runtime.artifacts.prompts_dir / "long_content_generation.txt", "Using supplied reviewed script JSON.")
+                write_json(runtime.artifacts.responses_dir / "long_content_generation.json", content.model_dump(mode="json"))
+                write_text(runtime.artifacts.responses_dir / "long_script.txt", content.narration)
+                runtime.stage_summaries["chapter_subject_plan"] = chapter_subjects
+                runtime.stage_summaries["long_content_generation"] = {
+                    **content.model_dump(mode="json"),
+                    "model_id": "reviewed local script",
+                    "content_source": str(runtime.request.script_path),
+                }
+                return content
+
+            chapter_subjects = (
+                [section.chapter_subject for section in prior_content.sections]
+                if prior_content is not None
+                else self.ollama.generate_long_chapter_plan(
+                    topic=topic,
+                    prompt_path=runtime.artifacts.prompts_dir / "long_chapter_plan.txt",
+                    response_path=runtime.artifacts.responses_dir / "long_chapter_plan.json",
+                    target_duration_seconds=runtime.request.test_duration_seconds,
+                    visual_style=runtime.request.visual_style,
+                )
             )
             runtime.stage_summaries["chapter_subject_plan"] = chapter_subjects
             for _ in range(self.settings.retry_attempts):
@@ -229,13 +341,35 @@ class LongPipeline(ShortPipeline):
                     response_path=runtime.artifacts.responses_dir / "long_content_generation.json",
                     target_duration_seconds=runtime.request.test_duration_seconds,
                     chapter_subjects=chapter_subjects,
+                    visual_style=runtime.request.visual_style,
+                    target_speech_rate_wpm=target_speech_rate_wpm,
+                    production_duration_seconds=(
+                        (self.settings.min_long_duration_seconds + self.settings.max_long_duration_seconds) // 2
+                        if runtime.request.visual_style == "illustrated_explainer"
+                        else None
+                    ),
+                    verified_source_notes=runtime.stage_summaries.get("research_sources", {}).get("sources", []),
+                    prior_content=prior_content,
+                    revision_reason=revision_reason,
                 )
-                if not is_near_duplicate(content.title, recent_titles, self.settings.similarity_threshold):
-                    runtime.stage_summaries["long_content_generation"] = content.model_dump(mode="json")
+                if prior_content is not None or not is_near_duplicate(
+                    content.title,
+                    recent_titles,
+                    self.settings.similarity_threshold,
+                ):
+                    runtime.stage_summaries["long_content_generation"] = {
+                        **content.model_dump(mode="json"),
+                        "model_id": self.settings.ollama_model,
+                    }
+                    write_text(runtime.artifacts.responses_dir / "long_script.txt", content.narration)
                     return content
                 retitled = self._retitle_long_content(content, recent_titles)
                 if retitled is not None:
-                    runtime.stage_summaries["long_content_generation"] = retitled.model_dump(mode="json")
+                    runtime.stage_summaries["long_content_generation"] = {
+                        **retitled.model_dump(mode="json"),
+                        "model_id": self.settings.ollama_model,
+                    }
+                    write_text(runtime.artifacts.responses_dir / "long_script.txt", retitled.narration)
                     return retitled
                 recent_titles.append(content.title)
             raise PipelineStageError(
@@ -246,7 +380,8 @@ class LongPipeline(ShortPipeline):
 
     def generate_long_narration(self, runtime: "LongPipelineRuntime", content: GeneratedLongVideo) -> NarrationAsset:
         with self._long_stage(runtime, "narration_generation", {"topic": content.topic, "words": len(content.narration.split())}):
-            raw_path = runtime.artifacts.audio_dir / "long_narration_raw.wav"
+            raw_extension = ".aiff" if self.settings.long_narration_engine == "macos_say" else ".wav"
+            raw_path = runtime.artifacts.audio_dir / f"long_narration_raw{raw_extension}"
             normalized_path = runtime.artifacts.audio_dir / "long_narration_normalized.wav"
             fitted_path = runtime.artifacts.audio_dir / "long_narration.wav"
             synthesis = self.narration.synthesize(
@@ -258,7 +393,10 @@ class LongPipeline(ShortPipeline):
             )
             self.ffmpeg.normalize_audio(input_path=raw_path, output_path=normalized_path)
             current_duration = self.ffmpeg.audio_duration_seconds(normalized_path)
-            if runtime.request.test_duration_seconds is not None:
+            if runtime.request.visual_style == "illustrated_explainer":
+                fitted_path = normalized_path
+                fitted_duration = current_duration
+            elif runtime.request.test_duration_seconds is not None:
                 _, fitted_duration = self.ffmpeg.fit_audio_duration(
                     input_path=normalized_path,
                     output_path=fitted_path,
@@ -278,11 +416,35 @@ class LongPipeline(ShortPipeline):
                     preserve_natural_speed=True,
                 )
             asset = NarrationAsset(raw_path=raw_path, normalized_path=fitted_path, duration_seconds=fitted_duration)
+            voice_id = {
+                "piper": self.settings.piper_voice_model_path.name if self.settings.piper_voice_model_path else self.settings.default_piper_voice,
+                "kokoro": self.settings.kokoro_voice,
+                "chatterbox": self.settings.chatterbox_model,
+                "xtts": self.settings.xtts_model_name,
+                "macos_say": self.settings.macos_say_voice,
+            }.get(synthesis.engine_used)
             runtime.stage_summaries["narration_generation"] = {
                 "requested_engine": synthesis.requested_engine,
                 "engine": synthesis.engine_used,
+                "voice_id": voice_id,
+                "voice_parameters": (
+                    {
+                        "length_scale": self.settings.piper_length_scale,
+                        "noise_scale": self.settings.piper_noise_scale,
+                        "noise_w_scale": self.settings.piper_noise_w_scale,
+                        "sentence_silence_seconds": self.settings.piper_sentence_silence,
+                    }
+                    if synthesis.engine_used == "piper"
+                    else {"kokoro_speed": self.settings.kokoro_speed}
+                    if synthesis.engine_used == "kokoro"
+                    else {"rate_words_per_minute": self.settings.macos_say_rate}
+                    if synthesis.engine_used == "macos_say"
+                    else {}
+                ),
                 "fallback_reason": synthesis.fallback_reason,
                 "before_fit_seconds": current_duration,
+                "measured_speech_rate_wpm": round(len(content.narration.split()) * 60 / max(current_duration, 0.1), 1),
+                "fit_policy": "natural_audio_no_trim_or_padding" if runtime.request.visual_style == "illustrated_explainer" else "legacy_duration_fit",
                 **asset.model_dump(mode="json"),
             }
             return asset
@@ -307,6 +469,14 @@ class LongPipeline(ShortPipeline):
     def mix_background_music(self, runtime: "LongPipelineRuntime", narration: NarrationAsset) -> Path:
         with self._long_stage(runtime, "background_music", {"duration_seconds": narration.duration_seconds}):
             mixed_path = runtime.artifacts.audio_dir / "long_voice_music_mix.wav"
+            if runtime.request.visual_style == "illustrated_explainer":
+                shutil.copy2(narration.normalized_path, mixed_path)
+                runtime.stage_summaries["background_music"] = {
+                    "path": str(mixed_path),
+                    "applied": False,
+                    "source": "none; clean narration is the illustrated profile default",
+                }
+                return mixed_path
             output_path = self.ffmpeg.mix_longform_audio(
                 narration_path=narration.normalized_path,
                 duration_seconds=narration.duration_seconds,
@@ -325,6 +495,38 @@ class LongPipeline(ShortPipeline):
         topic: TopicChoice,
         content: GeneratedLongVideo,
     ) -> list[ImageAsset]:
+        if runtime.request.visual_style == "illustrated_explainer":
+            with self._long_stage(
+                runtime,
+                "illustration_generation",
+                {"chapter_count": len(content.sections), "external_images": False},
+            ):
+                illustration_service = IllustrationService()
+                assets: list[ImageAsset] = []
+                plans: dict[str, dict[str, object]] = {}
+                for index, section in enumerate(content.sections, start=1):
+                    try:
+                        chapter_assets, plan = illustration_service.create_chapter_scenes(
+                            section=section,
+                            topic=topic.topic,
+                            output_dir=runtime.artifacts.assets_dir / "illustrations",
+                            chapter_index=index,
+                        )
+                    except ValueError as exc:
+                        raise PipelineStageError(
+                            stage="illustration_generation",
+                            message=f"The illustration plan for {section.title!r} is incomplete.",
+                            probable_cause=str(exc),
+                        ) from exc
+                    assets.extend(chapter_assets)
+                    plans[f"chapter-{index:02d}"] = plan.model_dump(mode="json")
+                runtime.stage_summaries["illustration_generation"] = {
+                    "image_count": len(assets),
+                    "source": "generated locally by IllustrationService",
+                    "rights_status": "generated_local; no external image license asserted",
+                    "plans": plans,
+                }
+                return assets
         queries = self._long_visual_queries(topic, content)
         with self._long_stage(runtime, "stock_image_download", {"query_count": len(queries), "max_images": self.settings.long_broll_clip_count}):
             clips = self.pexels.fetch_broll_photos(
@@ -348,6 +550,8 @@ class LongPipeline(ShortPipeline):
         subtitles: SubtitleAsset,
     ) -> AssetPlan:
         with self._long_stage(runtime, "asset_planning", {"clip_count": len(clips), "duration": narration.duration_seconds}):
+            if runtime.request.visual_style == "illustrated_explainer":
+                return self._plan_illustrated_assets(runtime, clips, narration, content, subtitles)
             if not clips:
                 raise PipelineStageError(
                     stage="asset_planning",
@@ -487,9 +691,188 @@ class LongPipeline(ShortPipeline):
                 adjusted_duration = last_segment.duration_seconds + duration_delta
                 if adjusted_duration >= 0.5:
                     last_segment.duration_seconds = adjusted_duration
+            timeline_cursor = 0.0
+            for segment in segments:
+                segment.start_seconds = timeline_cursor
+                timeline_cursor += segment.duration_seconds
             plan = AssetPlan(segments=segments, total_duration_seconds=narration.duration_seconds)
-            runtime.stage_summaries["asset_planning"] = plan.model_dump(mode="json")
+            runtime.stage_summaries["asset_planning"] = {
+                **plan.model_dump(mode="json"),
+                "timing_source": "whisper_subtitle_cues" if timed_ranges else "script_word_ratio_estimate",
+                "visual_event_count": len(segments),
+            }
             return plan
+
+    def _plan_illustrated_assets(
+        self,
+        runtime: "LongPipelineRuntime",
+        assets: list[ImageAsset],
+        narration: NarrationAsset,
+        content: GeneratedLongVideo,
+        subtitles: SubtitleAsset,
+    ) -> AssetPlan:
+        if not assets:
+            raise PipelineStageError(
+                stage="asset_planning",
+                message="Illustrated rendering needs locally generated diagrams.",
+                probable_cause="No valid illustration assets were generated for the selected chapters.",
+            )
+        assets_by_id = {asset.source_id: asset for asset in assets}
+        chapter_word_counts = [max(len(section.narration.split()), 1) for section in content.sections]
+        cue_text = subtitles.srt_path.read_text(encoding="utf-8") if subtitles.srt_path.exists() else ""
+        cues = parse_srt_text(cue_text)
+        timed_ranges = _build_long_audio_ranges(
+            cues,
+            [len(content.intro.split()), *chapter_word_counts],
+            narration.duration_seconds,
+        )
+        if timed_ranges and len(timed_ranges) == len(content.sections) + 1:
+            chapter_ranges = timed_ranges[1:]
+            timing_source = "whisper_script_aligned_subtitle_cues"
+        else:
+            intro_duration = narration.duration_seconds * len(content.intro.split()) / max(
+                len(content.narration.split()), 1
+            )
+            chapter_duration = max(narration.duration_seconds - intro_duration, 0.5)
+            total_words = sum(chapter_word_counts)
+            chapter_ranges = []
+            cursor = intro_duration
+            for words in chapter_word_counts:
+                duration = chapter_duration * words / max(total_words, 1)
+                chapter_ranges.append((cursor, cursor + duration))
+                cursor += duration
+            timing_source = "script_word_ratio_estimate"
+
+        motion_cycle = ("reveal", "pointer", "slow_push", "pan")
+        segments: list[AssetPlanSegment] = []
+        frame_total = max(round(narration.duration_seconds * 30), 1)
+        snapped_ranges: list[tuple[float, float]] = []
+        prior_end_frame = 0
+        for index, (start, end) in enumerate(chapter_ranges):
+            start_frame = max(prior_end_frame, round(start * 30))
+            end_frame = frame_total if index == len(chapter_ranges) - 1 else max(start_frame + 1, round(end * 30))
+            snapped_ranges.append((start_frame / 30, end_frame / 30))
+            prior_end_frame = end_frame
+
+        first_section = content.sections[0]
+        intro_asset = assets_by_id.get("illustration-ch01-structure")
+        intro_end = snapped_ranges[0][0] if snapped_ranges else 0.0
+        if intro_asset is not None and intro_end >= 0.5:
+            segments.append(
+                AssetPlanSegment(
+                    clip_path=intro_asset.local_path,
+                    duration_seconds=intro_end,
+                    start_seconds=0,
+                    reason=f"INTRO: {first_section.visual_plan.relation}",
+                    on_screen_text=content.topic,
+                    scene_id="scene-intro-hook",
+                    chapter_id="intro",
+                    narration_fragment=content.intro,
+                    visual_type="diagram",
+                    transition="cut",
+                    asset_id=intro_asset.source_id,
+                    diagram_kind=first_section.visual_plan.kind,
+                    diagram_variant=first_section.visual_plan.variant,
+                    diagram_phase="structure",
+                    diagram_labels=first_section.visual_plan.elements,
+                    diagram_relation=first_section.visual_plan.relation,
+                    motion_kind="reveal",
+                    focus_x=0.5,
+                    focus_y=0.55,
+                )
+            )
+        for chapter_index, (section, (start, end)) in enumerate(zip(content.sections, snapped_ranges), start=1):
+            chapter_id = f"chapter-{chapter_index:02d}"
+            chapter_duration = end - start
+            beat_durations = self._frame_aligned_cut_durations(chapter_duration, target_seconds=7.0)
+            if not beat_durations:
+                raise PipelineStageError(
+                    stage="asset_planning",
+                    message=f"Chapter {section.title!r} has no usable timed narration range.",
+                    probable_cause=f"Computed chapter interval was {start:.2f}-{end:.2f} seconds.",
+                )
+            chapter_assets = [
+                assets_by_id.get(f"illustration-ch{chapter_index:02d}-structure"),
+                assets_by_id.get(f"illustration-ch{chapter_index:02d}-load_path"),
+            ]
+            chapter_assets = [asset for asset in chapter_assets if asset is not None]
+            if not chapter_assets:
+                raise PipelineStageError(
+                    stage="asset_planning",
+                    message=f"No diagram assets match chapter {section.title!r}.",
+                    probable_cause="The generated asset IDs do not match the chapter planning contract.",
+                )
+            cursor = start
+            for beat_index, beat_duration in enumerate(beat_durations):
+                asset = chapter_assets[beat_index % len(chapter_assets)]
+                beat_start = cursor
+                beat_end = cursor + beat_duration
+                fragment = " ".join(
+                    cue.text.replace("\n", " ")
+                    for cue in cues
+                    if cue.end_seconds > beat_start and cue.start_seconds < beat_end
+                ).strip()
+                segments.append(
+                    AssetPlanSegment(
+                        clip_path=asset.local_path,
+                        duration_seconds=beat_duration,
+                        start_seconds=beat_start,
+                        reason=f"{section.title}: {section.visual_plan.relation}",
+                        on_screen_text=section.title,
+                        scene_id=f"scene-{chapter_id}-{beat_index + 1:02d}",
+                        chapter_id=chapter_id,
+                        narration_fragment=fragment or (section.narration if beat_index == 0 else ""),
+                        visual_type="diagram",
+                        transition="cut",
+                        asset_id=asset.source_id,
+                        diagram_kind=section.visual_plan.kind,
+                        diagram_variant=section.visual_plan.variant,
+                        diagram_phase="structure" if asset.source_id.endswith("structure") else "load_path",
+                        diagram_labels=section.visual_plan.elements,
+                        diagram_relation=section.visual_plan.relation,
+                        motion_kind=motion_cycle[(chapter_index + beat_index - 2) % len(motion_cycle)],
+                        focus_x=(0.30, 0.50, 0.70)[beat_index % 3],
+                        focus_y=0.58,
+                    )
+                )
+                cursor = beat_end
+
+        if segments:
+            duration_error = frame_total / 30 - sum(segment.duration_seconds for segment in segments)
+            segments[-1].duration_seconds += duration_error
+            timeline_cursor = 0.0
+            for segment in segments:
+                segment.start_seconds = timeline_cursor
+                timeline_cursor += segment.duration_seconds
+        planned_duration = sum(segment.duration_seconds for segment in segments)
+        target_duration = frame_total / 30
+        if abs(planned_duration - target_duration) > 1 / 30:
+            raise PipelineStageError(
+                stage="asset_planning",
+                message="Illustrated scene timeline does not close to the narration duration.",
+                probable_cause=f"Timeline is {planned_duration:.3f}s for {target_duration:.3f}s of frame-aligned audio.",
+            )
+        plan = AssetPlan(segments=segments, total_duration_seconds=target_duration)
+        runtime.stage_summaries["asset_planning"] = {
+            **plan.model_dump(mode="json"),
+            "timing_source": timing_source,
+            "chapter_ranges": [
+                {"chapter_id": f"chapter-{index:02d}", "start_seconds": start, "end_seconds": end}
+                for index, (start, end) in enumerate(chapter_ranges, start=1)
+            ],
+            "visual_event_count": len(segments),
+            "timeline_error_frames": round(abs(planned_duration - target_duration) * 30, 3),
+        }
+        return plan
+
+    @staticmethod
+    def _frame_aligned_cut_durations(duration_seconds: float, target_seconds: float = 6.5) -> list[float]:
+        total_frames = round(duration_seconds * 30)
+        if total_frames <= 0:
+            return []
+        count = max(1, math.ceil(total_frames / max(round(target_seconds * 30), 1)))
+        base_frames, extra_frames = divmod(total_frames, count)
+        return [(base_frames + (1 if index < extra_frames else 0)) / 30 for index in range(count)]
 
     @staticmethod
     def _visual_cut_durations(duration_seconds: float, target_seconds: float = 6.5) -> list[float]:
@@ -651,7 +1034,7 @@ class LongPipeline(ShortPipeline):
             output_path = self.ffmpeg.render_longform(
                 plan=plan,
                 audio_path=audio_path,
-                subtitle_path=subtitles.ass_path or subtitles.srt_path,
+                subtitle_path=(subtitles.ass_path or subtitles.srt_path) if runtime.request.burn_captions else None,
                 working_dir=runtime.artifacts.video_dir,
                 output_path=final_video_path,
                 preview_mode=runtime.request.test_duration_seconds is not None,
@@ -663,8 +1046,16 @@ class LongPipeline(ShortPipeline):
         with self._long_stage(runtime, "validation", {"video_path": str(final_video_path)}):
             payload = self.ffmpeg.validate_long_video(
                 final_video_path,
-                min_seconds=runtime.request.test_duration_seconds or self.settings.min_long_duration_seconds,
-                max_seconds=runtime.request.test_duration_seconds or self.settings.max_long_duration_seconds,
+                min_seconds=(
+                    max(0, runtime.request.test_duration_seconds - 5)
+                    if runtime.request.test_duration_seconds is not None
+                    else self.settings.min_long_duration_seconds
+                ),
+                max_seconds=(
+                    runtime.request.test_duration_seconds + 5
+                    if runtime.request.test_duration_seconds is not None
+                    else self.settings.max_long_duration_seconds
+                ),
                 expected_width=(self.settings.long_preview_width if runtime.request.test_duration_seconds is not None else self.settings.long_output_width),
                 expected_height=(self.settings.long_preview_height if runtime.request.test_duration_seconds is not None else self.settings.long_output_height),
             )
@@ -720,7 +1111,11 @@ class LongPipeline(ShortPipeline):
     ) -> UploadMetadata:
         upload_status_path = runtime.artifacts.metadata_dir / "upload_status.json"
         with self._long_stage(runtime, "youtube_upload", {"requested": runtime.request.upload, "dry_run": runtime.request.dry_run}):
-            chapters = self._chapter_timestamps(content, runtime.stage_summaries["narration_generation"]["duration_seconds"])
+            chapters = self._chapter_timestamps(
+                content,
+                runtime.stage_summaries["narration_generation"]["duration_seconds"],
+                segments=runtime.stage_summaries.get("asset_planning", {}).get("segments"),
+            )
             if not runtime.request.upload:
                 metadata = UploadMetadata(
                     youtube_video_id=None,
@@ -797,7 +1192,11 @@ class LongPipeline(ShortPipeline):
         started_at: str,
     ) -> LongRunResult:
         with self._long_stage(runtime, "persistence", {"topic": topic.topic, "title": content.title}):
-            chapters = self._chapter_timestamps(content, narration.duration_seconds)
+            chapters = self._chapter_timestamps(
+                content,
+                narration.duration_seconds,
+                segments=runtime.stage_summaries.get("asset_planning", {}).get("segments"),
+            )
             assets_manifest_path = self._write_assets_manifest(
                 runtime=runtime,
                 clips=clips,
@@ -825,6 +1224,9 @@ class LongPipeline(ShortPipeline):
                 "completed_at": _utc_now_iso(),
                 "language": "en",
                 "duration_seconds": narration.duration_seconds,
+                "visual_style": runtime.request.visual_style,
+                "test_duration_seconds": runtime.request.test_duration_seconds,
+                "research_sources": runtime.stage_summaries.get("research_sources", {}),
                 "subtitles": subtitles.model_dump(mode="json"),
                 "topic": topic.model_dump(mode="json"),
                 "content": content.model_dump(mode="json"),
@@ -873,7 +1275,7 @@ class LongPipeline(ShortPipeline):
             for clip in clips:
                 self.database.record_asset(
                     run_id=runtime.run_id,
-                    asset_type="long_stock_image",
+                    asset_type="long_illustration" if runtime.request.visual_style == "illustrated_explainer" else "long_stock_image",
                     source_id=clip.source_id,
                     source_url=clip.source_url,
                     local_path=str(clip.local_path),
@@ -965,7 +1367,11 @@ class LongPipeline(ShortPipeline):
         ) -> None:
             digest = None
             if path.exists():
-                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                hasher = hashlib.sha256()
+                with path.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        hasher.update(chunk)
+                digest = hasher.hexdigest()
             assets.append(
                 {
                     "asset_id": asset_id,
@@ -984,25 +1390,44 @@ class LongPipeline(ShortPipeline):
         for clip in clips:
             add_asset(
                 asset_id=clip.source_id,
-                asset_type="pexels_photo",
+                asset_type="generated_local_illustration" if runtime.request.visual_style == "illustrated_explainer" else "pexels_photo",
                 path=clip.local_path,
                 source_url=clip.source_url,
                 license_name=clip.license_name,
                 license_url=clip.license_url,
                 rights_status=clip.rights_status,
-                edits=["center_crop", "subtle_pan_zoom", "caption_overlay"],
+                edits=(
+                    ["original_vector_style_diagram_rendered_as_ppm", "chapter_specific_labels"]
+                    if runtime.request.visual_style == "illustrated_explainer"
+                    else ["center_crop", "subtle_pan_zoom", "caption_overlay"]
+                ),
             )
         add_asset(
-            asset_id="thumbnail-reference",
-            asset_type="user_thumbnail_reference",
+            asset_id="first-frame-thumbnail",
+            asset_type="frame_extracted_thumbnail",
             path=thumbnail_path,
-            rights_status="user_supplied_verify_before_commercial_use",
-            edits=["converted_to_jpeg"],
+            rights_status="derived_from_generated_local_video",
+            edits=["frame_extracted_at_0_seconds", "converted_to_jpeg"],
         )
         add_asset(asset_id="narration", asset_type="generated_audio", path=narration.normalized_path, rights_status="generated_local_tts")
+        raw_narration_path = runtime.artifacts.audio_dir / "long_narration_raw.wav"
+        if raw_narration_path.exists():
+            add_asset(asset_id="narration-raw", asset_type="generated_audio_source", path=raw_narration_path, rights_status="generated_local_tts")
+        for suffix in (".srt", ".vtt", ".ass"):
+            subtitle_path = runtime.artifacts.subtitles_dir / f"long_captions{suffix}"
+            if subtitle_path.exists():
+                add_asset(
+                    asset_id=f"captions-{suffix[1:]}",
+                    asset_type=f"subtitle_{suffix[1:]}",
+                    path=subtitle_path,
+                    rights_status="generated_from_audio_transcription",
+                )
         music_path = runtime.artifacts.audio_dir / "long_music_bed.wav"
         if music_path.exists():
             add_asset(asset_id="music-bed", asset_type="generated_music_bed", path=music_path, rights_status="generated_procedural")
+        script_path = runtime.artifacts.responses_dir / "long_script.txt"
+        if script_path.exists():
+            add_asset(asset_id="script", asset_type="generated_text", path=script_path, rights_status="generated_local_model")
         add_asset(asset_id="final-video", asset_type="rendered_video", path=final_video_path, rights_status="derived_from_manifested_assets")
         manifest_path = runtime.artifacts.metadata_dir / "assets_manifest.json"
         write_json(manifest_path, {"generated_at": checked_at, "assets": assets})
@@ -1017,7 +1442,35 @@ class LongPipeline(ShortPipeline):
         queries.extend(content.keyword_queries())
         return list(dict.fromkeys(" ".join(query.split()).strip() for query in queries if query.strip()))[:16]
 
-    def _chapter_timestamps(self, content: GeneratedLongVideo, duration_seconds: float) -> list[tuple[float, str]]:
+    @staticmethod
+    def _verified_source_notes(topic: str) -> list[dict[str, str]]:
+        normalized = " ".join(topic.casefold().split())
+        if normalized in {"bridge", "bridges", "bridge types", "types of bridges"}:
+            return [dict(source) for source in _BRIDGE_SOURCE_NOTES]
+        return []
+
+    def _chapter_timestamps(
+        self,
+        content: GeneratedLongVideo,
+        duration_seconds: float,
+        *,
+        segments: object = None,
+    ) -> list[tuple[float, str]]:
+        if isinstance(segments, list):
+            by_chapter: dict[str, float] = {}
+            for segment in segments:
+                if not isinstance(segment, dict):
+                    continue
+                chapter_id = str(segment.get("chapter_id", ""))
+                if not chapter_id.startswith("chapter-"):
+                    continue
+                start = float(segment.get("start_seconds", 0.0))
+                by_chapter[chapter_id] = min(by_chapter.get(chapter_id, start), start)
+            if len(by_chapter) == len(content.sections):
+                return [
+                    (round(by_chapter[f"chapter-{index:02d}"], 3), section.title)
+                    for index, section in enumerate(content.sections, start=1)
+                ]
         intro_words = len(content.intro.split())
         word_counts = [max(len(section.narration.split()), 1) for section in content.sections]
         total_words = sum(word_counts)

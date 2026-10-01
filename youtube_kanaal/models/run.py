@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -78,7 +79,10 @@ class LongRunRequest(BaseModel):
     save_to_downloads: bool = False
     mock_mode: bool = False
     test_duration_seconds: int | None = Field(default=None, ge=30, le=120)
+    visual_style: Literal["photo", "illustrated_explainer"] = "photo"
+    burn_captions: bool = True
     thumbnail_path: Path | None = None
+    script_path: Path | None = None
 
     @field_validator("thumbnail_path")
     @classmethod
@@ -88,6 +92,16 @@ class LongRunRequest(BaseModel):
         resolved = value.expanduser().resolve()
         if not resolved.is_file():
             raise ValueError(f"Thumbnail file not found: {resolved}")
+        return resolved
+
+    @field_validator("script_path")
+    @classmethod
+    def _resolve_script_path(cls, value: Path | None) -> Path | None:
+        if value is None:
+            return value
+        resolved = value.expanduser().resolve()
+        if not resolved.is_file() or resolved.suffix.casefold() != ".json":
+            raise ValueError(f"Script JSON file not found: {resolved}")
         return resolved
 
     @field_validator("privacy_status")
@@ -111,6 +125,8 @@ class LongRunRequest(BaseModel):
 
     @model_validator(mode="after")
     def _validate_scheduling(self) -> "LongRunRequest":
+        if self.script_path is not None and (self.upload or self.test_duration_seconds is None):
+            raise ValueError("A supplied script is supported only for a local long-form test without upload.")
         if self.dry_run:
             self.upload = False
         if self.scheduled_publish_at is None:

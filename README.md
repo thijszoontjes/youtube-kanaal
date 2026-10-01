@@ -16,6 +16,26 @@ This command always creates a local one-minute test package and never uploads it
 
 The reference video's exact voice ID is not exposed by YouTube metadata. This branch uses the configured local Kokoro voice (`af_heart`) at a slower long-form speed; reproducing the source voice exactly requires a licensed voice match or an authorized clean reference recording. Long-form runs always write SRT/VTT/ASS captions, burn centered captions into the MP4, and render a clear opening overview before the chapter visuals.
 
+### Original illustrated explainer profile
+
+The local test command also supports an opt-in `illustrated_explainer` profile. This profile creates original local diagrams and simple illustrations from validated scene plans; it does not require a Pexels key. It keeps the existing photo profile as the default. Its light background, restrained colors, dark outlines, functional labels, and diagram motion are project design choices, not a verified reconstruction of another channel. Script, captions, scenes, chapter times, and the asset manifest are saved with the run.
+
+For a non-uploading 90-second test, with an available long-form narration engine configured:
+
+```bash
+python -m youtube_kanaal make-long-test \
+  --topic bridges \
+  --bucket architecture \
+  --duration-seconds 90 \
+  --visual-style illustrated_explainer
+```
+
+The duration can be set from 30 to 120 seconds. Caption burn-in is on by default and can be disabled with `--no-burn-captions`. The existing photo test remains the default at 60 seconds. A test render is local and is not uploaded or scheduled.
+
+To render a reviewed or hand-edited package without regenerating its script, pass a JSON package with `--script-path`. The package must use `duration_profile: "test"` and match the selected topic and bucket; this option is limited to local tests.
+
+On macOS, the built-in speech synthesizer is available as an explicit local voice option when the configured Piper binary cannot run on the machine: set `LONG_NARRATION_ENGINE=macos_say`, choose an installed `MACOS_SAY_VOICE` (for example, `Samantha`), and set `MACOS_SAY_RATE=150`. The pipeline verifies the selected installed voice and records its name and rate. It does not switch to this engine automatically.
+
 ## Topic selection
 
 Automatic topic selection uses the familiar-topic pool in `youtube_kanaal/models/content.py`; internal buckets such as `history` or `space` are never shown to viewers. Obscure subjects such as the Library of Alexandria are therefore excluded from automatic runs, while explicit `--topic` choices remain supported.

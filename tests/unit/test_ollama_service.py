@@ -8,6 +8,7 @@ import pytest
 from youtube_kanaal.config import Settings
 from youtube_kanaal.exceptions import PipelineStageError
 from youtube_kanaal.models import GeneratedLongVideo, GeneratedShort, TopicChoice
+from youtube_kanaal.models.content import LongNarrationRevision
 from youtube_kanaal.services.ollama_service import OllamaService
 
 
@@ -450,3 +451,218 @@ def test_short_repair_discards_beats_that_are_shorter_than_repaired_narration() 
 
     assert repaired is not None
     assert 55 <= len(repaired.narration.split()) <= 90
+
+
+def test_illustrated_bridge_test_uses_canonical_chapter_plan(tmp_path, monkeypatch) -> None:
+    service = OllamaService(Settings(_env_file=None))
+    monkeypatch.setattr(service, "_generate_model", lambda **kwargs: pytest.fail("bridge forms are curated"))
+    topic = TopicChoice(
+        bucket="architecture",
+        topic="bridges",
+        visual_queries=["bridges", "bridge load paths"],
+        search_terms=["bridge types"],
+    )
+
+    subjects = service.generate_long_chapter_plan(
+        topic=topic,
+        prompt_path=tmp_path / "chapter_plan.txt",
+        response_path=tmp_path / "chapter_plan.json",
+        target_duration_seconds=90,
+        visual_style="illustrated_explainer",
+    )
+
+    assert subjects == [
+        "Beam Bridge",
+        "Arch Bridge",
+        "Truss Bridge",
+        "Suspension Bridge",
+        "Cable-Stayed Bridge",
+        "Cantilever Bridge",
+    ]
+    saved = json.loads((tmp_path / "chapter_plan.json").read_text(encoding="utf-8"))
+    assert saved["selection_method"] == "canonical bridge-form sequence"
+
+
+def test_illustrated_test_retries_a_short_script_without_padding(tmp_path, monkeypatch) -> None:
+    service = OllamaService(Settings(_env_file=None))
+    topic = TopicChoice(
+        bucket="architecture",
+        topic="bridges",
+        visual_queries=["bridges", "bridge load paths"],
+        search_terms=["bridge types"],
+    )
+    subjects = ["Beam Bridge", "Arch Bridge", "Truss Bridge", "Suspension Bridge", "Cable-Stayed Bridge", "Cantilever Bridge"]
+    short_payload = {
+        "bucket": "architecture",
+        "topic": "bridges",
+        "title": "How Six Bridge Shapes Carry Traffic",
+        "thumbnail_text": "BRIDGE LOAD PATHS",
+        "intro": "Why can bridges with different shapes carry the same traffic safely?",
+        "description": "A structural explainer about six bridge forms and their distinct load paths. It compares how tension and compression move through each design and why span and ground conditions affect the choice.",
+        "tags": ["bridges", "architecture", "loads", "structures", "engineering", "design", "physics", "explainer"],
+        "duration_profile": "test",
+        "facts": [f"Distinct sourced bridge fact {index}." for index in range(1, 7)],
+        "sections": [],
+    }
+
+    def section_payload(subject: str, narration: str) -> dict[str, object]:
+        return {
+            "chapter_subject": subject,
+            "title": subject,
+            "narration": narration,
+            "visual_queries": [f"{subject} diagram", f"{subject} load path"],
+            "visual_plan": {
+                "kind": "bridge",
+                "variant": subject.casefold(),
+                "elements": ["deck", "support", "load path"],
+                "relation": f"{subject} transfers deck loads toward its supports",
+            },
+        }
+
+    short_payload["sections"] = [
+        section_payload(subject, f"{subject} carries traffic loads through its structure toward supports, and engineers compare that path before selection.")
+        for subject in subjects
+    ]
+    detailed_narration = (
+        "This form carries traffic loads from its deck through the main structure toward stable supports. "
+        "Its geometry guides tension and compression along a distinct path. Engineers compare span, materials, "
+        "and ground conditions before choosing it, because those constraints change where forces collect."
+    )
+    responses = iter(
+        [
+            GeneratedLongVideo.model_validate(short_payload),
+            LongNarrationRevision(
+                intro="Why do bridge shapes change where forces travel?",
+                narrations=[detailed_narration] * 6,
+            ),
+        ]
+    )
+    prompts: list[str] = []
+
+    def generate(*, prompt: str, prompt_output_path, **kwargs):
+        prompts.append(prompt)
+        content = next(responses)
+        prompt_output_path.parent.mkdir(parents=True, exist_ok=True)
+        prompt_output_path.write_text(json.dumps({"response": content.model_dump_json()}), encoding="utf-8")
+        return content
+
+    monkeypatch.setattr(service, "_generate_model", generate)
+
+    result = service.generate_long_content(
+        topic=topic,
+        excluded_titles=[],
+        prompt_path=tmp_path / "long_content_generation.txt",
+        response_path=tmp_path / "long_content_generation.json",
+        target_duration_seconds=90,
+        chapter_subjects=subjects,
+        visual_style="illustrated_explainer",
+        target_speech_rate_wpm=150,
+    )
+
+    assert len(prompts) == 2
+    assert "Revise only the spoken copy" in prompts[1]
+    assert "Current spoken copy" in prompts[1]
+    assert '"description"' not in prompts[1]
+    assert len(result.narration.split()) in range(185, 266)
+    assert "the chapter" not in result.narration.casefold()
+    assert (tmp_path / "long_content_generation_attempt_1.json").exists()
+
+
+def test_measured_duration_revision_reuses_package_and_requests_only_spoken_copy(tmp_path, monkeypatch) -> None:
+    service = OllamaService(Settings(_env_file=None))
+    topic = TopicChoice(
+        bucket="architecture",
+        topic="bridges",
+        visual_queries=["bridges", "bridge load paths"],
+        search_terms=["bridge types"],
+    )
+    subjects = ["Beam Bridge", "Arch Bridge", "Truss Bridge", "Suspension Bridge", "Cable-Stayed Bridge", "Cantilever Bridge"]
+    full_content = service._fallback_test_long_content(topic, chapter_subjects=subjects)
+    short_prior = GeneratedLongVideo.model_validate(
+        {
+            **full_content.model_dump(mode="python"),
+            "intro": "Why can six bridge forms carry traffic differently?",
+            "sections": [
+                {
+                    **section.model_dump(mode="python"),
+            "narration": (
+                "This form transfers traffic from the deck through its structure into stable supports, "
+                "while its shape guides tension and compression."
+            ),
+                }
+                for section in full_content.sections
+            ],
+        }
+    )
+    revision = LongNarrationRevision(
+        intro=full_content.intro,
+        narrations=[section.narration for section in full_content.sections],
+    )
+    captured: dict[str, object] = {}
+
+    def generate(*, prompt: str, prompt_output_path, model_cls, **kwargs):
+        captured["prompt"] = prompt
+        captured["model_cls"] = model_cls
+        prompt_output_path.parent.mkdir(parents=True, exist_ok=True)
+        prompt_output_path.write_text(json.dumps({"response": revision.model_dump_json()}), encoding="utf-8")
+        return revision
+
+    monkeypatch.setattr(service, "_generate_model", generate)
+    response_path = tmp_path / "long_content_generation.json"
+    response_path.write_text(json.dumps(short_prior.model_dump(mode="json")), encoding="utf-8")
+
+    result = service.generate_long_content(
+        topic=topic,
+        excluded_titles=[],
+        prompt_path=tmp_path / "long_content_generation.txt",
+        response_path=response_path,
+        target_duration_seconds=90,
+        chapter_subjects=subjects,
+        visual_style="illustrated_explainer",
+        target_speech_rate_wpm=166,
+        prior_content=short_prior,
+        revision_reason="Measured narration was 66.8 seconds; target is 90 seconds.",
+    )
+
+    assert captured["model_cls"] is LongNarrationRevision
+    assert "Measured narration was 66.8 seconds" in captured["prompt"]
+    assert '"description"' not in captured["prompt"]
+    assert result.title == short_prior.title
+    assert result.sections[0].visual_plan == short_prior.sections[0].visual_plan
+    assert len(result.narration.split()) in range(204, 295)
+    assert (tmp_path / "long_content_generation_attempt_1.json").exists()
+
+
+def test_reviewed_script_normalization_keeps_content_and_checks_topic() -> None:
+    service = OllamaService(Settings(_env_file=None))
+    topic = TopicChoice(
+        bucket="architecture",
+        topic="bridges",
+        visual_queries=["bridges", "bridge load paths"],
+        search_terms=["bridge types"],
+    )
+    subjects = ["Beam Bridge", "Arch Bridge", "Truss Bridge", "Suspension Bridge", "Cable-Stayed Bridge", "Cantilever Bridge"]
+    content = service._fallback_test_long_content(topic, chapter_subjects=subjects)
+    references = [{"title": "Bridge guide", "publisher": "Example source", "url": "https://example.test/bridges", "supports": "bridge forms"}]
+
+    normalized = service.normalize_reviewed_long_content(
+        content,
+        topic,
+        target_duration_seconds=90,
+        visual_style="illustrated_explainer",
+        chapter_subjects=subjects,
+        target_speech_rate_wpm=150,
+        verified_source_notes=references,
+    )
+
+    assert normalized.narration == content.narration
+    assert [section.chapter_subject for section in normalized.sections] == subjects
+    assert normalized.sources[0].url == references[0]["url"]
+    with pytest.raises(ValueError, match="topic and bucket must match"):
+        service.normalize_reviewed_long_content(
+            content,
+            topic.model_copy(update={"topic": "the Nile River", "bucket": "geography"}),
+            target_duration_seconds=90,
+            visual_style="illustrated_explainer",
+            chapter_subjects=subjects,
+        )

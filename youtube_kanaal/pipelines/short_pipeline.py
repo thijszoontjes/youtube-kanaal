@@ -372,6 +372,7 @@ class ShortPipeline:
                     topic_kwargs["preferred_buckets"] = preferred_buckets
                 if long_form:
                     topic_kwargs["long_form"] = True
+                    topic_kwargs["visual_style"] = getattr(runtime.request, "visual_style", "photo")
                 topic = self.ollama.choose_topic(**topic_kwargs)
                 if is_near_duplicate(topic.topic, excluded_topics, self.settings.similarity_threshold):
                     topic = self._fallback_topic_excluding(excluded_topics)

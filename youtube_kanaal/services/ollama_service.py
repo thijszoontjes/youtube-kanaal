@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from itertools import chain
 from pathlib import Path
 from typing import TypeVar
@@ -18,6 +19,7 @@ from youtube_kanaal.models.content import (
     SHORT_MIN_WORDS,
     GeneratedLongVideo,
     GeneratedShort,
+    LongNarrationRevision,
     LongChapterPlan,
     LongVideoSection,
     TOPIC_CATALOG,
@@ -34,6 +36,14 @@ from youtube_kanaal.utils.files import write_json, write_text
 
 TModel = TypeVar("TModel", bound=BaseModel)
 _VALIDATION_ERROR_TYPES = (ValidationError, CoreValidationError)
+_BRIDGE_TEST_CHAPTER_SUBJECTS = (
+    "Beam Bridge",
+    "Arch Bridge",
+    "Truss Bridge",
+    "Suspension Bridge",
+    "Cable-Stayed Bridge",
+    "Cantilever Bridge",
+)
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 _LONG_INTRO_STOCK_RE = re.compile(
     r"\b(?:in this video|join us on a journey|follow the clues|chapter by chapter|"
@@ -209,13 +219,19 @@ class OllamaService:
         response_path: Path,
         preferred_buckets: list[str] | None = None,
         long_form: bool = False,
+        visual_style: str = "photo",
     ) -> TopicChoice:
         if self.settings.mock_mode:
             choice = self._fallback_topic(excluded_topics)
             write_text(prompt_path, "mock-mode topic selection")
             write_json(response_path, choice.model_dump(mode="json"))
             return choice
-        prompt = build_topic_selection_prompt(excluded_topics, preferred_buckets, long_form=long_form)
+        prompt = build_topic_selection_prompt(
+            excluded_topics,
+            preferred_buckets,
+            long_form=long_form,
+            visual_style=visual_style,
+        )
         write_text(prompt_path, prompt)
         return self._generate_model(
             prompt=prompt,
@@ -284,7 +300,15 @@ class OllamaService:
         response_path: Path,
         target_duration_seconds: int | None = None,
         chapter_subjects: list[str] | None = None,
+        visual_style: str = "photo",
+        target_speech_rate_wpm: float = 150.0,
+        production_duration_seconds: int | None = None,
+        verified_source_notes: list[dict[str, str]] | None = None,
+        prior_content: GeneratedLongVideo | None = None,
+        revision_reason: str | None = None,
     ) -> GeneratedLongVideo:
+        if prior_content is not None and (visual_style != "illustrated_explainer" or target_duration_seconds is None):
+            raise ValueError("Prior content can only be revised for a duration-targeted illustrated explainer.")
         if self.settings.mock_mode:
             content = (
                 self._fallback_test_long_content(topic, chapter_subjects=chapter_subjects)
@@ -299,23 +323,122 @@ class OllamaService:
             excluded_titles,
             target_duration_seconds,
             chapter_subjects=chapter_subjects,
+            visual_style=visual_style,
+            target_speech_rate_wpm=target_speech_rate_wpm,
+            production_duration_seconds=production_duration_seconds,
+            verified_source_notes=verified_source_notes,
         )
         write_text(prompt_path, prompt)
-        content = self._generate_model(
-            prompt=prompt,
-            stage="long_content_generation",
-            prompt_output_path=response_path,
-            model_cls=GeneratedLongVideo,
+        max_quality_attempts = (
+            2 if prior_content is not None else 3
+        ) if visual_style == "illustrated_explainer" and target_duration_seconds else 1
+        revision_focus = (
+            "a bridge form, how its forces travel, and one relevant span or support example"
+            if topic.topic.strip().casefold() == "bridges"
+            else "a concrete mechanism, how its parts connect, and one useful example or consequence"
         )
-        try:
-            return self._normalize_generated_long(content, topic, chapter_subjects=chapter_subjects)
-        except ValueError as exc:
-            raise PipelineStageError(
+        content = prior_content
+        generation_prompt = prompt
+        last_error: ValueError | None = ValueError(revision_reason) if revision_reason else None
+
+        def build_revision_prompt(
+            current_content: GeneratedLongVideo,
+            error: ValueError | None,
+            *,
+            tolerance_ratio: float = 0.18,
+        ) -> str:
+            target_words = round(target_duration_seconds * target_speech_rate_wpm / 60)
+            tolerance = max(12, round(target_words * tolerance_ratio))
+            intro_target = min(18, max(8, round(target_speech_rate_wpm * 5 / 60)))
+            chapter_target = round((target_words - intro_target) / 6)
+            chapter_minimum = max(12, chapter_target - 4)
+            chapter_maximum = chapter_target + 4
+            return (
+                "Revise only the spoken copy for this original illustrated explainer. Return strict JSON with exactly these keys: "
+                '{"intro":"...","narrations":["chapter 1...","chapter 2...","chapter 3...",'
+                '"chapter 4...","chapter 5...","chapter 6..."]}. Do not return metadata, labels, facts, or source fields.\n'
+                f"The previous draft failed: {error}. Its intro had {len(current_content.intro.split())} words; "
+                f"chapter counts in order were {[len(section.narration.split()) for section in current_content.sections]}.\n"
+                f"Write about {intro_target} words in the intro, then {chapter_minimum}-{chapter_maximum} useful words "
+                f"in each chapter narration, aiming for {chapter_target}. Total spoken length must be "
+                f"{target_words - tolerance}-{target_words + tolerance} words for {target_duration_seconds} seconds. "
+                "Count only the intro and the six narration strings. Keep the six subjects and order shown below. "
+                f"Use only supported facts; expand or condense with {revision_focus}. Add no filler or repetition.\n"
+                f"Subjects: {json.dumps([section.chapter_subject for section in current_content.sections], ensure_ascii=False)}\n"
+                f"Supported facts: {json.dumps(current_content.facts, ensure_ascii=False)}\n"
+                f"Verified sources: {json.dumps(verified_source_notes or [], ensure_ascii=False)}\n"
+                f"Current spoken copy: {json.dumps({'intro': current_content.intro, 'narrations': [section.narration for section in current_content.sections]}, ensure_ascii=False)}"
+            )
+
+        if prior_content is not None:
+            generation_prompt = build_revision_prompt(prior_content, last_error, tolerance_ratio=0.05)
+            shutil.copy2(
+                response_path,
+                response_path.with_name(f"{response_path.stem}_attempt_1{response_path.suffix}"),
+            )
+            write_text(prompt_path.with_name(f"{prompt_path.stem}_attempt_1.txt"), generation_prompt)
+
+        for attempt in range(1, max_quality_attempts + 1):
+            model_cls: type[BaseModel] = LongNarrationRevision if prior_content is not None else GeneratedLongVideo
+            if attempt > 1:
+                if content is None:
+                    raise AssertionError("A compact narration retry requires an existing content package.")
+                attempt_suffix = f"_attempt_{attempt - 1}"
+                shutil.copy2(response_path, response_path.with_name(f"{response_path.stem}{attempt_suffix}{response_path.suffix}"))
+                write_text(prompt_path.with_name(f"{prompt_path.stem}{attempt_suffix}{prompt_path.suffix}"), generation_prompt)
+                generation_prompt = build_revision_prompt(
+                    content,
+                    last_error,
+                    tolerance_ratio=0.05 if prior_content is not None else 0.18,
+                )
+                write_text(prompt_path, generation_prompt)
+                model_cls = LongNarrationRevision
+
+            generated: BaseModel = self._generate_model(
+                prompt=generation_prompt,
                 stage="long_content_generation",
-                message="Generated long-form script did not meet its chapter requirements.",
-                probable_cause=str(exc),
-                details_path=response_path,
-            ) from exc
+                prompt_output_path=response_path,
+                model_cls=model_cls,
+            )
+            if isinstance(generated, LongNarrationRevision):
+                if content is None:
+                    raise AssertionError("A compact narration revision requires its source content package.")
+                content = GeneratedLongVideo.model_validate(
+                    {
+                        **content.model_dump(mode="python"),
+                        "intro": generated.intro,
+                        "sections": [
+                            {
+                                **section.model_dump(mode="python"),
+                                "narration": narration,
+                            }
+                            for section, narration in zip(content.sections, generated.narrations, strict=True)
+                        ],
+                    }
+                )
+            else:
+                content = generated
+            try:
+                return self._normalize_generated_long(
+                    content,
+                    topic,
+                    chapter_subjects=chapter_subjects,
+                    target_duration_seconds=target_duration_seconds,
+                    visual_style=visual_style,
+                    target_speech_rate_wpm=target_speech_rate_wpm,
+                    verified_source_notes=verified_source_notes,
+                    word_tolerance_ratio=0.05 if prior_content is not None else 0.18,
+                )
+            except ValueError as exc:
+                last_error = exc
+                if attempt == max_quality_attempts:
+                    raise PipelineStageError(
+                        stage="long_content_generation",
+                        message="Generated long-form script did not meet its chapter requirements after bounded retries.",
+                        probable_cause=str(exc),
+                        details_path=response_path,
+                    ) from exc
+        raise AssertionError("Long-form quality retry loop ended without a result or validation error.")
 
     def generate_long_chapter_plan(
         self,
@@ -324,13 +447,30 @@ class OllamaService:
         prompt_path: Path,
         response_path: Path,
         target_duration_seconds: int | None = None,
+        visual_style: str = "photo",
     ) -> list[str]:
         expected_count = 6 if target_duration_seconds is not None else None
         if self.settings.mock_mode:
             count = expected_count or 7
             return [f"{topic.topic.title()} Member {index}" for index in range(1, count + 1)]
-        prompt = build_long_chapter_plan_prompt(topic, target_duration_seconds)
+        prompt = build_long_chapter_plan_prompt(topic, target_duration_seconds, visual_style=visual_style)
         write_text(prompt_path, prompt)
+        if (
+            visual_style == "illustrated_explainer"
+            and target_duration_seconds is not None
+            and topic.topic.strip().casefold() == "bridges"
+        ):
+            # This requested demo is a bounded explanation of the six standard
+            # bridge forms. Keep its chapter-to-diagram mapping deterministic.
+            write_json(
+                response_path,
+                {
+                    "subjects": list(_BRIDGE_TEST_CHAPTER_SUBJECTS),
+                    "selection_method": "canonical bridge-form sequence",
+                    "model_id": None,
+                },
+            )
+            return list(_BRIDGE_TEST_CHAPTER_SUBJECTS)
         plan = self._generate_model(
             prompt=prompt,
             stage="long_chapter_plan",
@@ -1090,7 +1230,13 @@ class OllamaService:
         topic: TopicChoice,
         *,
         chapter_subjects: list[str] | None = None,
+        target_duration_seconds: int | None = None,
+        visual_style: str = "photo",
+        target_speech_rate_wpm: float = 150.0,
+        verified_source_notes: list[dict[str, str]] | None = None,
+        word_tolerance_ratio: float = 0.18,
     ) -> GeneratedLongVideo:
+        illustrated = visual_style == "illustrated_explainer"
         minimum_count, maximum_count = (6, 6) if content.duration_profile == "test" else (7, 9)
         minimum_words, maximum_words = (34, 38) if content.duration_profile == "test" else (315, 390)
         if not minimum_count <= len(content.sections) <= maximum_count:
@@ -1102,25 +1248,66 @@ class OllamaService:
             for index, section in enumerate(content.sections)
             if not minimum_words <= len(section.narration.split()) <= maximum_words
         ]
-        if invalid_sections and content.duration_profile != "test":
+        if invalid_sections and content.duration_profile != "test" and not illustrated:
             raise ValueError(
                 f"Chapter narration must be {minimum_words}-{maximum_words} words; invalid chapters: {invalid_sections}."
             )
+        if illustrated and content.duration_profile == "test" and target_duration_seconds:
+            target_words = round(target_duration_seconds * target_speech_rate_wpm / 60)
+            actual_words = len(content.narration.split())
+            tolerance = max(12, round(target_words * word_tolerance_ratio))
+            if not target_words - tolerance <= actual_words <= target_words + tolerance:
+                raise ValueError(
+                    f"Illustrated test script has {actual_words} words; target is {target_words} ± {tolerance} "
+                    f"for {target_duration_seconds} seconds. Rewrite it; automatic padding is disabled."
+                )
         payload = content.model_dump(mode="json")
         payload["bucket"] = topic.bucket
         payload["topic"] = topic.topic
-        payload["title"] = self._clean_long_title(content.title, topic.topic)
-        payload["thumbnail_text"] = self._clean_thumbnail_text(content.thumbnail_text, topic.topic)
+        payload["title"] = " ".join(content.title.split()).strip() if illustrated else self._clean_long_title(content.title, topic.topic)
+        payload["thumbnail_text"] = (
+            " ".join(content.thumbnail_text.split()).strip()
+            if illustrated
+            else self._clean_thumbnail_text(content.thumbnail_text, topic.topic)
+        )
         payload["intro"] = self._normalize_long_intro(content.intro, topic.topic)
+        if illustrated:
+            payload["sources"] = verified_source_notes or []
         payload["sections"] = self._fit_long_sections(
             [section.model_dump(mode="json") for section in content.sections],
             topic.topic,
             topic.bucket,
             test_mode=content.duration_profile == "test",
-            pad_short_sections=content.duration_profile == "test",
+            pad_short_sections=content.duration_profile == "test" and not illustrated,
             chapter_subjects=chapter_subjects,
+            illustrated=illustrated,
         )
         return GeneratedLongVideo.model_validate(payload)
+
+    def normalize_reviewed_long_content(
+        self,
+        content: GeneratedLongVideo,
+        topic: TopicChoice,
+        *,
+        target_duration_seconds: int | None,
+        visual_style: str,
+        chapter_subjects: list[str],
+        target_speech_rate_wpm: float = 150.0,
+        verified_source_notes: list[dict[str, str]] | None = None,
+    ) -> GeneratedLongVideo:
+        if content.topic.casefold() != topic.topic.casefold() or content.bucket.casefold() != topic.bucket.casefold():
+            raise ValueError("The supplied script topic and bucket must match the selected long-form test topic.")
+        if content.duration_profile != "test":
+            raise ValueError("The supplied script must use duration_profile='test'.")
+        return self._normalize_generated_long(
+            content,
+            topic,
+            chapter_subjects=chapter_subjects,
+            target_duration_seconds=target_duration_seconds,
+            visual_style=visual_style,
+            target_speech_rate_wpm=target_speech_rate_wpm,
+            verified_source_notes=verified_source_notes,
+        )
 
     def _fit_long_sections(
         self,
@@ -1131,6 +1318,7 @@ class OllamaService:
         test_mode: bool = False,
         pad_short_sections: bool = True,
         chapter_subjects: list[str] | None = None,
+        illustrated: bool = False,
     ) -> list[LongVideoSection]:
         normalized: list[dict[str, object]] = []
         minimum_words, maximum_words = (34, 38) if test_mode else (315, 390)
@@ -1155,20 +1343,29 @@ class OllamaService:
                     test_mode=test_mode,
                 )
             else:
-                narration = self._trim_narration_to_words(raw_narration, maximum_words) if raw_narration else ""
+                narration = (
+                    self._clean_narration(raw_narration)
+                    if illustrated
+                    else self._trim_narration_to_words(raw_narration, maximum_words) if raw_narration else ""
+                )
             queries = section.get("visual_queries")
             visual_queries = [str(query).strip() for query in queries if str(query).strip()] if isinstance(queries, list) else []
-            visual_queries.extend(self._quoted_visual_queries(str(section.get("narration", ""))))
-            visual_queries.extend([topic, f"{topic} {bucket}", f"{topic} documentary b-roll"])
+            if not illustrated:
+                visual_queries.extend(self._quoted_visual_queries(str(section.get("narration", ""))))
+                visual_queries.extend([topic, f"{topic} {bucket}", f"{topic} documentary b-roll"])
+            visual_plan = section.get("visual_plan") if isinstance(section.get("visual_plan"), dict) else {}
             normalized.append(
                 {
                     "chapter_subject": chapter_subject,
                     "title": title,
                     "narration": narration,
                     "visual_queries": list(dict.fromkeys(visual_queries))[:5],
+                    "visual_plan": visual_plan,
                 }
             )
         minimum_sections, maximum_sections = (6, 6) if test_mode else (7, 9)
+        if illustrated and len(normalized) != minimum_sections:
+            raise ValueError(f"Illustrated profile requires {minimum_sections} complete sections; got {len(normalized)}.")
         while len(normalized) < minimum_sections:
             index = len(normalized) + 1
             if test_mode and len(normalized) >= 6:

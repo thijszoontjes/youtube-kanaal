@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
+from youtube_kanaal.config import Settings
+from youtube_kanaal.exceptions import PipelineStageError
+from youtube_kanaal.services.whisper_service import WhisperService
 from youtube_kanaal.utils.subtitles import (
     align_script_to_reference_srt,
     build_ass_from_srt_text,
@@ -218,3 +225,57 @@ Octopuses disappear here
     assert "YOUR BRAIN\\NMISSED IT" in ass_text
     assert "\\fs78" in ass_text
     assert "\\1c&H006BFF7C" in ass_text
+
+
+def test_long_subtitles_align_script_only_after_a_reliable_asr_match(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = "The bridge deck sends traffic loads through its supports and into the ground."
+
+    def fake_whisper(command, **_kwargs):
+        output_base = Path(command[command.index("-of") + 1])
+        output_base.with_suffix(".srt").write_text(
+            "1\n00:00:00,000 --> 00:00:03,000\nThe bridge deck sends traffic loads\n\n"
+            "2\n00:00:03,000 --> 00:00:05,000\nthrough its supports and into the ground.\n",
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr("youtube_kanaal.services.whisper_service.run_command", fake_whisper)
+    service = WhisperService(Settings(whisper_model_path=tmp_path / "model.bin"))
+
+    subtitles = service.generate_subtitles(
+        audio_path=tmp_path / "voice.wav",
+        subtitle_text=script,
+        output_base_path=tmp_path / "captions",
+        duration_seconds=5,
+        style_profile="long",
+    )
+
+    assert subtitles.alignment_source == "script_aligned_to_whisper_timings"
+    assert subtitles.transcript_similarity == 1.0
+    assert "traffic loads" in subtitles.srt_path.read_text(encoding="utf-8")
+
+
+def test_long_subtitles_reject_a_transcript_that_misses_the_narration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_whisper(command, **_kwargs):
+        output_base = Path(command[command.index("-of") + 1])
+        output_base.with_suffix(".srt").write_text(
+            "1\n00:00:00,000 --> 00:00:02,000\nUnintelligible words here.\n",
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr("youtube_kanaal.services.whisper_service.run_command", fake_whisper)
+    service = WhisperService(Settings(whisper_model_path=tmp_path / "model.bin"))
+
+    with pytest.raises(PipelineStageError, match="does not reliably match"):
+        service.generate_subtitles(
+            audio_path=tmp_path / "voice.wav",
+            subtitle_text="A complete narration sentence that should not be invented inside captions.",
+            output_base_path=tmp_path / "bad-captions",
+            duration_seconds=2,
+            style_profile="long",
+        )

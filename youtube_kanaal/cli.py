@@ -6,7 +6,7 @@ import subprocess
 import shutil
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import typer
@@ -292,17 +292,34 @@ def _preflight_long_pipeline_requirements(request: LongRunRequest, settings: Set
         "FFmpeg",
         "Ollama reachable",
         "Ollama model",
-        "Narration engine",
-        "Pexels API key",
+        "whisper.cpp",
+        "whisper model path",
+        "Downloads folder",
     }
-    required_names.update(_narration_required_check_names(settings))
+    if request.visual_style == "photo":
+        required_names.add("Pexels API key")
+    required_names.update(
+        _narration_required_check_names(settings, engine_override=settings.long_narration_engine)
+    )
     blocking = [
         check
         for check in report.checks
         if check.name in required_names and check.status in {"fail", "warn"}
     ]
     if not blocking:
-        _print_narration_fallback_note(settings)
+        inspection = NarrationService(settings).inspect(engine_override=settings.long_narration_engine)
+        if inspection.resolved_engine != inspection.requested_engine:
+            console.print(
+                f"[red]Long-form voice fallback is disabled:[/red] {inspection.requested_engine} is unavailable; "
+                f"resolved engine was {inspection.resolved_engine}."
+            )
+            raise typer.Exit(code=1)
+        if inspection.resolved_engine == "macos_say" and not inspection.macos_say_ready:
+            console.print(
+                f"[red]macOS say is not ready:[/red] "
+                f"{inspection.macos_say_reason or 'The selected system voice is unavailable.'}"
+            )
+            raise typer.Exit(code=1)
         return
 
     console.print("[red]Long-form pipeline prerequisites are not ready.[/red]")
@@ -335,14 +352,16 @@ def _pipeline_required_check_names(
     return required_names
 
 
-def _narration_required_check_names(settings: Settings) -> set[str]:
-    inspection = NarrationService(settings).inspect()
+def _narration_required_check_names(settings: Settings, *, engine_override: str | None = None) -> set[str]:
+    inspection = NarrationService(settings).inspect(engine_override=engine_override)
     if inspection.resolved_engine == "kokoro":
         return {"Kokoro"}
     if inspection.resolved_engine == "xtts":
         return {"XTTS runtime", "XTTS speaker samples"}
     if inspection.resolved_engine == "chatterbox":
         return {"Chatterbox runtime", "Chatterbox speaker samples"}
+    if inspection.resolved_engine == "macos_say":
+        return {"macOS say"}
     return {"Piper", "Piper voice model"}
 
 
@@ -568,8 +587,23 @@ def daily_video(
 
 @app.command()
 def make_long_test(
-    topic: str = typer.Option("easiest muscles to grow", help="Catalog topic for the one-minute test video."),
+    topic: str = typer.Option("easiest muscles to grow", help="Catalog topic for the local long-form test."),
     bucket: str = typer.Option("human body", help="Catalog bucket for the test topic."),
+    duration_seconds: int = typer.Option(60, "--duration-seconds", min=30, max=120, help="Requested natural narration duration, in seconds."),
+    script_path: Optional[Path] = typer.Option(
+        None,
+        "--script-path",
+        exists=True,
+        dir_okay=False,
+        readable=True,
+        help="Use a reviewed JSON script package instead of generating script content.",
+    ),
+    visual_style: Literal["photo", "illustrated_explainer"] = typer.Option(
+        "photo",
+        "--visual-style",
+        help="Visual route: existing stock photos or original local diagrams.",
+    ),
+    burn_captions: bool = typer.Option(True, "--burn-captions/--no-burn-captions", help="Burn the timed captions into the video."),
     thumbnail_path: Optional[Path] = typer.Option(
         None,
         "--thumbnail-path",
@@ -578,9 +612,9 @@ def make_long_test(
     debug: bool = typer.Option(False, help="Enable verbose logging."),
     mock_mode: bool = typer.Option(False, help="Use deterministic mock services."),
 ) -> None:
-    """Render one local one-minute long-form test; never uploads to YouTube."""
+    """Render one local long-form test; never uploads to YouTube."""
 
-    console.print("Rendering one-minute long-form test video; upload=no.")
+    console.print(f"Rendering {duration_seconds}-second long-form test; upload=no.")
     _run_long_pipeline(
         LongRunRequest(
             upload=False,
@@ -590,7 +624,10 @@ def make_long_test(
             preferred_bucket=bucket,
             save_to_downloads=True,
             mock_mode=mock_mode,
-            test_duration_seconds=60,
+            test_duration_seconds=duration_seconds,
+            script_path=script_path,
+            visual_style=visual_style,
+            burn_captions=burn_captions,
             thumbnail_path=thumbnail_path,
         )
     )

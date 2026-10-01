@@ -36,6 +36,22 @@ def _base_settings(tmp_path: Path) -> Settings:
     )
 
 
+def test_doctor_checks_selected_macos_say_voice(monkeypatch, tmp_path: Path) -> None:
+    settings = _base_settings(tmp_path)
+    settings.narration_engine = "macos_say"
+    settings.macos_say_voice = "Samantha"
+    monkeypatch.setattr(
+        "youtube_kanaal.services.macos_say_service.MacOSSayService.runtime_ready",
+        lambda _self: (True, None),
+    )
+
+    checks = DoctorService(settings)._narration_checks()
+
+    assert checks[0].name == "macOS say"
+    assert checks[0].status == "ok"
+    assert "Samantha" in checks[0].details
+
+
 def test_xtts_runtime_fails_when_docker_image_missing_with_samples(tmp_path, monkeypatch) -> None:
     settings = _base_settings(tmp_path)
     monkeypatch.setattr("youtube_kanaal.services.doctor.command_exists", lambda command: True)

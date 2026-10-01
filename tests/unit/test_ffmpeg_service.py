@@ -192,3 +192,81 @@ def test_long_photo_variants_change_the_visual_card_size() -> None:
     assert primary != punch
     assert "scale=827:572" in primary
     assert "scale=1140:801" in punch
+
+
+def test_diagram_filter_supports_labels_highlights_and_three_motion_types(tmp_path: Path) -> None:
+    service = FFmpegService(Settings())
+    common = {
+        "title_path": tmp_path / "title.txt",
+        "relation_path": tmp_path / "relation.txt",
+        "labels_path": tmp_path / "labels.txt",
+        "width": 1280,
+        "height": 720,
+        "duration_seconds": 6,
+        "focus_x": 0.7,
+        "focus_y": 0.58,
+    }
+
+    reveal = service._long_diagram_filter(**common, motion_kind="reveal")
+    pointer = service._long_diagram_filter(**common, motion_kind="pointer")
+    push = service._long_diagram_filter(**common, motion_kind="slow_push")
+    pan = service._long_diagram_filter(**common, motion_kind="pan")
+
+    assert all("drawtext" in graph and "relation.txt" in graph and "labels.txt" in graph for graph in (reveal, pointer, push, pan))
+    assert "fade=t=in" in reveal
+    assert "drawbox" in pointer and "min(t/1.4,1)" in pointer
+    assert "zoompan" in push and "zoompan" in pan
+
+
+@pytest.mark.parametrize(("transition", "uses_crossfade"), [("cut", False), ("crossfade", True)])
+def test_long_renderer_respects_planned_cut_or_crossfade(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    transition: str,
+    uses_crossfade: bool,
+) -> None:
+    from youtube_kanaal.models import AssetPlan, AssetPlanSegment
+
+    captured_commands: list[list[str]] = []
+
+    def fake_run_command(command, **_kwargs):
+        captured_commands.append([str(part) for part in command])
+
+    monkeypatch.setattr("youtube_kanaal.services.ffmpeg_service.run_command", fake_run_command)
+    first_path = tmp_path / "first.ppm"
+    second_path = tmp_path / "second.ppm"
+    first_path.write_bytes(b"first")
+    second_path.write_bytes(b"second")
+    plan = AssetPlan(
+        total_duration_seconds=2.0,
+        segments=[
+            AssetPlanSegment(
+                clip_path=first_path,
+                duration_seconds=1,
+                reason="bridge start",
+                visual_type="diagram",
+                diagram_relation="deck to support",
+            ),
+            AssetPlanSegment(
+                clip_path=second_path,
+                duration_seconds=1,
+                reason="bridge end",
+                visual_type="diagram",
+                transition=transition,
+                diagram_relation="support to ground",
+            ),
+        ],
+    )
+
+    FFmpegService(Settings()).render_longform(
+        plan=plan,
+        audio_path=tmp_path / "audio.wav",
+        subtitle_path=tmp_path / "captions.ass",
+        working_dir=tmp_path / "render",
+        output_path=tmp_path / "render" / "final.mp4",
+        preview_mode=True,
+    )
+
+    final_filter = next(command[command.index("-filter_complex") + 1] for command in captured_commands if "-filter_complex" in command and "[vout]" in command[command.index("-filter_complex") + 1])
+    assert ("xfade=transition=fade" in final_filter) is uses_crossfade
+    assert ("concat=n=2:v=1:a=0" in final_filter) is not uses_crossfade

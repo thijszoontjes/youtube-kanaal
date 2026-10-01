@@ -305,7 +305,7 @@ class FFmpegService:
         *,
         plan: AssetPlan,
         audio_path: Path,
-        subtitle_path: Path,
+        subtitle_path: Path | None,
         working_dir: Path,
         output_path: Path,
         preview_mode: bool = False,
@@ -330,13 +330,72 @@ class FFmpegService:
         segment_render_durations: list[float] = []
         for index, segment in enumerate(plan.segments, start=1):
             segment_path = segments_dir / f"long-segment-{index:03d}.mp4"
-            render_duration = round(segment.duration_seconds + (crossfade_seconds if index > 1 else 0.0), 2)
+            has_crossfade = index > 1 and segment.transition == "crossfade"
+            render_duration = segment.duration_seconds + (crossfade_seconds if has_crossfade else 0.0)
             segment_render_durations.append(render_duration)
             segment_filter = self._long_segment_filter(
                 duration_seconds=render_duration,
                 variant=index,
             )
-            if segment.clip_path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}:
+            if segment.visual_type == "diagram":
+                title_path = working_dir / f"long-title-{index:03d}.txt"
+                relation_path = working_dir / f"long-relation-{index:03d}.txt"
+                labels_path = working_dir / f"long-labels-{index:03d}.txt"
+                write_text(title_path, self._clean_drawtext_text(segment.on_screen_text or segment.reason.split(":", 1)[0]))
+                write_text(relation_path, self._clean_drawtext_text(segment.diagram_relation))
+                write_text(labels_path, "  •  ".join(self._clean_drawtext_text(label) for label in segment.diagram_labels))
+                diagram_filter = self._long_diagram_filter(
+                    title_path=title_path,
+                    relation_path=relation_path,
+                    labels_path=labels_path,
+                    width=width,
+                    height=height,
+                    duration_seconds=render_duration,
+                    motion_kind=segment.motion_kind,
+                    focus_x=segment.focus_x,
+                    focus_y=segment.focus_y,
+                )
+                run_command(
+                    [
+                        self.settings.ffmpeg_binary,
+                        "-y",
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        f"color=c=0xFAF9F5:s={width}x{height}:r=30:d={render_duration:.6f}",
+                        "-loop",
+                        "1",
+                        "-framerate",
+                        "30",
+                        "-i",
+                        str(segment.clip_path),
+                        "-filter_complex",
+                        diagram_filter,
+                        "-map",
+                        "[v]",
+                        "-t",
+                        f"{render_duration:.6f}",
+                        "-r",
+                        "30",
+                        "-fps_mode",
+                        "cfr",
+                        "-an",
+                        "-c:v",
+                        "libx264",
+                        "-threads",
+                        "2",
+                        "-preset",
+                        "superfast",
+                        "-crf",
+                        "23",
+                        "-pix_fmt",
+                        "yuv420p",
+                        str(segment_path),
+                    ],
+                    timeout_seconds=900,
+                    stage="video_rendering",
+                )
+            elif segment.clip_path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}:
                 title_path = working_dir / f"long-title-{index:03d}.txt"
                 caption_path = working_dir / f"long-caption-{index:03d}.txt"
                 write_text(title_path, self._clean_drawtext_text(segment.reason.split(":", 1)[0]))
@@ -372,7 +431,7 @@ class FFmpegService:
                         "-f",
                         "lavfi",
                         "-i",
-                        f"color=c=white:s={width}x{height}:r=30:d={render_duration:.2f}",
+                        f"color=c=white:s={width}x{height}:r=30:d={render_duration:.6f}",
                         "-loop",
                         "1",
                         "-framerate",
@@ -384,7 +443,7 @@ class FFmpegService:
                         "-map",
                         "[v]",
                         "-t",
-                        f"{render_duration:.2f}",
+                        f"{render_duration:.6f}",
                         "-r",
                         "30",
                         "-fps_mode",
@@ -415,7 +474,7 @@ class FFmpegService:
                         "-i",
                         str(segment.clip_path),
                         "-t",
-                        f"{render_duration:.2f}",
+                        f"{render_duration:.6f}",
                         "-vf",
                         segment_filter,
                         "-r",
@@ -449,14 +508,20 @@ class FFmpegService:
         current_label = "v0"
         current_duration = segment_render_durations[0]
         for index in range(1, len(segment_paths)):
-            offset = max(current_duration - crossfade_seconds, 0.0)
             next_label = f"vx{index}"
-            filter_parts.append(
-                f"[{current_label}][v{index}]xfade=transition=fade:duration={crossfade_seconds:.2f}:"
-                f"offset={offset:.2f},fps=30,settb=AVTB[{next_label}]"
-            )
+            if plan.segments[index].transition == "crossfade":
+                offset = max(current_duration - crossfade_seconds, 0.0)
+                filter_parts.append(
+                    f"[{current_label}][v{index}]xfade=transition=fade:duration={crossfade_seconds:.2f}:"
+                    f"offset={offset:.6f},fps=30,settb=AVTB[{next_label}]"
+                )
+                current_duration = offset + segment_render_durations[index]
+            else:
+                filter_parts.append(
+                    f"[{current_label}][v{index}]concat=n=2:v=1:a=0,fps=30,settb=AVTB[{next_label}]"
+                )
+                current_duration += segment_render_durations[index]
             current_label = next_label
-            current_duration = offset + segment_render_durations[index]
         filter_parts.append(f"[{current_label}]format=yuv420p[vout]")
         video_inputs: list[str] = []
         for path in segment_paths:
@@ -475,7 +540,7 @@ class FFmpegService:
                 "-map",
                 f"{len(segment_paths)}:a:0",
                 "-t",
-                f"{plan.total_duration_seconds:.2f}",
+                f"{plan.total_duration_seconds:.6f}",
                 "-c:v",
                 "libx264",
                 "-threads",
@@ -500,6 +565,9 @@ class FFmpegService:
             timeout_seconds=1800,
             stage="video_rendering",
         )
+        if subtitle_path is None:
+            shutil.copy2(rough_cut_path, output_path)
+            return output_path
         subtitle_filter = self._subtitle_filter(subtitle_path, original_size=(width, height))
         run_command(
             [
@@ -762,6 +830,69 @@ class FFmpegService:
             f"fontsize={title_size}:x=(w-text_w)/2:y={round(height * 0.03)}:expansion=none:enable='between(t,0,{duration_seconds:.2f})',"
             "fps=30,settb=AVTB,format=yuv420p[v]"
         )
+
+    def _long_diagram_filter(
+        self,
+        *,
+        title_path: Path,
+        relation_path: Path,
+        labels_path: Path,
+        width: int,
+        height: int,
+        duration_seconds: float,
+        motion_kind: str,
+        focus_x: float,
+        focus_y: float,
+    ) -> str:
+        total_frames = max(round(duration_seconds * 30), 1)
+        if motion_kind == "slow_push":
+            diagram = (
+                f"[1:v]zoompan=z='min(1+0.0003*on,1.055)':x='iw/2-(iw/zoom/2)':"
+                f"y='ih/2-(ih/zoom/2)':d=1:s={width}x{height}:fps=30[art]"
+            )
+        elif motion_kind == "pan":
+            diagram = (
+                f"[1:v]zoompan=z=1.035:x='(iw-iw/zoom)*on/{total_frames}':"
+                f"y='ih/2-(ih/zoom/2)':d=1:s={width}x{height}:fps=30[art]"
+            )
+        elif motion_kind == "reveal":
+            diagram = f"[1:v]scale={width}:{height}:flags=lanczos,fade=t=in:st=0:d=0.45[art]"
+        else:
+            diagram = f"[1:v]scale={width}:{height}:flags=lanczos[art]"
+
+        title_file = self._escape_filter_path(title_path)
+        relation_file = self._escape_filter_path(relation_path)
+        labels_file = self._escape_filter_path(labels_path)
+        title_size = round(width * 0.030)
+        body_size = round(width * 0.020)
+        focus_left = round(width * focus_x - width * 0.045)
+        focus_top = round(height * focus_y - height * 0.045)
+        if motion_kind == "pointer":
+            pointer = (
+                f"[base]drawbox=x='max(0,min(w-38,{focus_left}-50+50*min(t/1.4,1)))':"
+                f"y={focus_top}:w=28:h=28:color=0xDC6753@0.95:t=fill:enable='between(t,0.2,1.8)'[point]"
+            )
+            base_label = "point"
+        else:
+            pointer = ""
+            base_label = "base"
+        drawtext = (
+            f"[{base_label}]drawtext=font='Arial':textfile='{title_file}':fontcolor=0x242F3A:"
+            f"fontsize={title_size}:x=(w-text_w)/2:y={round(height * 0.035)}:expansion=none:"
+            "box=1:boxcolor=0xFAF9F5@0.85:boxborderw=8[title];"
+            f"[title]drawtext=font='Arial':textfile='{relation_file}':fontcolor=0x242F3A:"
+            f"fontsize={body_size}:x=(w-text_w)/2:y={round(height * 0.13)}:expansion=none:"
+            "box=1:boxcolor=0xFAF9F5@0.85:boxborderw=6[relation];"
+            f"[relation]drawtext=font='Arial':textfile='{labels_file}':fontcolor=0x242F3A:"
+            f"fontsize={body_size}:x=(w-text_w)/2:y={round(height * 0.80)}:expansion=none:"
+            "box=1:boxcolor=0xFAF9F5@0.90:boxborderw=8,"
+            "fps=30,settb=AVTB,format=yuv420p[v]"
+        )
+        graph = f"{diagram};[0:v][art]overlay=0:0:shortest=1[base];"
+        if pointer:
+            graph += f"{pointer};"
+        graph += drawtext
+        return graph
 
     def _long_overview_filter(
         self,

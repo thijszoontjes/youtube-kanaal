@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from youtube_kanaal.models.content import TOPIC_SELECTION_CATALOG, TopicChoice, _load_topic_catalog_extensions
-from youtube_kanaal.prompts import build_content_generation_prompt, build_topic_selection_prompt
+from youtube_kanaal.prompts import (
+    build_content_generation_prompt,
+    build_long_chapter_plan_prompt,
+    build_long_content_generation_prompt,
+    build_topic_selection_prompt,
+)
 
 
 def test_topic_prompt_contains_catalog_and_exclusions() -> None:
@@ -68,3 +73,41 @@ def test_content_prompt_contains_recent_titles() -> None:
     assert "The title must match axolotls" in prompt
     assert 'Do not end with phrases like "That is why..." or "People remember..."' in prompt
     assert "must open with" not in prompt
+
+
+def test_illustrated_bridge_test_prompt_uses_six_named_bridge_forms() -> None:
+    topic = TopicChoice(
+        bucket="architecture",
+        topic="bridges",
+        visual_queries=["bridges", "bridge load paths"],
+        search_terms=["bridge types"],
+    )
+
+    prompt = build_long_chapter_plan_prompt(topic, 90, visual_style="illustrated_explainer")
+
+    for name in ("Beam Bridge", "Arch Bridge", "Truss Bridge", "Suspension Bridge", "Cable-Stayed Bridge", "Cantilever Bridge"):
+        assert name in prompt
+    assert "not general chapters about materials" in prompt
+
+
+def test_illustrated_test_prompt_calculates_duration_word_budget() -> None:
+    topic = TopicChoice(
+        bucket="architecture",
+        topic="bridges",
+        visual_queries=["bridges", "bridge load paths"],
+        search_terms=["bridge types"],
+    )
+
+    prompt = build_long_content_generation_prompt(
+        topic,
+        [],
+        target_duration_seconds=90,
+        chapter_subjects=["Beam Bridge", "Arch Bridge", "Truss Bridge", "Suspension Bridge", "Cable-Stayed Bridge", "Cantilever Bridge"],
+        visual_style="illustrated_explainer",
+        target_speech_rate_wpm=150,
+    )
+
+    assert "target 225 total" in prompt
+    assert "acceptable total of 185-265 words" in prompt
+    assert "Write 32-41 words in EACH" in prompt
+    assert "do not pad or repeat" in prompt

@@ -10,6 +10,7 @@ from youtube_kanaal.services.kokoro_service import KokoroService
 from youtube_kanaal.services.chatterbox_service import ChatterboxService
 from youtube_kanaal.services.ollama_service import OllamaService
 from youtube_kanaal.services.pexels_service import PexelsService
+from youtube_kanaal.services.macos_say_service import MacOSSayService
 from youtube_kanaal.services.piper_service import PiperService
 from youtube_kanaal.services.xtts_service import XTTSService
 from youtube_kanaal.utils.files import is_writable_directory
@@ -32,6 +33,8 @@ class DoctorService:
             narration_details = "xtts with Piper fallback"
         if self.settings.narration_engine == "chatterbox" and self.settings.chatterbox_fallback_to_piper:
             narration_details = "chatterbox with Piper fallback"
+        if self.settings.narration_engine == "macos_say":
+            narration_details = f"macOS say, voice={self.settings.macos_say_voice}, rate={self.settings.macos_say_rate}"
         checks = [
             self._python_check(),
             self._binary_check("FFmpeg", self.settings.ffmpeg_binary),
@@ -68,9 +71,26 @@ class DoctorService:
             return self._xtts_checks()
         if self.settings.narration_engine == "chatterbox":
             return self._chatterbox_checks()
+        if self.settings.narration_engine == "macos_say":
+            return self._macos_say_checks()
         return [
             self._binary_check("Piper", self.settings.piper_binary),
             self._piper_voice_check(),
+        ]
+
+    def _macos_say_checks(self) -> list[DoctorCheck]:
+        ready, reason = MacOSSayService(self.settings).runtime_ready()
+        return [
+            DoctorCheck(
+                name="macOS say",
+                status="ok" if ready else "fail",
+                details=(
+                    f"voice={self.settings.macos_say_voice}, rate={self.settings.macos_say_rate}"
+                    if ready
+                    else reason or "The selected macOS voice is unavailable."
+                ),
+                action=None if ready else "Select an installed macOS say voice with MACOS_SAY_VOICE.",
+            )
         ]
 
     def _binary_check(self, label: str, command: str) -> DoctorCheck:

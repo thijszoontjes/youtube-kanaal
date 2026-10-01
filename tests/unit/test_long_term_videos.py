@@ -4,8 +4,10 @@ import json
 from pathlib import Path
 
 import pytest
+import typer
 
 from youtube_kanaal.cli import app
+from youtube_kanaal.cli import _preflight_long_pipeline_requirements
 from youtube_kanaal.models import GeneratedLongVideo, ImageAsset, LongRunRequest, TOPIC_CATALOG, TopicChoice
 from youtube_kanaal.prompts import (
     build_long_chapter_plan_prompt,
@@ -23,11 +25,24 @@ from youtube_kanaal.pipelines.long_pipeline import LongPipeline, _theme_buckets_
 def test_long_run_request_accepts_one_minute_test_and_thumbnail(tmp_path: Path) -> None:
     thumbnail = tmp_path / "thumbnail.png"
     thumbnail.write_bytes(b"thumbnail")
+    script = tmp_path / "script.json"
+    script.write_text("{}", encoding="utf-8")
 
-    request = LongRunRequest(test_duration_seconds=60, thumbnail_path=thumbnail)
+    request = LongRunRequest(test_duration_seconds=60, thumbnail_path=thumbnail, script_path=script)
 
     assert request.test_duration_seconds == 60
     assert request.thumbnail_path == thumbnail.resolve()
+    assert request.script_path == script.resolve()
+
+
+def test_long_run_request_limits_script_override_to_local_tests(tmp_path: Path) -> None:
+    script = tmp_path / "script.json"
+    script.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="local long-form test"):
+        LongRunRequest(script_path=script, upload=True, test_duration_seconds=90)
+    with pytest.raises(ValueError, match="local long-form test"):
+        LongRunRequest(script_path=script)
 
 
 def test_long_prompt_has_separate_one_minute_profile() -> None:
@@ -44,6 +59,166 @@ def test_long_prompt_has_separate_one_minute_profile() -> None:
     assert "220-250 words" in prompt
     assert "8:30 to 11:00" in prompt
     assert '"intro"' in prompt
+
+
+def test_illustrated_prompt_tracks_requested_duration_and_uses_structured_diagrams() -> None:
+    topic = TopicChoice(
+        bucket="architecture",
+        topic="bridges",
+        visual_queries=["bridge structure", "bridge load path"],
+        search_terms=["bridge structure"],
+    )
+    prompt = build_long_content_generation_prompt(
+        topic,
+        [],
+        target_duration_seconds=90,
+        visual_style="illustrated_explainer",
+        verified_source_notes=[
+            {
+                "title": "Bridge forms",
+                "publisher": "Civil engineers",
+                "url": "https://example.org/bridges",
+                "supports": "Basic bridge structures and load paths.",
+                "checked_at": "2026-10-01",
+            }
+        ],
+    )
+
+    assert "Target about 225 narration words total for 90 seconds" in prompt
+    assert '"visual_plan"' in prompt
+    assert "Checked source notes" in prompt
+    assert "Pexels-friendly visual search queries" not in prompt
+    assert "no exhaustive promise" in prompt
+    assert "no generic icon rows" in prompt.lower()
+
+
+def test_illustrated_chapter_plan_allows_mechanisms_and_components() -> None:
+    topic = TopicChoice(
+        bucket="architecture",
+        topic="bridges",
+        visual_queries=["bridge structure", "bridge load path"],
+        search_terms=["bridge structure"],
+    )
+
+    prompt = build_long_chapter_plan_prompt(topic, 90, visual_style="illustrated_explainer")
+
+    assert "distinct explanatory components, steps, or mechanisms" in prompt
+    assert "different named members" not in prompt
+    assert "causal relationships" in prompt
+
+
+def test_illustrated_normalization_preserves_script_and_verified_source_notes() -> None:
+    topic = TopicChoice(
+        bucket="architecture",
+        topic="bridges",
+        visual_queries=["bridge structure", "bridge load path"],
+        search_terms=["bridge structure"],
+    )
+    subjects = ["Beam bridge", "Arch bridge", "Truss bridge", "Cantilever bridge", "Cable-stayed bridge", "Suspension bridge"]
+    section_text = (
+        "transfers traffic from its deck into supports and then into the ground. "
+        "That load path explains why its structure uses these parts, and what changes when the span grows."
+    )
+    sections = [
+        {
+            "chapter_subject": subject,
+            "title": subject,
+            "narration": f"{subject} {section_text}",
+            "visual_queries": [f"{subject} structure", f"{subject} load path"],
+            "visual_plan": {
+                "kind": "bridge",
+                "variant": subject.removesuffix(" bridge").casefold(),
+                "elements": ["deck", "supports", "ground"],
+                "relation": "The deck sends load through the supports to the ground.",
+            },
+        }
+        for subject in subjects
+    ]
+    content = GeneratedLongVideo(
+        bucket="architecture",
+        topic="bridges",
+        title="Six bridge forms and how their load paths work",
+        thumbnail_text="BRIDGE LOAD PATHS",
+        description="A compact explanation of six bridge forms, with each section following a specific path from the road deck through structural members and supports into the ground.",
+        intro="Why can the same road be held up in such different ways?",
+        tags=["bridges", "architecture", "engineering", "structures", "design", "physics", "education", "explainer"],
+        sections=sections,
+        facts=[f"Bridge fact {index} describes a distinct structural relationship." for index in range(1, 7)],
+        duration_profile="test",
+    )
+    source = {
+        "title": "Bridge forms",
+        "publisher": "Civil engineers",
+        "url": "https://example.org/bridges",
+        "supports": "Basic forms and load paths for common bridges.",
+        "checked_at": "2026-10-01",
+    }
+
+    normalized = OllamaService(load_settings())._normalize_generated_long(
+        content,
+        topic,
+        chapter_subjects=subjects,
+        target_duration_seconds=90,
+        visual_style="illustrated_explainer",
+        verified_source_notes=[source],
+    )
+
+    assert normalized.narration == content.narration
+    assert normalized.sources[0].url == source["url"]
+    assert all(section.visual_plan.relation for section in normalized.sections)
+    assert "the bigger picture" not in normalized.narration.lower()
+
+
+def test_illustrated_preflight_does_not_require_pexels(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from youtube_kanaal.models import DoctorCheck, DoctorReport
+
+    report = DoctorReport(
+        checks=[DoctorCheck(name="Pexels API key", status="fail", details="missing", action="not used")]
+    )
+    monkeypatch.setattr("youtube_kanaal.cli.DoctorService", lambda _settings: SimpleNamespace(run=lambda: report))
+    monkeypatch.setattr("youtube_kanaal.cli._narration_required_check_names", lambda *_args, **_kwargs: set())
+    monkeypatch.setattr(
+        "youtube_kanaal.cli.NarrationService.inspect",
+        lambda _self, *, engine_override=None: SimpleNamespace(requested_engine=engine_override, resolved_engine=engine_override),
+    )
+
+    _preflight_long_pipeline_requirements(
+        LongRunRequest(test_duration_seconds=90, visual_style="illustrated_explainer"),
+        load_settings(long_narration_engine="piper"),
+    )
+
+    with pytest.raises(typer.Exit):
+        _preflight_long_pipeline_requirements(
+            LongRunRequest(test_duration_seconds=90, visual_style="photo"),
+            load_settings(long_narration_engine="piper"),
+        )
+
+
+def test_illustrated_preflight_rejects_unavailable_macos_say_voice(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from youtube_kanaal.models import DoctorReport
+
+    report = DoctorReport(checks=[])
+    monkeypatch.setattr("youtube_kanaal.cli.DoctorService", lambda _settings: SimpleNamespace(run=lambda: report))
+    monkeypatch.setattr("youtube_kanaal.cli._narration_required_check_names", lambda *_args, **_kwargs: {"macOS say"})
+    monkeypatch.setattr(
+        "youtube_kanaal.cli.NarrationService.inspect",
+        lambda _self, *, engine_override=None: SimpleNamespace(
+            requested_engine=engine_override,
+            resolved_engine=engine_override,
+            macos_say_ready=False,
+            macos_say_reason="macOS say voice 'Alex' is not installed.",
+        ),
+    )
+
+    with pytest.raises(typer.Exit):
+        _preflight_long_pipeline_requirements(
+            LongRunRequest(test_duration_seconds=90, visual_style="illustrated_explainer"),
+            load_settings(long_narration_engine="macos_say"),
+        )
 
 
 def test_long_prompt_requires_specific_subtopics_and_visual_consistency() -> None:
@@ -400,6 +575,13 @@ def test_cli_make_long_test_renders_local_one_minute_package(cli_runner, configu
     assert not (run_dir / "responses").exists()
     cleanup = json.loads((run_dir / "metadata" / "media_cleanup.json").read_text(encoding="utf-8"))
     assert cleanup["cleaned"] is True
+
+
+def test_make_long_test_help_exposes_reviewed_script_option(cli_runner) -> None:
+    result = cli_runner.invoke(app, ["make-long-test", "--help"])
+
+    assert result.exit_code == 0
+    assert "--script-path" in result.stdout
 
 
 def test_mock_long_form_uses_photo_assets(configured_env) -> None:

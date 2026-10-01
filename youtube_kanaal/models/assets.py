@@ -17,6 +17,9 @@ class SubtitleAsset(BaseModel):
     srt_path: Path
     vtt_path: Path | None = None
     ass_path: Path | None = None
+    alignment_source: str = "unknown"
+    transcript_similarity: float | None = Field(default=None, ge=0, le=1)
+    transcript_word_count: int | None = Field(default=None, ge=0)
 
 
 class SoundDesignAsset(BaseModel):
@@ -50,8 +53,8 @@ class VideoClipAsset(BaseModel):
 class ImageAsset(BaseModel):
     source_id: str
     query: str
-    source_url: str
-    download_url: str
+    source_url: str | None = None
+    download_url: str | None = None
     local_path: Path
     width: int = Field(ge=1)
     height: int = Field(ge=1)
@@ -70,6 +73,7 @@ class ImageAsset(BaseModel):
 class AssetPlanSegment(BaseModel):
     clip_path: Path
     duration_seconds: float = Field(ge=0.5)
+    start_seconds: float = Field(default=0.0, ge=0)
     reason: str
     start_offset_seconds: float = Field(default=0.0, ge=0)
     beat_index: int = Field(default=0, ge=0)
@@ -83,6 +87,12 @@ class AssetPlanSegment(BaseModel):
     narration_fragment: str = ""
     visual_type: Literal["overview", "photo", "transition", "diagram", "broll"] = "photo"
     asset_id: str | None = None
+    diagram_kind: Literal["bridge", "flow", "comparison", "timeline", "mechanism"] = "mechanism"
+    diagram_variant: str = ""
+    diagram_phase: Literal["structure", "load_path"] = "structure"
+    diagram_labels: list[str] = Field(default_factory=list, max_length=5)
+    diagram_relation: str = Field(default="", max_length=120)
+    motion_kind: Literal["none", "reveal", "pointer", "slow_push", "pan"] = "none"
     focus_x: float = Field(default=0.5, ge=0.0, le=1.0)
     focus_y: float = Field(default=0.5, ge=0.0, le=1.0)
     motion: bool = True

@@ -99,6 +99,9 @@ class Settings(BaseSettings):
         default=True,
         validation_alias=AliasChoices("KOKORO_FALLBACK_TO_PIPER"),
     )
+    macos_say_binary: str = Field(default="say", validation_alias=AliasChoices("MACOS_SAY_BINARY"))
+    macos_say_voice: str = Field(default="Samantha", validation_alias=AliasChoices("MACOS_SAY_VOICE"))
+    macos_say_rate: int = Field(default=150, ge=80, le=250, validation_alias=AliasChoices("MACOS_SAY_RATE"))
     piper_binary: str = Field(default="piper", validation_alias=AliasChoices("PIPER_BINARY"))
     piper_voice_model_path: Path | None = Field(
         default=None,
@@ -319,8 +322,16 @@ class Settings(BaseSettings):
     @classmethod
     def _validate_narration_engine(cls, value: str) -> str:
         normalized = value.strip().lower()
-        if normalized not in {"kokoro", "piper", "xtts", "chatterbox"}:
-            raise ValueError("Narration engines must be kokoro, piper, xtts, or chatterbox.")
+        if normalized not in {"kokoro", "piper", "xtts", "chatterbox", "macos_say"}:
+            raise ValueError("Narration engines must be kokoro, piper, xtts, chatterbox, or macos_say.")
+        return normalized
+
+    @field_validator("macos_say_binary", "macos_say_voice")
+    @classmethod
+    def _normalize_macos_say_string(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("macOS say settings must not be empty.")
         return normalized
 
     @field_validator("kokoro_lang_code", "kokoro_device")

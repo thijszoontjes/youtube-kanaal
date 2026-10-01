@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+from difflib import SequenceMatcher
 from pathlib import Path
 
 from youtube_kanaal.config import Settings
@@ -12,7 +14,7 @@ from youtube_kanaal.utils.subtitles import (
     build_ass_from_srt_text,
     build_timed_subtitles,
     build_vtt_from_srt_text,
-    normalize_whisper_srt,
+    parse_srt_text,
     split_subtitle_lines,
 )
 
@@ -78,7 +80,13 @@ class WhisperService:
                     play_res_y=style["play_res_y"],
                 ),
             )
-            return SubtitleAsset(srt_path=srt_path, vtt_path=vtt_path, ass_path=ass_path)
+            return SubtitleAsset(
+                srt_path=srt_path,
+                vtt_path=vtt_path,
+                ass_path=ass_path,
+                alignment_source="mock_timing_from_script",
+                transcript_word_count=len(subtitle_text.split()),
+            )
 
         if not self.settings.whisper_model_path:
             raise ConfigurationError("WHISPER_MODEL_PATH is required for real subtitle generation.")
@@ -111,11 +119,26 @@ class WhisperService:
                 probable_cause="Check whisper binary arguments and model path.",
             )
         raw_srt_text = srt_path.read_text(encoding="utf-8")
-        normalized_srt_text = (
-            normalize_whisper_srt(raw_srt_text)
-            if is_long
-            else align_script_to_reference_srt(raw_srt_text, subtitle_text)
+        recognized_text = " ".join(cue.text.replace("\n", " ") for cue in parse_srt_text(raw_srt_text))
+        normalize_words = lambda value: re.findall(r"[a-z0-9]+", value.casefold())
+        recognized_words = normalize_words(recognized_text)
+        script_words = normalize_words(subtitle_text)
+        transcript_similarity = (
+            SequenceMatcher(None, recognized_words, script_words, autojunk=False).ratio()
+            if recognized_words and script_words
+            else 0.0
         )
+        if is_long and transcript_similarity < 0.78:
+            raise PipelineStageError(
+                stage="subtitle_generation",
+                message="Whisper transcription does not reliably match the generated narration.",
+                probable_cause=(
+                    f"Recognized {len(recognized_words)} words against {len(script_words)} script words; "
+                    f"sequence similarity was {transcript_similarity:.2f}. Captions were not fabricated from the script."
+                ),
+                details_path=srt_path,
+            )
+        normalized_srt_text = align_script_to_reference_srt(raw_srt_text, subtitle_text)
         write_text(srt_path, normalized_srt_text)
         write_text(vtt_path, build_vtt_from_srt_text(normalized_srt_text))
         write_text(
@@ -138,4 +161,11 @@ class WhisperService:
                 beat_overlays=beat_overlays,
             ),
         )
-        return SubtitleAsset(srt_path=srt_path, vtt_path=vtt_path if vtt_path.exists() else None, ass_path=ass_path)
+        return SubtitleAsset(
+            srt_path=srt_path,
+            vtt_path=vtt_path if vtt_path.exists() else None,
+            ass_path=ass_path,
+            alignment_source="script_aligned_to_whisper_timings",
+            transcript_similarity=transcript_similarity,
+            transcript_word_count=len(recognized_words),
+        )

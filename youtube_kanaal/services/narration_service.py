@@ -8,6 +8,7 @@ from youtube_kanaal.config import Settings
 from youtube_kanaal.exceptions import PipelineStageError
 from youtube_kanaal.services.chatterbox_service import ChatterboxService
 from youtube_kanaal.services.kokoro_service import KokoroService
+from youtube_kanaal.services.macos_say_service import MacOSSayService
 from youtube_kanaal.services.piper_service import PiperService
 from youtube_kanaal.services.xtts_service import XTTSService
 
@@ -26,6 +27,8 @@ class NarrationInspection:
     chatterbox_reason: str | None = None
     piper_ready: bool = False
     piper_reason: str | None = None
+    macos_say_ready: bool = False
+    macos_say_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -61,12 +64,14 @@ class NarrationService:
         piper_service: PiperService | None = None,
         xtts_service: XTTSService | None = None,
         chatterbox_service: ChatterboxService | None = None,
+        macos_say_service: MacOSSayService | None = None,
     ) -> None:
         self.settings = settings
         self.kokoro = kokoro_service or KokoroService(settings)
         self.piper = piper_service or PiperService(settings)
         self.xtts = xtts_service or XTTSService(settings)
         self.chatterbox = chatterbox_service or ChatterboxService(settings)
+        self.macos_say = macos_say_service or MacOSSayService(settings)
 
     def inspect(
         self,
@@ -85,6 +90,18 @@ class NarrationService:
                 kokoro_reason=kokoro_reason,
                 piper_ready=piper_ready,
                 piper_reason=piper_reason,
+            )
+        if requested_engine == "macos_say":
+            macos_say_ready, macos_say_reason = self.macos_say.runtime_ready()
+            return NarrationInspection(
+                requested_engine=requested_engine,
+                resolved_engine="macos_say",
+                kokoro_ready=kokoro_ready,
+                kokoro_reason=kokoro_reason,
+                piper_ready=piper_ready,
+                piper_reason=piper_reason,
+                macos_say_ready=macos_say_ready,
+                macos_say_reason=macos_say_reason,
             )
         if requested_engine == "kokoro":
             fallback_reason = None if kokoro_ready else kokoro_reason or "Kokoro runtime is not ready."
@@ -198,6 +215,15 @@ class NarrationService:
                 ),
                 probable_cause=inspection.fallback_reason or "The configured long-form voice runtime is not ready.",
             )
+        if inspection.resolved_engine == "macos_say":
+            if not inspection.macos_say_ready:
+                raise PipelineStageError(
+                    stage="narration_generation",
+                    message="The selected macOS say voice is not ready.",
+                    probable_cause=inspection.macos_say_reason or "The native say runtime did not pass its check.",
+                )
+            self.macos_say.synthesize(text=text, output_path=output_path, logger=logger)
+            return NarrationSynthesisResult(output_path=output_path, inspection=inspection)
         if inspection.resolved_engine == "kokoro":
             try:
                 if beats and hasattr(self.kokoro, "synthesize_beats"):

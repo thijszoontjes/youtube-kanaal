@@ -17,6 +17,7 @@ def build_topic_selection_prompt(
     excluded_topics: list[str],
     preferred_buckets: list[str] | None = None,
     long_form: bool = False,
+    visual_style: str = "photo",
 ) -> str:
     catalog_lines = []
     for bucket, topics in TOPIC_SELECTION_CATALOG.items():
@@ -27,11 +28,15 @@ def build_topic_selection_prompt(
         if preferred_buckets
         else ""
     )
-    long_form_line = (
-        "- This is a long-form collection video: choose a category, ranking, comparison, or plural topic that naturally contains at least 7 distinct named members. Reject a single species, person, place, or object when it cannot support different members per chapter.\n"
-        if long_form
-        else ""
-    )
+    if long_form and visual_style == "illustrated_explainer":
+        long_form_line = "- Choose one bounded explainer topic with several clearly different mechanisms, components, or causal relationships that can be drawn as original diagrams.\n"
+        visual_line = "- Prefer topics whose important relationships are visible in a diagram; stock footage is not required.\n"
+    elif long_form:
+        long_form_line = "- This is a long-form collection video: choose a category, ranking, comparison, or plural topic that naturally contains at least 7 distinct named members. Reject a single species, person, place, or object when it cannot support different members per chapter.\n"
+        visual_line = "- The topic must be recognizable in the first second and have literal visual proof available as stock footage.\n"
+    else:
+        long_form_line = ""
+        visual_line = "- The topic must be recognizable in the first second and have literal visual proof available as stock footage.\n"
     return dedent(
         f"""
         You are generating safe, visual YouTube topics.
@@ -49,9 +54,9 @@ def build_topic_selection_prompt(
         {long_form_line}
         - Avoid recent topics: {excluded_line}
         - Pick a topic with one clear surprise, contradiction, mystery, comparison, or visible transformation.
-        - The topic must be recognizable in the first second and have literal visual proof available as stock footage.
-        - Reject topics that would require generic unrelated b-roll to explain.
-        - visual_queries are fallback topic searches only; final stock footage queries are generated later from the finished facts.
+        {visual_line}
+        - Reject topics that would require generic unrelated visuals to explain.
+        - visual_queries are concise visual cues; photo-profile runs may use them for stock searches.
         - Return strict JSON only.
 
         JSON schema:
@@ -199,18 +204,50 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
 def build_long_chapter_plan_prompt(
     topic: TopicChoice,
     target_duration_seconds: int | None = None,
+    visual_style: str = "photo",
 ) -> str:
     chapter_count = "exactly 6" if target_duration_seconds is not None else "7-9"
     example_count = 6 if target_duration_seconds is not None else 7
-    subject_examples = ", ".join(f'"<member {index}>"' for index in range(1, example_count + 1))
+    bridge_test = (
+        visual_style == "illustrated_explainer"
+        and target_duration_seconds is not None
+        and topic.topic.strip().casefold() == "bridges"
+    )
+    bridge_subjects = (
+        "Beam Bridge",
+        "Arch Bridge",
+        "Truss Bridge",
+        "Suspension Bridge",
+        "Cable-Stayed Bridge",
+        "Cantilever Bridge",
+    )
+    subject_examples = ", ".join(
+        f'"{subject}"' for subject in bridge_subjects
+    ) if bridge_test else ", ".join(f'"<member {index}>"' for index in range(1, example_count + 1))
+    chapter_rules = (
+        "- Cover six different bridge forms in this exact order: beam, arch, truss, suspension, cable-stayed, and cantilever. Return the exact labels Beam Bridge, Arch Bridge, Truss Bridge, Suspension Bridge, Cable-Stayed Bridge, and Cantilever Bridge.\n"
+        "        - These are distinct structural systems, not general chapters about materials, foundations, waterways, construction, or maintenance.\n"
+        if bridge_test
+        else ""
+    ) + (
+        "- Return six distinct explanatory components, steps, or mechanisms that together answer one bounded question.\n"
+        "        - Prefer concrete parts and causal relationships that can be drawn; do not invent unrelated members to fill chapters.\n"
+        if visual_style == "illustrated_explainer"
+        else "- Return different named members or items within the umbrella topic. Never return body parts, traits, mechanisms, or attributes of one member.\n"
+        "        - For \"sharks\", choose different shark species such as great white shark, whale shark, hammerhead shark, tiger shark, and goblin shark.\n"
+    )
+    subject_descriptor = (
+        "distinct explanatory components, steps, or mechanisms"
+        if visual_style == "illustrated_explainer"
+        else "different named members or items"
+    )
     return dedent(
         f"""
-        Choose the chapter subjects for a long-form collection video about {topic.topic}.
+        Choose the chapter subjects for a long-form video about {topic.topic}.
 
         Rules:
-        - Return exactly {chapter_count} different named members or items within the umbrella topic.
-        - Never return body parts, traits, mechanisms, or attributes of one member.
-        - For "sharks", return different shark types such as great white shark, whale shark, hammerhead shark, tiger shark, or goblin shark.
+        - Return {chapter_count} {subject_descriptor} within the umbrella topic.
+        {chapter_rules}
         - Keep every subject short, concrete, visually searchable, and different from the others.
         - Return strict JSON only.
 
@@ -225,28 +262,126 @@ def build_long_content_generation_prompt(
     excluded_titles: list[str],
     target_duration_seconds: int | None = None,
     chapter_subjects: list[str] | None = None,
+    visual_style: str = "photo",
+    target_speech_rate_wpm: float = 150.0,
+    production_duration_seconds: int | None = None,
+    verified_source_notes: list[dict[str, str]] | None = None,
 ) -> str:
     excluded = ", ".join(excluded_titles[-20:]) if excluded_titles else "None"
-    duration_instructions = (
-        "- duration_profile must be \"test\".\n"
-        "        - Include exactly 6 short chapters.\n"
-        "        - Each section narration should be 34-38 words.\n"
-        "        - Total narration should be 220-250 words for a roughly 1-minute render at a relaxed pace."
-        if target_duration_seconds is not None
-        else "- duration_profile must be \"long\".\n"
-        "        - Include 7-9 chapters. Choose the number that fits the topic naturally.\n"
-        "        - Each section narration should be 315-390 words.\n"
-        "        - Total narration should be 2200-3500 words for an 8:30-11:00 render at a relaxed pace."
+    illustrated = visual_style == "illustrated_explainer"
+    target_speech_rate_wpm = max(70.0, min(target_speech_rate_wpm, 240.0))
+    intro_schema = "<about 8-18 spoken words so the first explanation starts within five seconds>" if illustrated else "<20-35 spoken words: at most two short sentences that begin directly with the exact topic>"
+    if target_duration_seconds is not None:
+        if illustrated:
+            total_target_words = round(target_duration_seconds * target_speech_rate_wpm / 60)
+            total_word_tolerance = max(24, round(total_target_words * 0.18))
+            intro_target_words = min(18, max(8, round(target_speech_rate_wpm * 5 / 60)))
+            section_target_words = max(15, round((total_target_words - intro_target_words) / 6))
+            minimum_section_words = max(12, section_target_words - 4)
+            maximum_section_words = section_target_words + 5
+            duration_instructions = (
+                '- duration_profile must be "test".\n'
+                "        - Include exactly 6 chapters.\n"
+                f"        - Target about {total_target_words} narration words total for {target_duration_seconds} seconds at {target_speech_rate_wpm:.0f} words per minute, measured from the selected TTS when available.\n"
+                f"        - Write {minimum_section_words}-{maximum_section_words} words in EACH of the six section narration fields, plus an intro of about {intro_target_words} words. Aim for the center of each range.\n"
+                f"        - Before returning JSON, count the spoken words: target {total_target_words} total, with an acceptable total of {total_target_words - total_word_tolerance}-{total_target_words + total_word_tolerance} words.\n"
+                "        - Use complete, concise explanations; do not pad or repeat content to hit the estimate."
+            )
+        else:
+            duration_instructions = (
+                '- duration_profile must be "test".\n'
+                "        - Include exactly 6 short chapters.\n"
+                "        - Each section narration should be 34-38 words.\n"
+                "        - Total narration should be 220-250 words for a roughly 1-minute render at a relaxed pace."
+            )
+    else:
+        if illustrated:
+            target_words = round(production_duration_seconds * target_speech_rate_wpm / 60) if production_duration_seconds else None
+            duration_instructions = (
+                '- duration_profile must be "long".\n'
+                "        - Include 7-9 chapters. Choose the number that fits the topic naturally.\n"
+                + (
+                    f"        - Target about {target_words} narration words for the configured {production_duration_seconds}-second target at {target_speech_rate_wpm:.0f} words per minute.\n"
+                    if target_words
+                    else "        - Target narration length from the configured video duration at the selected engine's measured speaking rate.\n"
+                )
+                + "        - Keep every chapter concise and information-dense; never add filler to reach a word count."
+            )
+        else:
+            duration_instructions = (
+                '- duration_profile must be "long".\n'
+                "        - Include 7-9 chapters. Choose the number that fits the topic naturally.\n"
+                "        - Each section narration should be 315-390 words.\n"
+                "        - Total narration should be 2200-3500 words for an 8:30 to 11:00-minute render at a relaxed pace."
+            )
+    photo_production_note = (
+        "- Existing photo-profile production target: 8:30 to 11:00 minutes.\n"
+        if not illustrated
+        else ""
     )
     subject_instructions = (
         f"- Use exactly these chapter_subject values in this order: {', '.join(chapter_subjects)}. Do not replace them with body parts, traits, or generic categories.\n"
         if chapter_subjects
         else ""
     )
+    source_context = ""
+    source_schema = ""
+    if illustrated:
+        source_lines = [
+            f"- [{index}] {source.get('title', '')} ({source.get('publisher', '')}): {source.get('supports', '')} URL: {source.get('url', '')}"
+            for index, source in enumerate(verified_source_notes or [], start=1)
+        ]
+        source_context = (
+            "\n        Checked source notes (limited to this topic):\n        "
+            + ("\n        ".join(source_lines) if source_lines else "No sources were supplied; avoid specific unsupported claims.")
+        )
+        source_schema = (
+            ',\n          "sources": [{"title": "<supplied title>", "publisher": "<supplied publisher>", '
+            '"url": "<supplied URL>", "supports": "<supplied scope>", "checked_at": "<supplied date>"}]'
+        )
+    chapter_rules = (
+        "- Sections are connected explanatory steps or distinct components that answer one bounded question; mechanisms and relationships are valid chapter subjects.\n"
+        "        - Do not force a collection of unrelated members. Each section explains one distinct idea with a concrete example and a useful consequence.\n"
+        "        - Begin the first spoken explanation immediately after the short hook; do not speak a roadmap. End with one complete, evidence-based conclusion."
+        if illustrated
+        else "- Long-form is always a collection structure: every chapter must have a unique concrete chapter_subject that is a different named member or item within the umbrella topic.\n"
+        "        - For collection, ranking, comparison, plural, or \"largest/most/dangerous/easiest\" topics, use different members in every chapter. For example, \"sharks\" means great white shark, whale shark, hammerhead shark, tiger shark, and goblin shark; it does not mean teeth, jaws, speed, or other attributes of sharks.\n"
+        "        - Never split one entity into multiple attribute chapters. If the selected topic is too narrow to contain distinct members, broaden it into the nearest natural collection before writing the chapters.\n"
+        "        - Good chapter subjects are \"great white shark\", \"whale shark\", and \"hammerhead shark\" in a shark video, or \"vitamin D\", \"zinc\", and \"iron\" in a deficiency video.\n"
+        "        - Treat every chapter as a separate block in the opening overview tiles. Use the exact short member label, such as \"GREAT WHITE SHARK\", \"WHALE SHARK\", or \"VITAMIN D\".\n"
+        "        - Use the topic's natural structure to choose the blocks yourself; the examples above are only examples, never fixed chapter data.\n"
+        "        - Do not use generic chapter subjects such as \"the bigger picture\", \"health effects\", \"the science\", or \"other details\".\n"
+        "        - The chapter title, narration, and first visual query must name the same specific member or item.\n"
+        "        - The chapter title must be the same short subject label as chapter_subject, and the narration must begin by naming that subject.\n"
+        "        - Stay on that one member or item for the entire chapter; do not introduce the next member before the chapter ends.\n"
+        "        - Each chapter must answer a distinct question, use a concrete example, and end with a useful conclusion.\n"
+        "        - Spend most of each chapter explaining WHY that member or item behaves that way or matters; do not turn the chapter into a list of body parts, traits, or unrelated facts."
+    )
+    title_guidance = (
+        "- Use a precise, natural title that names the subject and makes no exhaustive promise unless the video truly covers every member. No mandatory all-caps or clickbait framing.\n"
+        "        - thumbnail_text is a short, readable label, not a sensational claim."
+        if illustrated
+        else "- The title should state the exact topic naturally and create curiosity without lying or overpromising. Informative forms such as \"These Are the Easiest Muscles to Grow\" are valid.\n"
+        "        - Treat the title as the main click decision. Prefer a clear tension pattern such as \"What Would Happen If...\", \"The Most Disturbing...\", \"Every... Explained\", \"The Worst... in History\", or \"Why... Is More Dangerous Than...\" when it fits the exact topic.\n"
+        "        - Never use a bland list title such as \"Interesting Facts About...\", \"The History of...\", or \"Everything About...\".\n"
+        "        - Use full ALL CAPS for some titles, and use ALL CAPS emphasis words in others; do not make every title all caps.\n"
+        "        - Never use \"Visual Guide\", \"X Explained\", or \"long-form\" in the title.\n"
+        "        - thumbnail_text must be short, punchy, ALL CAPS, mobile-readable, and clickbait-curious without lying.\n"
+        "        - Make thumbnail_text visually different from the title; use 2-4 big words, not a sentence.\n"
+        "        - Good thumbnail_text examples: \"WAIT WHAT?\", \"HIDDEN TRUTH\", \"THIS IS WRONG\", \"NOBODY SEES THIS\", \"THEY HID THIS\"."
+    )
+    visual_guidance = (
+        "- For every section, return a visual_plan with kind, variant, 2-5 concrete elements, and a short relation explaining how they connect. Use kinds bridge, flow, comparison, timeline, or mechanism.\n"
+        "        - Plans must describe objects, cross-sections, load paths, causes, or relationships that match the narration. No generic icon rows, text-only cards, or unrelated stock-photo ideas.\n"
+        "        - Keep label text short and safe; do not include instructions or code in a visual_plan.\n"
+        "        - Do not imitate any reference channel's exact characters, thumbnail layout, lettering, palette, or branding."
+        if illustrated
+        else "- Every section needs 2-5 Pexels-friendly visual search queries for the same specific subtopic.\n"
+        "        - Put the strongest literal search query first; never put the broad video topic first in a section's visual_queries."
+    )
     return dedent(
         f"""
-        Write a long-form YouTube video package in the same fast, curious, visual fact-explainer style as the Shorts,
-        but expanded into a naturally paced 8:30 to 11:00 minute video.
+        Write an original long-form YouTube explainer package with a clear curiosity hook and concrete visual explanations.
 
         Topic:
         - Bucket: {topic.bucket}
@@ -261,33 +396,16 @@ def build_long_content_generation_prompt(
         - Move straight into the first chapter after the intro. Do not give a roadmap or explain what the viewer will see.
         - Avoid filler such as "in this video", "join us on a journey", "follow the clues", or "chapter by chapter".
         - Every chapter must focus on one specific named member, item, character, nutrient, object, or mechanism.
-        - Long-form is always a collection structure: every chapter must have a unique concrete chapter_subject that is a different named member or item within the umbrella topic.
-        - For collection, ranking, comparison, plural, or "largest/most/dangerous/easiest" topics, use different members in every chapter. For example, "sharks" means great white shark, whale shark, hammerhead shark, tiger shark, and goblin shark; it does not mean teeth, jaws, speed, or other attributes of sharks.
-        - Never split one entity into multiple attribute chapters. If the selected topic is too narrow to contain distinct members, broaden it into the nearest natural collection before writing the chapters.
-        - Good chapter subjects are "great white shark", "whale shark", and "hammerhead shark" in a shark video, or "vitamin D", "zinc", and "iron" in a deficiency video.
-        - Treat every chapter as a separate block in the opening overview tiles. Use the exact short member label, such as "GREAT WHITE SHARK", "WHALE SHARK", or "VITAMIN D".
-        - Use the topic's natural structure to choose the blocks yourself; the examples above are only examples, never fixed chapter data.
-        - Do not use generic chapter subjects such as "the bigger picture", "health effects", "the science", or "other details".
-        - The chapter title, narration, and first visual query must name the same specific member or item.
-        - The chapter title must be the same short subject label as chapter_subject, and the narration must begin by naming that subject.
-        - Stay on that one member or item for the entire chapter; do not introduce the next member before the chapter ends.
-        - Each chapter must answer a distinct question, use a concrete example, and end with a useful conclusion.
-        - Spend most of each chapter explaining WHY that member or item behaves that way or matters; do not turn the chapter into a list of body parts, traits, or unrelated facts.
+        {chapter_rules}
         - Every sentence must add a new point. Never repeat a sentence, paragraph, conclusion, or filler phrase to reach the word count.
         - The final chapter should answer the opening question without repeating every chapter.
         - Write claims conservatively. Do not invent citations, studies, numbers, or sources.
+        {source_context}
         {duration_instructions}
+        {photo_production_note}
         - Mention {topic.topic} early.
-        - The title should state the exact topic naturally and create curiosity without lying or overpromising. Informative forms such as "These Are the Easiest Muscles to Grow" are valid.
-        - Treat the title as the main click decision. Prefer a clear tension pattern such as "What Would Happen If...", "The Most Disturbing...", "Every... Explained", "The Worst... in History", or "Why... Is More Dangerous Than..." when it fits the exact topic.
-        - Never use a bland list title such as "Interesting Facts About...", "The History of...", or "Everything About...".
-        - Use full ALL CAPS for some titles, and use ALL CAPS emphasis words in others; do not make every title all caps.
-        - Never use "Visual Guide", "X Explained", or "long-form" in the title.
-        - thumbnail_text must be short, punchy, ALL CAPS, mobile-readable, and clickbait-curious without lying.
-        - Make thumbnail_text visually different from the title; use 2-4 big words, not a sentence.
-        - Good thumbnail_text examples: "WAIT WHAT?", "HIDDEN TRUTH", "THIS IS WRONG", "NOBODY SEES THIS", "THEY HID THIS".
-        - Every section needs 2-5 Pexels-friendly visual search queries for the same specific subtopic.
-        - Put the strongest literal search query first; never put the broad video topic first in a section's visual_queries.
+        {title_guidance}
+        {visual_guidance}
         - Generate 8-20 tags without # symbols.
         - Facts must be complete sentences and distinct.
         - Avoid title similarity to these recent titles: {excluded}
@@ -300,7 +418,7 @@ def build_long_content_generation_prompt(
           "duration_profile": "{'test' if target_duration_seconds is not None else 'long'}",
           "title": "<clickable SEO-friendly long-form title>",
           "thumbnail_text": "<2-5 word ALL CAPS thumbnail phrase>",
-          "intro": "<20-35 spoken words: at most two short sentences that begin directly with the exact topic>",
+          "intro": "{intro_schema}",
           "description": "<2-4 paragraph YouTube description>",
           "tags": ["tag 1", "tag 2", "tag 3", "tag 4", "tag 5", "tag 6", "tag 7", "tag 8"],
           "sections": [
@@ -308,10 +426,12 @@ def build_long_content_generation_prompt(
               "chapter_subject": "<one unique named member, component, stage, or mechanism>",
               "title": "<the same short concrete label as chapter_subject>",
               "narration": "<spoken chapter text in the requested word range>",
-              "visual_queries": ["<query 1>", "<query 2>"]
+              "visual_queries": ["<short visual cue 1>", "<short visual cue 2>"],
+              "visual_plan": {{"kind": "<bridge|flow|comparison|timeline|mechanism>", "variant": "<specific structure>", "elements": ["<object>", "<support>", "<result>"], "relation": "<how these parts connect>"}}
             }}
           ],
           "facts": ["<fact sentence 1>", "<fact sentence 2>", "<fact sentence 3>", "<fact sentence 4>", "<fact sentence 5>", "<fact sentence 6>"]
+          {source_schema}
         }}
         """
     ).strip()

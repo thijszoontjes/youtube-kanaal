@@ -61,6 +61,19 @@ def test_settings_accept_chatterbox_narration() -> None:
     assert settings.chatterbox_device == "auto"
 
 
+def test_settings_accept_explicit_macos_say_voice() -> None:
+    settings = Settings(
+        narration_engine="macos_say",
+        long_narration_engine="macos_say",
+        macos_say_voice="Alex",
+        macos_say_rate=150,
+    )
+
+    assert settings.narration_engine == "macos_say"
+    assert settings.macos_say_voice == "Alex"
+    assert settings.macos_say_rate == 150
+
+
 def test_settings_reject_invalid_chatterbox_model() -> None:
     with pytest.raises(ValidationError):
         Settings(chatterbox_model="large")

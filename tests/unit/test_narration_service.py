@@ -113,6 +113,22 @@ class StubChatterboxService:
         return self.synthesize(text=text, output_path=output_path, logger=logger)
 
 
+class StubMacOSSayService:
+    def __init__(self, *, ready: bool = True, reason: str | None = None) -> None:
+        self.ready = ready
+        self.reason = reason
+        self.calls = 0
+
+    def runtime_ready(self) -> tuple[bool, str | None]:
+        return self.ready, self.reason
+
+    def synthesize(self, *, text: str, output_path: Path, logger=None) -> Path:
+        self.calls += 1
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"macOS-say-audio")
+        return output_path
+
+
 def test_narration_service_uses_kokoro_by_default_when_ready() -> None:
     settings = Settings(narration_engine="kokoro")
     kokoro = StubKokoroService(ready=True)
@@ -129,6 +145,52 @@ def test_narration_service_uses_kokoro_by_default_when_ready() -> None:
 
     assert inspection.resolved_engine == "kokoro"
     assert inspection.kokoro_ready is True
+
+
+def test_narration_service_uses_explicit_macos_say_without_fallback(tmp_path) -> None:
+    say = StubMacOSSayService()
+    service = NarrationService(
+        Settings(_env_file=None, long_narration_engine="macos_say"),
+        piper_service=StubPiperService(ready=True),
+        kokoro_service=StubKokoroService(ready=True),
+        xtts_service=StubXTTSService(),
+        chatterbox_service=StubChatterboxService(),
+        macos_say_service=say,
+    )
+
+    result = service.synthesize(
+        text="A real local narration.",
+        output_path=tmp_path / "narration.aiff",
+        long_form=True,
+        engine_override="macos_say",
+    )
+
+    assert result.engine_used == "macos_say"
+    assert result.inspection.macos_say_ready is True
+    assert say.calls == 1
+
+
+def test_narration_service_rejects_unavailable_explicit_macos_say(tmp_path) -> None:
+    say = StubMacOSSayService(ready=False, reason="voice Alex is not installed")
+    piper = StubPiperService(ready=True)
+    service = NarrationService(
+        Settings(_env_file=None, long_narration_engine="macos_say"),
+        piper_service=piper,
+        kokoro_service=StubKokoroService(ready=True),
+        xtts_service=StubXTTSService(),
+        chatterbox_service=StubChatterboxService(),
+        macos_say_service=say,
+    )
+
+    with pytest.raises(PipelineStageError, match="selected macOS say voice"):
+        service.synthesize(
+            text="A real local narration.",
+            output_path=tmp_path / "narration.aiff",
+            long_form=True,
+            engine_override="macos_say",
+        )
+
+    assert piper.calls == 0
 
 
 def test_narration_service_falls_back_to_piper_when_kokoro_missing(tmp_path) -> None:
