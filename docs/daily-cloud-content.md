@@ -1,5 +1,45 @@
 # Daily cloud content
 
+## Laptop fallback at 09:30
+
+On your existing Mac or Windows checkout, with the working `.env`, credentials
+and AI models already configured, install the daily local task:
+
+```bash
+# macOS
+.venv/bin/python scripts/local_daily_content.py --install
+```
+
+```powershell
+# Windows
+.\.venv\Scripts\python.exe scripts\local_daily_content.py --install
+```
+
+Set the laptop's timezone to Amsterdam. The installer registers launchd on Mac
+or Task Scheduler on Windows for 09:30; it does not start an immediate upload.
+This is a direct local Python task and does not require a Codex session. Your
+laptop must be powered on and logged in; keep it awake during generation.
+macOS may run a missed trigger after waking from sleep. Windows uses an
+interactive task and does not run while logged out. Disable older logon/Shorts
+tasks to avoid duplicate batches from those separate workflows.
+
+The runner reads your existing `.env`, refreshes your local YouTube token,
+starts the installed Ollama if necessary and schedules tomorrow's five videos.
+Logs are in `logs/daily-laptop-YYYY-MM-DD.log`. Attempt markers and failure
+handling are the same as below. An expired/revoked token still needs a local
+`auth-youtube` run. To remove the task:
+
+```bash
+launchctl bootout gui/$(id -u)/com.thijszoontjes.youtube-kanaal-daily
+rm ~/Library/LaunchAgents/com.thijszoontjes.youtube-kanaal-daily.plist
+```
+
+```powershell
+schtasks /Delete /TN youtube-kanaal-daily-content /F
+```
+
+## Persistent cloud alternative
+
 Run on a persistent Ubuntu VM, independently of your laptop. The temporary
 Codex workspace is not a deployed server. Keep the VM running at the trigger
 time. This uses systemd, not GitHub Actions: the local AI models, SQLite history,
