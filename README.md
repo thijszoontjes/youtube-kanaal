@@ -298,7 +298,7 @@ sh scripts/install_xtts_docker.sh
 
 ## Required External Tools
 
-- Python 3.11+
+- Python 3.11 or 3.12 (Kokoro 0.9.4 does not support Python 3.13+)
 - FFmpeg
 - Ollama
 - Piper

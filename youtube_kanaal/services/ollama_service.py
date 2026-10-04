@@ -621,13 +621,24 @@ class OllamaService:
             continuation_payload: dict[str, object] | None = None
             last_json_error: json.JSONDecodeError | None = None
             for parse_attempt in range(2):
+                request_prompt = prompt
+                if parse_attempt:
+                    request_prompt += "\nThe previous response was invalid JSON. Return one valid JSON object only."
                 response = self.client.post(
                     "/api/generate",
                     json={
                         "model": self.settings.ollama_model,
-                        "prompt": prompt,
+                        "prompt": request_prompt,
                         "stream": False,
-                        "format": "json",
+                        "format": {
+                            "type": "object",
+                            "properties": {
+                                "continuation": {"type": "string"},
+                                "visual_queries": {"type": "array", "items": {"type": "string"}},
+                            },
+                            "required": ["continuation"],
+                            "additionalProperties": False,
+                        },
                         "keep_alive": self.settings.ollama_keep_alive,
                         "options": {
                             "num_ctx": self.settings.ollama_long_context_length,
@@ -1655,7 +1666,7 @@ class OllamaService:
             while len(narration.split()) < SHORT_MIN_WORDS and extra_index < len(extra_beats):
                 narration = f"{narration} {extra_beats[(seed + 5 + extra_index) % len(extra_beats)]}".strip()
                 extra_index += 1
-        return narration
+        return self._trim_narration_to_words(narration, SHORT_MAX_WORDS)
 
     def _validate_short_quality(self, content: GeneratedShort, topic: TopicChoice) -> None:
         problems: list[str] = []

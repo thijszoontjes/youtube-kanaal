@@ -7,7 +7,7 @@ name = "youtube-kanaal"
 version = "0.1.0"
 description = "Local YouTube Shorts pipeline for generating, rendering, and optionally uploading English Shorts."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 license = { text = "MIT" }
 authors = [
   { name = "Thijs Zoontjes" }
@@ -40,6 +40,7 @@ runtime = [
 ]
 chatterbox = [
   "chatterbox-tts",
+  "setuptools<82",
 ]
 
 [project.scripts]

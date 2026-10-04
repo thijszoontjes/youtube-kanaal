@@ -2,8 +2,10 @@
 set -eu
 
 if command -v uv >/dev/null 2>&1; then
-  uv venv .venv
-  uv sync --extra dev
+  uv venv --clear --python 3.11 --seed .venv
+  . .venv/bin/activate
+  python -m pip install --upgrade pip
+  python -m pip install -e ".[dev]"
   exit 0
 fi
 
