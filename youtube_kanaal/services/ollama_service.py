@@ -85,50 +85,24 @@ _BLAND_TITLE_RE = re.compile(
     r"\b(?:wonders?|explained|visual guide|long-form visual explainer|interesting facts|amazing facts)\b",
     re.IGNORECASE,
 )
-_CLICKABLE_TITLE_TERMS: tuple[str, ...] = (
-    "secret",
-    "hiding",
-    "hidden",
-    "truth",
-    "strange",
-    "weird",
-    "nobody",
-    "miss",
-    "shouldn't",
-    "should not",
-    "do not",
-    "don't",
-    "ignore",
-    "what",
-    "why",
-    "this",
-    "never",
-    "wrong",
-)
-_TITLE_EMPHASIS_WORDS: tuple[str, ...] = (
-    "secret",
-    "hiding",
-    "hidden",
-    "truth",
-    "weird",
-    "nobody",
-    "never",
-    "not",
-    "wrong",
-    "this",
-)
 _WEAK_SHORT_OPENERS: tuple[str, ...] = (
     "did you know",
     "imagine a world",
     "have you ever wondered",
     "what if i told you",
+    "okay, something genuinely weird is hiding in",
+    "the opening detail is already odd",
+    "then there's this",
 )
+_INCOMPLETE_SENTENCE_ENDINGS = {"a", "an", "the", "at", "by", "for", "from", "in", "into", "of", "on", "to", "with", "and", "or", "but", "because"}
 _GENERIC_OVERLAY_FRAGMENTS: tuple[str, ...] = (
     "scientific findings",
     "hidden truth",
     "learn more",
     "understanding",
     "the secret life",
+    "opening detail already",
+    "then there's this",
 )
 _GENERIC_PAYOFF_FRAGMENTS: tuple[str, ...] = (
     "allows them to thrive",
@@ -165,6 +139,25 @@ _ADMINISTRATIVE_NARRATION_FRAGMENTS: tuple[str, ...] = (
     "facts array",
 )
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
+_CLAIM_NUMBER_RE = re.compile(r"(?<![a-z0-9])\d+(?:,\d{3})*(?:\.\d+)?(?![a-z0-9])")
+_CLAIM_NUMBER_WORDS = {
+    "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
+    "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
+    "ten": "10", "eleven": "11", "twelve": "12", "thirteen": "13",
+    "fourteen": "14", "fifteen": "15", "sixteen": "16", "seventeen": "17",
+    "eighteen": "18", "nineteen": "19", "twenty": "20",
+}
+_CLAIM_UNIT_ALIASES = {
+    "millimeter": "mm", "millimeters": "mm", "millimetre": "mm", "millimetres": "mm", "mm": "mm",
+    "centimeter": "cm", "centimeters": "cm", "centimetre": "cm", "centimetres": "cm", "cm": "cm",
+    "meter": "m", "meters": "m", "metre": "m", "metres": "m", "m": "m",
+    "kilometer": "km", "kilometers": "km", "kilometre": "km", "kilometres": "km", "km": "km",
+    "inch": "in", "inches": "in", "in": "in", "foot": "ft", "feet": "ft", "ft": "ft",
+    "mile": "mi", "miles": "mi", "mi": "mi", "second": "s", "seconds": "s", "s": "s",
+    "minute": "min", "minutes": "min", "min": "min", "hour": "h", "hours": "h", "h": "h",
+    "day": "d", "days": "d", "year": "yr", "years": "yr", "yr": "yr",
+    "percent": "%", "percentage": "%", "billion": "billion", "million": "million",
+}
 
 
 def _should_retry_ollama_request(exc: BaseException) -> bool:
@@ -239,7 +232,7 @@ class OllamaService:
             return content
         base_prompt = build_content_generation_prompt(topic, excluded_titles)
         prompt = base_prompt
-        last_quality_error: ValueError | None = None
+        last_quality_error: Exception | None = None
         for _ in range(max(1, self.settings.retry_attempts)):
             write_text(prompt_path, prompt)
             content = self._generate_model(
@@ -248,10 +241,10 @@ class OllamaService:
                 prompt_output_path=response_path,
                 model_cls=GeneratedShort,
             )
-            normalized = self._normalize_generated_short(content, topic)
             try:
+                normalized = self._normalize_generated_short(content, topic)
                 self.validate_short_content(normalized, topic)
-            except ValueError as exc:
+            except (ValueError, *_VALIDATION_ERROR_TYPES) as exc:
                 last_quality_error = exc
                 prompt = (
                     "Return only corrected JSON for the same topic. Preserve every supported factual claim, "
@@ -748,7 +741,7 @@ class OllamaService:
 
         try:
             return model_cls.model_validate(repaired_payload)
-        except _VALIDATION_ERROR_TYPES:
+        except (ValueError, *_VALIDATION_ERROR_TYPES):
             return None
 
     def _resolve_catalog_topic(self, topic: str) -> tuple[str, str] | None:
@@ -785,8 +778,6 @@ class OllamaService:
         repaired["topic"] = topic_value
 
         description = str(repaired.get("description", "")).strip()
-        if len(description) < 40:
-            description = f"Three fast facts about {topic_value} for a visual YouTube Short made locally."
         repaired["description"] = description
 
         hashtags = repaired.get("hashtags")
@@ -806,9 +797,7 @@ class OllamaService:
         if isinstance(facts, list):
             cleaned_facts = [self._normalize_sentence(str(fact)) for fact in facts if str(fact).strip()]
         if len(cleaned_facts) < 3:
-            cleaned_facts.extend(self._facts_from_narration(raw_narration, topic_value))
-        if len(cleaned_facts) < 3:
-            cleaned_facts.extend(self._fallback_facts(topic_value, bucket_value))
+            return {}
         repaired["facts"] = self._dedupe_preserving_order(cleaned_facts)[:3]
 
         raw_beats = repaired.get("beats")
@@ -826,17 +815,16 @@ class OllamaService:
                 beat_type = raw_type if raw_type in allowed_types else default_types[min(index, len(default_types) - 1)]
                 if index == 0:
                     beat_type = "hook"
-                overlay = self._normalize_overlay(
-                    str(raw_beat.get("on_screen_text", "")),
-                    narration_text,
-                )
+                overlay = self._normalize_overlay(str(raw_beat.get("on_screen_text", "")))
                 visual_query = self._coerce_visual_query(raw_beat.get("visual_query"))
+                if not visual_query:
+                    return {}
                 cleaned_beats.append(
                     {
                         "beat_type": beat_type,
                         "narration": narration_text,
                         "on_screen_text": overlay,
-                        "visual_query": visual_query or f"{topic_value} close up",
+                        "visual_query": visual_query,
                         "energy": str(raw_beat.get("energy", "medium")) if str(raw_beat.get("energy", "medium")) in {"low", "medium", "high"} else "medium",
                         "transition": str(raw_beat.get("transition", "cut")) if str(raw_beat.get("transition", "cut")) in {"cut", "punch", "hold"} else "cut",
                         "sfx": str(raw_beat.get("sfx", "none")) if str(raw_beat.get("sfx", "none")) in {"none", "impact", "whoosh", "tick", "riser", "silence"} else "none",
@@ -845,10 +833,8 @@ class OllamaService:
                 )
         narration = raw_narration
         repaired_facts = list(repaired["facts"]) if isinstance(repaired["facts"], list) else []
-        if not narration and repaired_facts:
-            narration = self._build_narration(topic_value, repaired_facts)
-        elif repaired_facts and not SHORT_MIN_WORDS <= len(narration.split()) <= SHORT_MAX_WORDS:
-            narration = self._fit_narration_to_duration(narration, repaired_facts, topic_value)
+        if not narration or not SHORT_MIN_WORDS <= len(narration.split()) <= SHORT_MAX_WORDS:
+            return {}
         repaired["narration"] = narration
 
         beat_words = sum(len(str(beat["narration"]).split()) for beat in cleaned_beats)
@@ -898,55 +884,9 @@ class OllamaService:
             seen.add(key)
         return deduped
 
-    def _facts_from_narration(self, narration: str, topic: str) -> list[str]:
-        sentences = [self._normalize_sentence(sentence) for sentence in _SENTENCE_SPLIT_RE.split(narration) if sentence.strip()]
-        facts: list[str] = []
-        for sentence in sentences:
-            lowered = sentence.lower()
-            if len(sentence.split()) < 5:
-                continue
-            if lowered.startswith(("here are ", "these are ")):
-                continue
-            facts.append(sentence)
-        if len(facts) >= 3:
-            return facts[:3]
-        topic_lower = topic.lower()
-        for sentence in sentences:
-            if topic_lower in sentence.lower() and sentence not in facts:
-                facts.append(sentence)
-            if len(facts) >= 3:
-                break
-        return facts[:3]
-
-    def _fallback_facts(self, topic: str, bucket: str) -> list[str]:
-        bucket_label = bucket or "science and culture"
-        return [
-            f"{topic} has details that make it useful for a fast visual explainer.",
-            f"{topic} connects to {bucket_label} in ways that can be shown clearly on screen.",
-            f"{topic} includes enough real-world context to support a short three-point story.",
-        ]
-
-    def _fit_narration_to_duration(self, narration: str, facts: list[str], topic: str) -> str:
-        sentences = [sentence.strip() for sentence in _SENTENCE_SPLIT_RE.split(narration) if sentence.strip()]
-        if sentences:
-            kept: list[str] = []
-            for sentence in sentences:
-                candidate = " ".join([*kept, sentence]).strip()
-                if len(candidate.split()) > SHORT_MAX_WORDS:
-                    break
-                kept.append(sentence)
-            candidate = " ".join(kept).strip()
-            if len(candidate.split()) >= SHORT_MIN_WORDS:
-                return candidate
-        return self._build_narration(topic, facts)
-
     def _normalize_generated_short(self, content: GeneratedShort, topic: TopicChoice) -> GeneratedShort:
         facts = [self._normalize_sentence(fact) for fact in content.facts]
-        narration_candidates: list[str] = []
         cleaned_narration = self._clean_narration(content.narration)
-        if topic.topic.lower() in cleaned_narration.lower():
-            narration_candidates.append(cleaned_narration)
-        narration_candidates.append(self._build_narration(topic.topic, facts))
 
         title = self._select_title(
             title=content.title,
@@ -962,21 +902,9 @@ class OllamaService:
         )
         base_payload = content.model_dump(mode="json")
         normalized_beats = []
-        for index, beat in enumerate(content.beats):
+        for beat in content.beats:
             beat_payload = beat.model_dump(mode="json")
-            if (
-                content.beat_plan_source != "derived"
-                and index == 0
-                and len(beat.narration.split()) > 16
-            ):
-                beat_payload["narration"] = self._trim_narration_to_words(beat.narration, 16)
-            elif (
-                content.beat_plan_source != "derived"
-                and index == len(content.beats) - 1
-                and len(beat.narration.split()) > 16
-            ):
-                beat_payload["narration"] = self._trim_narration_to_words(beat.narration, 16)
-            overlay = self._normalize_overlay(beat.on_screen_text, beat.narration)
+            overlay = self._normalize_overlay(beat.on_screen_text)
             beat_payload["on_screen_text"] = overlay
             normalized_beats.append(beat_payload)
         base_payload.update(
@@ -990,26 +918,14 @@ class OllamaService:
             }
         )
 
-        for narration in narration_candidates:
-            candidate_payload = dict(base_payload)
-            candidate_payload["narration"] = narration
-            candidate_payload["subtitle_text"] = narration
-            if narration != content.narration:
-                candidate_payload["beats"] = []
-            try:
-                return GeneratedShort.model_validate(candidate_payload)
-            except _VALIDATION_ERROR_TYPES:
-                continue
-
-        base_payload["subtitle_text"] = content.narration
+        base_payload["narration"] = cleaned_narration
+        base_payload["subtitle_text"] = cleaned_narration
         return GeneratedShort.model_validate(base_payload)
 
-    def _normalize_overlay(self, overlay: str, narration: str) -> str:
-        """Keep overlays short; derive only missing surface text from spoken copy."""
+    def _normalize_overlay(self, overlay: str) -> str:
+        """Keep explicit overlays short without inventing text from the narration."""
 
         words = overlay.split()[:4]
-        if not words:
-            words = narration.split()[:4]
         value = " ".join(words)
         if len(value) > 24:
             value = value[:24].rsplit(" ", 1)[0].strip()
@@ -1337,7 +1253,7 @@ class OllamaService:
             word_count += sentence_words
         if kept:
             return " ".join(kept).strip()
-        return " ".join(narration.split()[:maximum_words]).rstrip(" ,;:") + "."
+        raise ValueError(f"No complete narration sentence fits the {maximum_words}-word limit.")
 
     def _clean_long_title(self, title: str, topic: str) -> str:
         cleaned = " ".join(title.split()).strip()
@@ -1491,26 +1407,37 @@ class OllamaService:
     def _select_title(self, *, title: str, title_hook: str, topic: str, facts: list[str]) -> str:
         cleaned_title = " ".join(title.split()).strip()
         cleaned_hook = " ".join(title_hook.split()).strip()
-        if cleaned_hook and self._is_better_title(cleaned_hook, cleaned_title):
-            return self._style_clickable_title(cleaned_hook, topic, facts, max_length=70)
+        if cleaned_hook and self._is_better_title(cleaned_hook, cleaned_title, topic, facts):
+            return self._style_title(cleaned_hook, max_length=70)
         if cleaned_title and not self._is_generic_title(cleaned_title):
-            return self._style_clickable_title(cleaned_title, topic, facts, max_length=70)
-        return self._style_clickable_title(self._fallback_title(topic, facts), topic, facts, max_length=70)
+            return self._style_title(cleaned_title, max_length=70)
+        if cleaned_hook and not self._is_generic_title(cleaned_hook):
+            return self._style_title(cleaned_hook, max_length=70)
+        raise ValueError("Both generated titles are generic or incomplete.")
 
-    def _is_better_title(self, candidate: str, current: str) -> bool:
+    def _is_better_title(self, candidate: str, current: str, topic: str, facts: list[str]) -> bool:
         if not candidate or len(candidate) > 70:
             return False
         if self._is_generic_title(candidate):
             return False
-        if not current:
+        if not current or self._is_generic_title(current):
             return True
-        candidate_score = self._clickable_title_score(candidate)
-        current_score = self._clickable_title_score(current)
-        if candidate_score > current_score:
-            return True
-        if candidate_score < current_score:
-            return False
-        return self._is_generic_title(current) or len(candidate) < len(current) + 18
+        return self._title_specificity_score(candidate, topic, facts) > self._title_specificity_score(
+            current,
+            topic,
+            facts,
+        )
+
+    def _title_specificity_score(self, title: str, topic: str, facts: list[str]) -> int:
+        stop_words = {"about", "after", "because", "from", "into", "that", "their", "this", "with"}
+        supported_terms = set(self._important_topic_tokens(topic))
+        supported_terms.update(
+            token
+            for fact in facts
+            for token in _TOKEN_RE.findall(fact.lower())
+            if len(token) > 2 and token not in stop_words
+        )
+        return len(set(_TOKEN_RE.findall(title.lower())) & supported_terms)
 
     def _is_generic_title(self, title: str) -> bool:
         lowered = title.lower()
@@ -1570,34 +1497,11 @@ class OllamaService:
         singular_s_endings = {"mars", "venus", "gps"}
         return last_word.endswith("s") and last_word not in singular_s_endings
 
-    def _clickable_title_score(self, title: str) -> int:
-        lowered = title.lower()
-        return sum(1 for term in _CLICKABLE_TITLE_TERMS if term in lowered)
-
-    def _style_clickable_title(self, title: str, topic: str, facts: list[str], *, max_length: int) -> str:
+    def _style_title(self, title: str, *, max_length: int) -> str:
         cleaned = " ".join(title.split()).strip()
-        if not cleaned:
-            cleaned = self._fallback_title(topic, facts)
-        if self._clickable_title_score(cleaned) == 0:
-            cleaned = self._fallback_title(topic, facts)
-        seed = self._variation_seed(topic, facts)
-        if seed % 3 == 0:
-            return self._trim_title(cleaned.upper(), max_length)
-        if seed % 3 == 1:
-            return self._trim_title(self._emphasize_title_words(cleaned), max_length)
-        return self._trim_title(cleaned, max_length)
-
-    def _emphasize_title_words(self, title: str) -> str:
-        words = []
-        emphasized = False
-        for word in title.split():
-            plain = word.strip("()[]{}:;,.!?").lower()
-            if not emphasized and plain in _TITLE_EMPHASIS_WORDS:
-                words.append(word.upper())
-                emphasized = True
-            else:
-                words.append(word)
-        return " ".join(words)
+        if len(cleaned) > max_length:
+            raise ValueError(f"Title must be rewritten to fit the {max_length}-character limit.")
+        return cleaned
 
     def _trim_title(self, title: str, max_length: int) -> str:
         cleaned = " ".join(title.split()).strip()
@@ -1676,6 +1580,8 @@ class OllamaService:
             problems.append("description is generic repair text instead of specific upload copy")
         if self._title_mentions_different_catalog_topic(content.title, topic.topic):
             problems.append("title mentions a different catalog topic")
+        if self._is_generic_title(content.title) or self._title_specificity_score(content.title, topic.topic, content.facts) < 2:
+            problems.append("title does not make a specific, supported promise")
         if self._title_mentions_different_catalog_topic(content.title_hook or "", topic.topic):
             problems.append("title hook mentions a different catalog topic")
         if not self._mentions_topic_early(content.narration, topic.topic):
@@ -1685,32 +1591,36 @@ class OllamaService:
             problems.append("narration starts with a weak generic opener")
         if self._is_all_caps_sentence(self._first_sentence(content.narration)):
             problems.append("narration starts by reading an all-caps title card")
+        final_word = _TOKEN_RE.findall(content.narration.lower())[-1:]
+        if final_word and final_word[0] in _INCOMPLETE_SENTENCE_ENDINGS:
+            problems.append("narration ends with an incomplete sentence")
         if any(self._is_low_signal_fact(fact) for fact in content.facts):
             problems.append("facts contain generic production filler")
-        if content.beat_plan_source == "generated":
-            beat_types = [beat.beat_type for beat in content.beats]
-            expected_story = ["hook", "evidence", "escalation", "payoff"]
-            if len(content.beats) not in {4, 5}:
-                problems.append("story plan must contain four beats, with one optional loop")
-            elif beat_types[:4] != expected_story:
-                problems.append("story plan must be hook, evidence, reversal, payoff")
-            elif len(content.beats) == 5 and beat_types[-1] != "loop":
-                problems.append("optional fifth beat must be a loop")
+        beat_types = [beat.beat_type for beat in content.beats]
+        expected_story = ["hook", "evidence", "escalation", "payoff"]
+        if len(content.beats) not in {4, 5}:
+            problems.append("story plan must contain four beats, with one optional loop")
+        elif beat_types[:4] != expected_story:
+            problems.append("story plan must be hook, evidence, escalation, payoff")
+        elif len(content.beats) == 5 and beat_types[-1] != "loop":
+            problems.append("optional fifth beat must be a loop")
         if any(fragment in content.narration.lower() for fragment in _ADMINISTRATIVE_NARRATION_FRAGMENTS):
             problems.append("narration contains internal production or verification language")
-        if content.beat_plan_source == "generated" and content.beats and not content.beats[0].on_screen_text:
-            problems.append("hook is missing visual promise text")
-        if content.beat_plan_source == "generated" and content.beats and not 5 <= len(content.beats[0].narration.split()) <= 16:
+        if content.beats and any(not beat.on_screen_text for beat in content.beats):
+            problems.append("every story beat needs a concrete visual text accent")
+        if content.beats and any(not 2 <= len(beat.on_screen_text.split()) <= 4 for beat in content.beats):
+            problems.append("visual text accents must contain 2-4 words")
+        if content.beats and not 5 <= len(content.beats[0].narration.split()) <= 16:
             problems.append("spoken hook must contain 5-16 words")
-        if content.beat_plan_source == "generated" and any(len(beat.on_screen_text) > 24 for beat in content.beats):
+        if any(len(beat.on_screen_text) > 24 for beat in content.beats):
             problems.append("on-screen text exceeds 24 characters")
-        if content.beat_plan_source == "generated" and any(
+        if any(
             fragment in beat.on_screen_text.lower()
             for beat in content.beats
             for fragment in _GENERIC_OVERLAY_FRAGMENTS
         ):
             problems.append("on-screen text contains a vague generic label")
-        if content.beat_plan_source == "generated" and content.beats:
+        if content.beats:
             payoff = content.beats[-1].narration
             if not 4 <= len(payoff.split()) <= 16:
                 problems.append("final payoff must contain 4-16 words")
@@ -1783,9 +1693,27 @@ class OllamaService:
                 for token in _TOKEN_RE.findall(fact.lower())
                 if len(token) >= 4 and token not in stop_words
             }
-            if fact_tokens and len(fact_tokens & narration_tokens) < min(2, len(fact_tokens)):
+            minimum_overlap = 1 if len(fact_tokens) == 1 else max(2, (len(fact_tokens) + 1) // 2)
+            if fact_tokens and len(fact_tokens & narration_tokens) < minimum_overlap:
+                return False
+            if not self._claim_numbers(fact).issubset(self._claim_numbers(content.narration)):
+                return False
+            if not self._claim_units(fact).issubset(self._claim_units(content.narration)):
                 return False
         return True
+
+    def _claim_numbers(self, text: str) -> set[str]:
+        normalized = text.lower()
+        for word, number in _CLAIM_NUMBER_WORDS.items():
+            normalized = re.sub(rf"\b{word}\b", number, normalized)
+        return {match.replace(",", "") for match in _CLAIM_NUMBER_RE.findall(normalized)}
+
+    def _claim_units(self, text: str) -> set[str]:
+        return {
+            _CLAIM_UNIT_ALIASES[token]
+            for token in _TOKEN_RE.findall(text.lower())
+            if token in _CLAIM_UNIT_ALIASES
+        }
 
     def _fallback_topic(self, excluded_topics: list[str]) -> TopicChoice:
         excluded = {item.lower() for item in excluded_topics}

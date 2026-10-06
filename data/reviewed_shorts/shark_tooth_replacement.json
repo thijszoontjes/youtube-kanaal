@@ -1,0 +1,64 @@
+{
+  "bucket": "ocean",
+  "topic": "sharks",
+  "title": "Sharks Replace Lost Teeth for Life",
+  "title_hook": "Sharks Replace Lost Teeth for Life",
+  "description": "Sharks continuously replace teeth throughout life. In spotted ragged-tooth sharks, one study measured about 1.06 teeth shed per day and estimated over 13,500 across a lifetime. Source: https://pmc.ncbi.nlm.nih.gov/articles/PMC8070439/",
+  "hashtags": [
+    "#Sharks",
+    "#Ocean",
+    "#AnimalFacts",
+    "#Wildlife",
+    "#Nature",
+    "#Shorts"
+  ],
+  "narration": "Sharks can replace lost teeth throughout their entire lives. Behind the front row, several rows of replacement teeth are already waiting. Each time a tooth drops, the next row moves forward. One study tracked spotted ragged-tooth sharks losing about 1.06 teeth a day. That pace can add up to over 13,500 teeth in a lifetime.",
+  "facts": [
+    "Sharks continually replace teeth throughout their lives.",
+    "Several rows of replacement teeth wait behind the front row.",
+    "Spotted ragged-tooth sharks lose about 1.06 teeth per day, yielding over 13,500 in a lifetime."
+  ],
+  "subtitle_text": "Sharks can replace lost teeth throughout their entire lives. Behind the front row, several rows of replacement teeth are already waiting. Each time a tooth drops, the next row moves forward. One study tracked spotted ragged-tooth sharks losing about 1.06 teeth a day. That pace can add up to over 13,500 teeth in a lifetime.",
+  "beats": [
+    {
+      "beat_type": "hook",
+      "narration": "Sharks can replace lost teeth throughout their entire lives.",
+      "on_screen_text": "TEETH IN RESERVE",
+      "visual_query": "shark swimming underwater close up",
+      "energy": "high",
+      "transition": "punch",
+      "sfx": "impact",
+      "duration_weight": 1
+    },
+    {
+      "beat_type": "evidence",
+      "narration": "Behind the front row, several rows of replacement teeth are already waiting.",
+      "on_screen_text": "ROWS MOVE FORWARD",
+      "visual_query": "shark teeth close up",
+      "energy": "medium",
+      "transition": "cut",
+      "sfx": "whoosh",
+      "duration_weight": 1
+    },
+    {
+      "beat_type": "escalation",
+      "narration": "Each time a tooth drops, the next row moves forward. One study tracked spotted ragged-tooth sharks losing about 1.06 teeth a day.",
+      "on_screen_text": "1.06 PER DAY",
+      "visual_query": "spotted ragged tooth shark underwater",
+      "energy": "high",
+      "transition": "cut",
+      "sfx": "tick",
+      "duration_weight": 1
+    },
+    {
+      "beat_type": "payoff",
+      "narration": "That pace can add up to over 13,500 teeth in a lifetime.",
+      "on_screen_text": "13,500 IN A LIFETIME",
+      "visual_query": "shark jaws teeth underwater",
+      "energy": "medium",
+      "transition": "hold",
+      "sfx": "silence",
+      "duration_weight": 1
+    }
+  ]
+}

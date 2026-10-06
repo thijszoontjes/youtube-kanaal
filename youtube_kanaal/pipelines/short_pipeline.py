@@ -42,6 +42,7 @@ from youtube_kanaal.services.xtts_service import XTTSService
 from youtube_kanaal.services.youtube_service import YouTubeService
 from youtube_kanaal.utils.files import copy_collision_safe, ensure_directory, safe_slug, write_json
 from youtube_kanaal.utils.similarity import is_near_duplicate, normalize_for_similarity
+from youtube_kanaal.utils.subtitles import beat_boundaries_from_srt
 
 
 TOPIC_SPECIFIC_VISUAL_QUERIES: dict[str, list[str]] = {
@@ -53,10 +54,10 @@ TOPIC_SPECIFIC_VISUAL_QUERIES: dict[str, list[str]] = {
         "deep sea wreck",
     ],
     "apollo 11": [
-        "moon landing archive",
-        "astronaut on moon",
-        "rocket launch",
-        "mission control",
+        "Apollo 11 lunar rock sample close up",
+        "lunar breccia anorthosite fragment",
+        "Moon highland crust illustration",
+        "early lunar magma ocean illustration",
     ],
     "black holes": [
         "black hole animation",
@@ -196,9 +197,25 @@ class ShortPipeline:
             visual_queries = self.generate_visual_queries(runtime, topic, content)
             narration = self.generate_narration(runtime, content)
             subtitles = self.generate_subtitles(runtime, content, narration)
-            sound_design = self.apply_sound_design(runtime, narration, content)
+            beat_boundaries = beat_boundaries_from_srt(
+                subtitles.srt_path.read_text(encoding="utf-8"),
+                [beat.narration for beat in content.beats],
+                narration.duration_seconds,
+            )
+            if len(beat_boundaries) != len(content.beats):
+                raise PipelineStageError(
+                    stage="subtitle_generation",
+                    message="Could not align every story beat to the final narration audio.",
+                    probable_cause="The timed subtitles did not cover the complete approved narration.",
+                    details_path=subtitles.srt_path,
+                )
+            runtime.stage_summaries["audio_timeline"] = {
+                "source": str(subtitles.srt_path),
+                "beat_boundaries": beat_boundaries,
+            }
+            sound_design = self.apply_sound_design(runtime, narration, content, beat_boundaries)
             clips = self.download_stock_video(runtime, visual_queries, narration)
-            plan = self.plan_assets(runtime, clips, narration, content)
+            plan = self.plan_assets(runtime, clips, narration, content, beat_boundaries)
             final_video_path = self.render_video(runtime, plan, sound_design.mixed_path, subtitles, content)
             validation_payload = self.validate_output(runtime, final_video_path)
             downloads_copy = self.export_to_downloads(runtime, final_video_path, content)
@@ -244,6 +261,7 @@ class ShortPipeline:
                 stage=stage_name,
                 error_message=message,
                 completed_at=completed_at,
+                needs_review=stage_name in {"content_generation", "stock_video_download", "asset_planning"},
             )
             raise
 
@@ -413,10 +431,7 @@ class ShortPipeline:
             try:
                 content = self.generate_content(runtime, topic)
             except PipelineStageError as exc:
-                retryable_generation_error = (
-                    self._is_duplicate_title_generation_error(exc)
-                    or self._is_quality_gate_generation_error(exc)
-                )
+                retryable_generation_error = self._is_duplicate_title_generation_error(exc)
                 if runtime.request.preferred_topic or not retryable_generation_error:
                     raise
                 last_error = exc
@@ -558,6 +573,7 @@ class ShortPipeline:
                 output_base_path=runtime.artifacts.subtitles_dir / "captions",
                 duration_seconds=narration.duration_seconds,
                 beat_overlays=content.beat_overlays(narration.duration_seconds),
+                beat_texts=[beat.narration for beat in content.beats],
             )
             runtime.stage_summaries["subtitle_generation"] = subtitles.model_dump(mode="json")
             return subtitles
@@ -581,6 +597,7 @@ class ShortPipeline:
         runtime: PipelineRuntime,
         narration: NarrationAsset,
         content: GeneratedShort,
+        beat_boundaries: list[tuple[float, float]],
     ) -> SoundDesignAsset:
         with self._stage(
             runtime,
@@ -593,7 +610,7 @@ class ShortPipeline:
                     duration_seconds=narration.duration_seconds,
                     working_dir=runtime.artifacts.audio_dir,
                     profile_hint=content.bucket,
-                    beat_cues=content.beat_sound_cues(narration.duration_seconds),
+                    beat_cues=content.beat_sound_cues(narration.duration_seconds, beat_boundaries),
                     logger=runtime.logger,
                 )
             except Exception as exc:
@@ -638,18 +655,15 @@ class ShortPipeline:
         clips: list[VideoClipAsset],
         narration: NarrationAsset,
         content: GeneratedShort,
+        beat_boundaries: list[tuple[float, float]],
     ) -> AssetPlan:
         with self._stage(runtime, "asset_planning", {"clip_count": len(clips), "duration": narration.duration_seconds}):
             beats = content.beats
             planned_count = max(len(beats), 1)
-            beat_weights = [
-                max(len(beat.narration.split()) * beat.duration_weight, 1.0)
-                for beat in beats
-            ] or [1.0]
-            total_weight = sum(beat_weights)
-            durations = [narration.duration_seconds * (weight / total_weight) for weight in beat_weights]
-            if durations:
-                durations[-1] += narration.duration_seconds - sum(durations)
+            if len(beat_boundaries) == len(beats):
+                durations = [end - start for start, end in beat_boundaries]
+            else:
+                durations = []
             segments: list[AssetPlanSegment] = []
             beat_clip_pools = self._assign_clips_to_beats(clips, beats)
             for index in range(planned_count):
@@ -700,7 +714,7 @@ class ShortPipeline:
         clips: list[VideoClipAsset],
         beats: list[ShortBeat],
     ) -> list[list[VideoClipAsset]]:
-        """Keep each beat on-topic while allowing a second visual for micro-cuts."""
+        """Reserve a distinct primary per beat and keep secondary clips reusable."""
 
         if not clips:
             raise PipelineStageError(
@@ -715,10 +729,16 @@ class ShortPipeline:
         pools: list[list[VideoClipAsset]] = []
         for beat in beats:
             ranked = sorted(
-                available or clips,
+                available,
                 key=lambda clip: self._clip_match_score(beat.visual_query, clip),
                 reverse=True,
             )
+            if not ranked or self._clip_match_score(beat.visual_query, ranked[0]) == float("-inf"):
+                raise PipelineStageError(
+                    stage="asset_planning",
+                    message=f"No distinct stock clip matches the {beat.beat_type} scene.",
+                    probable_cause=f"The available asset titles do not support: {beat.visual_query}",
+                )
             primary = ranked[0]
             pool = [primary]
             if len(ranked) > 1:
@@ -728,16 +748,15 @@ class ShortPipeline:
                 if secondary_score >= primary_score - 2.5:
                     pool.append(secondary)
             pools.append(pool)
-            for clip in pool:
-                if clip in available:
-                    available.remove(clip)
+            if primary in available:
+                available.remove(primary)
         return pools
 
     def _clip_match_score(self, visual_query: str, clip: VideoClipAsset) -> float:
         query_tokens = set(normalize_for_similarity(visual_query).split())
-        clip_tokens = set(normalize_for_similarity(f"{clip.query} {clip.source_url}").split())
+        clip_tokens = set(normalize_for_similarity(clip.source_url).split())
         overlap = len(query_tokens & clip_tokens)
-        return (overlap * 4.0) + clip.score
+        return (overlap * 4.0) + clip.score if overlap else float("-inf")
 
     def _visual_variant_for_segment(self, *, beat_type: str, part_index: int) -> str:
         if part_index == 0 and beat_type in {"hook", "escalation"}:
@@ -1093,22 +1112,12 @@ class ShortPipeline:
             }
             return topic, content
 
-    def _is_quality_gate_generation_error(self, exc: PipelineStageError) -> bool:
-        if exc.stage != "content_generation":
-            return False
-        details = " ".join(
-            item.lower()
-            for item in (exc.message, exc.probable_cause or "")
-            if item
-        )
-        return "quality gate" in details or "weak or mismatched content" in details
-
     def _build_video_queries(self, topic: TopicChoice, content: GeneratedShort) -> list[str]:
         topic_text = topic.topic
         lowered_facts = " ".join(content.facts).lower()
         fact_queries = self._fact_visual_queries(topic, content)
         topic_specific_queries = TOPIC_SPECIFIC_VISUAL_QUERIES.get(topic_text.lower(), [])
-        beat_queries = [beat.visual_query for beat in content.beats] if content.beat_plan_source == "generated" else []
+        beat_queries = [beat.visual_query for beat in content.beats]
         queries: list[str] = [*beat_queries, *topic_specific_queries, *fact_queries]
 
         if topic.bucket == "space":
@@ -1193,15 +1202,16 @@ class ShortPipeline:
                 ]
             )
         elif topic.bucket == "history":
-            queries.extend(
-                [
-                    f"{topic_text} archive",
-                    f"{topic_text} museum",
-                    f"{topic_text} historical documentary",
-                    "old map close up",
-                    "museum artifact close up",
-                ]
-            )
+            if not topic_specific_queries:
+                queries.extend(
+                    [
+                        f"{topic_text} archive",
+                        f"{topic_text} museum",
+                        f"{topic_text} historical documentary",
+                        "old map close up",
+                        "museum artifact close up",
+                    ]
+                )
         elif topic.bucket == "inventions":
             queries.extend(
                 [
@@ -1267,7 +1277,8 @@ class ShortPipeline:
 
         if len(queries) < 5:
             queries.extend(topic.visual_queries)
-        queries.extend(content.keyword_queries())
+        if not topic_specific_queries:
+            queries.extend(content.keyword_queries())
         cleaned_queries = []
         for query in queries:
             normalized = " ".join(query.split()).strip()

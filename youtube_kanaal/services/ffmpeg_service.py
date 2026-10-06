@@ -844,8 +844,6 @@ class FFmpegService:
             fades.append("fade=t=in:st=0:d=0.08")
         if is_last:
             fades.append(f"fade=t=out:st={fade_out_start:.2f}:d=0.12")
-        if visual_variant == "reveal":
-            fades.append("fade=t=in:st=0:d=0.05")
         fade_filter = ",".join(fades)
         if fade_filter:
             fade_filter += ","

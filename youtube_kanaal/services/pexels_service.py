@@ -110,7 +110,7 @@ class PexelsService:
         if not self.settings.pexels_api_key:
             raise ConfigurationError("PEXELS_API_KEY is required for stock footage downloads.")
 
-        raw_payloads, candidates = self._collect_candidates(queries)
+        raw_payloads, candidates = self._collect_candidates(queries, allow_generic_fallback=False)
         write_json(response_path, raw_payloads)
         selected = self._select_and_download(candidates, target_duration_seconds, queries=queries)
         if not selected:
@@ -331,7 +331,12 @@ class PexelsService:
         response.raise_for_status()
         return response.json()
 
-    def _collect_candidates(self, queries: list[str]) -> tuple[list[dict[str, object]], list[VideoClipAsset]]:
+    def _collect_candidates(
+        self,
+        queries: list[str],
+        *,
+        allow_generic_fallback: bool = True,
+    ) -> tuple[list[dict[str, object]], list[VideoClipAsset]]:
         raw_payloads: list[dict[str, object]] = []
         candidates: list[VideoClipAsset] = []
         searched_queries: set[str] = set()
@@ -348,7 +353,7 @@ class PexelsService:
                     fallback=False,
                 )
 
-        if not candidates:
+        if not candidates and allow_generic_fallback:
             for query in self._fallback_queries(queries):
                 if query in searched_queries:
                     continue
@@ -718,8 +723,6 @@ class PexelsService:
             for clip in candidates
             if clip.score >= 3.0 and self._matches_required_subject(clip, required_subjects)
         ]
-        if not viable_candidates:
-            viable_candidates = [clip for clip in candidates if clip.score >= 4.0]
         for clip in self._prioritized_candidates(viable_candidates, queries):
             if clip.source_id in used_ids:
                 continue

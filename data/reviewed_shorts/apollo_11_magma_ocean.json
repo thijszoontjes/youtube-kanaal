@@ -1,0 +1,68 @@
+{
+  "bucket": "history",
+  "topic": "Apollo 11",
+  "title": "Apollo 11 Found Clues to a Magma Ocean",
+  "title_hook": "Apollo 11 Found Clues to a Magma Ocean",
+  "description": "Some Apollo 11 breccias held small pieces of lunar highland crust. Scientists interpreted them as evidence for an early magma ocean. Source: Lunar and Planetary Institute — https://www.lpi.usra.edu/lunar/missions/apollo/apollo_11/samples/",
+  "hashtags": [
+    "#Apollo11",
+    "#Moon",
+    "#LunarScience",
+    "#MagmaOcean",
+    "#Anorthosite",
+    "#SpaceHistory",
+    "#MoonRocks",
+    "#SpaceFacts",
+    "#Science",
+    "#Astronomy"
+  ],
+  "narration": "Apollo 11 brought back a clue: the Moon's outer layers may once have been molten. Most Apollo 11 samples were basalt and breccia, a rock made of broken fragments. Some breccias held pieces of the Moon's highland crust. Those tiny pale fragments included anorthosite, a light rock rich in plagioclase. Scientists interpreted them as evidence for an early lunar magma ocean, not a snapshot of it.",
+  "facts": [
+    "Apollo 11 mainly collected basalt and breccia samples.",
+    "Some Apollo 11 breccias contained small fragments of the Moon's highland crust.",
+    "Small anorthosite fragments in breccias were interpreted as evidence for an early lunar magma ocean."
+  ],
+  "subtitle_text": "Apollo 11 brought back a clue: the Moon's outer layers may once have been molten. Most Apollo 11 samples were basalt and breccia, a rock made of broken fragments. Some breccias held pieces of the Moon's highland crust. Those tiny pale fragments included anorthosite, a light rock rich in plagioclase. Scientists interpreted them as evidence for an early lunar magma ocean, not a snapshot of it.",
+  "beats": [
+    {
+      "beat_type": "hook",
+      "narration": "Apollo 11 brought back a clue: the Moon's outer layers may once have been molten.",
+      "on_screen_text": "A TINY CLUE",
+      "visual_query": "Apollo 11 lunar rock sample and Moon surface illustration",
+      "energy": "high",
+      "transition": "cut",
+      "sfx": "impact",
+      "duration_weight": 1.0
+    },
+    {
+      "beat_type": "evidence",
+      "narration": "Most Apollo 11 samples were basalt and breccia, a rock made of broken fragments. Some breccias held pieces of the Moon's highland crust.",
+      "on_screen_text": "BASALT + BRECCIA",
+      "visual_query": "Apollo 11 basalt and fractured lunar breccia samples",
+      "energy": "medium",
+      "transition": "cut",
+      "sfx": "tick",
+      "duration_weight": 1.0
+    },
+    {
+      "beat_type": "escalation",
+      "narration": "Those tiny pale fragments included anorthosite, a light rock rich in plagioclase.",
+      "on_screen_text": "ANORTHOSITE CRUST",
+      "visual_query": "pale plagioclase anorthosite lunar highland fragment",
+      "energy": "medium",
+      "transition": "cut",
+      "sfx": "whoosh",
+      "duration_weight": 1.0
+    },
+    {
+      "beat_type": "payoff",
+      "narration": "Scientists interpreted them as evidence for an early lunar magma ocean, not a snapshot of it.",
+      "on_screen_text": "EARLY MAGMA OCEAN",
+      "visual_query": "Moon cutaway with ancient magma ocean and thin anorthosite crust",
+      "energy": "high",
+      "transition": "hold",
+      "sfx": "silence",
+      "duration_weight": 1.0
+    }
+  ]
+}

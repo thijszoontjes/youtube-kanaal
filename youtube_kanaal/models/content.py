@@ -740,9 +740,22 @@ class GeneratedShort(BaseModel):
             )
         return beats
 
-    def beat_sound_cues(self, duration_seconds: float) -> list[dict[str, object]]:
+    def beat_sound_cues(
+        self,
+        duration_seconds: float,
+        beat_boundaries: list[tuple[float, float]] | None = None,
+    ) -> list[dict[str, object]]:
         if not self.beats:
             return []
+        if beat_boundaries and len(beat_boundaries) == len(self.beats):
+            return [
+                {
+                    "offset_seconds": round(start, 2),
+                    "sfx": beat.sfx,
+                    "beat_type": beat.beat_type,
+                }
+                for beat, (start, _) in zip(self.beats, beat_boundaries)
+            ]
         weighted_words = [max(len(beat.narration.split()) * beat.duration_weight, 1.0) for beat in self.beats]
         total_weight = sum(weighted_words)
         cursor = 0.0
@@ -752,14 +765,32 @@ class GeneratedShort(BaseModel):
             cursor += duration_seconds * (weight / total_weight)
         return cues
 
-    def beat_overlays(self, duration_seconds: float) -> list[dict[str, object]]:
+    def beat_overlays(
+        self,
+        duration_seconds: float,
+        beat_boundaries: list[tuple[float, float]] | None = None,
+    ) -> list[dict[str, object]]:
         if not self.beats:
             return []
+        if beat_boundaries and len(beat_boundaries) == len(self.beats):
+            overlays: list[dict[str, object]] = []
+            for beat_index, (beat, (start, end)) in enumerate(zip(self.beats, beat_boundaries)):
+                if beat.on_screen_text:
+                    overlays.append(
+                        {
+                            "start_seconds": round(start, 2),
+                            "end_seconds": round(min(start + 1.25, end, duration_seconds), 2),
+                            "text": beat.on_screen_text,
+                            "beat_type": beat.beat_type,
+                            "beat_index": beat_index,
+                        }
+                    )
+            return overlays
         weights = [max(len(beat.narration.split()) * beat.duration_weight, 1.0) for beat in self.beats]
         total_weight = sum(weights)
         cursor = 0.0
         overlays: list[dict[str, object]] = []
-        for beat, weight in zip(self.beats, weights):
+        for beat_index, (beat, weight) in enumerate(zip(self.beats, weights)):
             beat_duration = duration_seconds * (weight / total_weight)
             if beat.on_screen_text:
                 overlays.append(
@@ -768,6 +799,7 @@ class GeneratedShort(BaseModel):
                         "end_seconds": round(min(cursor + min(beat_duration, 1.25), duration_seconds), 2),
                         "text": beat.on_screen_text,
                         "beat_type": beat.beat_type,
+                        "beat_index": beat_index,
                     }
                 )
             cursor += beat_duration
@@ -789,11 +821,7 @@ class GeneratedShort(BaseModel):
             return self.title
         suffix = " ".join(chosen)
         candidate = f"{self.title} {suffix}".strip()
-        if len(candidate) <= max_length:
-            return candidate
-        allowed_title_length = max_length - len(suffix) - 1
-        trimmed_title = self.title[:allowed_title_length].rstrip(" -|,")
-        return f"{trimmed_title} {suffix}".strip()
+        return candidate if len(candidate) <= max_length else self.title
 
     def upload_description(self, minimum_hashtags: int = 10, *, include_app_promo: bool = False) -> str:
         hashtags = " ".join(self.upload_hashtags(minimum=minimum_hashtags))

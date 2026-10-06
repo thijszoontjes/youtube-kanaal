@@ -288,6 +288,48 @@ def align_script_to_reference_srt(
     return build_srt_from_cues(aligned_cues)
 
 
+def beat_boundaries_from_srt(
+    srt_text: str,
+    beat_texts: list[str],
+    duration_seconds: float,
+) -> list[tuple[float, float]]:
+    """Map story beats onto the final, audio-aligned subtitle timeline."""
+    if not beat_texts:
+        return []
+    reference_words = _extract_timed_words(
+        parse_srt_text(srt_text),
+        min_word_duration_seconds=0.03,
+    )
+    beat_word_counts = [len(text.split()) for text in beat_texts]
+    script_words = [word for text in beat_texts for word in text.split()]
+    aligned_words = _align_script_words_to_reference(
+        reference_words,
+        script_words,
+        min_word_duration_seconds=0.03,
+    )
+    if len(aligned_words) != len(script_words):
+        return []
+
+    boundaries: list[tuple[float, float]] = []
+    cursor = 0
+    for count in beat_word_counts:
+        beat_words = aligned_words[cursor : cursor + count]
+        if not beat_words:
+            return []
+        start = 0.0 if not boundaries else max(0.0, beat_words[0].start_seconds)
+        end = min(duration_seconds, beat_words[-1].end_seconds)
+        boundaries.append((start, max(end, start + 0.1)))
+        cursor += count
+
+    result = [
+        (start, boundaries[index + 1][0] if index + 1 < len(boundaries) else duration_seconds)
+        for index, (start, _) in enumerate(boundaries)
+    ]
+    if any(end <= start for start, end in result):
+        return []
+    return result
+
+
 def _extract_timed_words(
     cues: list[SubtitleCue],
     *,

@@ -81,24 +81,17 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
         Constraints:
         - English only
         - Exactly 3 concise, concrete facts that act as evidence inside one story; never present them as a list
-        - Strong curiosity title, no emoji
+        - A specific title that states the subject and the supported discovery, no emoji
         - The title must match {topic.topic}; do not use another catalog topic or unrelated bait
-        - Make the title feel clickable and a little clickbait, but do not make false claims
+        - Do not use curiosity filler such as "weird", "secret", or "nobody knows" in place of the actual discovery
         - Do not use bland title shapes like "X Wonders", "X Explained", or "3 Facts About X"
-        - Use full ALL CAPS for some titles, and use ALL CAPS emphasis words in others; do not make every title all caps
-        - Also write title_hook: a bolder clickable SEO title that does not use "3 Facts About"
-        - Prefer title formats like:
-          "DEEP SEA VENTS SHOULD NOT EXIST"
-          "The Ocean Secret Nobody Talks About"
-          "This Lives 3,000 Meters Down"
-          "SATURN IS HIDING SOMETHING WEIRD"
-          "Do NOT Ignore This About Axolotls"
+        - Write title_hook as a second specific, accurate title, not as a more sensational version
         - Build one promise through exactly four beats: hook, evidence, reversal, payoff. Add one optional loop beat only when it creates a genuinely satisfying return to the hook
-        - The spoken hook must be 5-12 words and work in the first second: name or unmistakably identify {topic.topic}, state a concrete surprise or contradiction, and open a precise information gap
+        - The spoken hook must be 5-16 words and work in the first second: name or unmistakably identify {topic.topic}, state a concrete surprise, and begin answering it
         - Do not spend the hook establishing atmosphere; put the subject and surprising claim first
         - Make every later beat add new information: the evidence beat proves the claim, the reversal changes how the viewer sees it, and the payoff answers or reframes the hook
         - Reveal useful proof in the evidence beat, then save the strongest reframe for the payoff instead of withholding every answer until the end
-        - The final payoff or loop must be 6-12 spoken words, directly answer or reframe the hook, and end immediately after the strongest idea
+        - The final payoff or loop must be 4-16 spoken words, directly answer or reframe the hook, and end immediately after the strongest idea
         - Never end with a recap, moral, generic importance statement, disclaimer, or production comment
         - The narration should feel like natural spoken English, with contractions, purposeful rhythm, and varied sentence length
         - Spoken narration must use normal sentence capitalization; never write narration in ALL CAPS
@@ -118,7 +111,8 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
         - The facts array must contain exactly 3 complete, concrete facts, not generic video-production statements
         - The facts must support the title and narration
         - Every fact must be explicitly stated or clearly paraphrased in the narration
-        - No uncertainty phrases
+        - Preserve meaningful scientific uncertainty: say when evidence supports an interpretation instead of presenting it as proven
+        - Keep every number, unit, named location, and qualifier identical in meaning between the facts and narration
         - No politics, religion, celebrity gossip, explicit content, dangerous advice, or medical claims
         - Avoid title similarity to these recent titles: {excluded}
         - Every JSON field must be filled; never use "" or [] for required fields
@@ -143,7 +137,7 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
           "bucket": "{topic.bucket}",
           "topic": "{topic.topic}",
           "title": "<title>",
-          "title_hook": "<clickbait-curiosity alternative title>",
+          "title_hook": "<specific alternative title>",
           "description": "<description>",
           "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5", "#tag6", "#tag7", "#tag8", "#tag9", "#tag10"],
           "narration": "<full narration>",

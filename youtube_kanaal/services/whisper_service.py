@@ -9,6 +9,7 @@ from youtube_kanaal.utils.files import write_text
 from youtube_kanaal.utils.process import run_command
 from youtube_kanaal.utils.subtitles import (
     align_script_to_reference_srt,
+    beat_boundaries_from_srt,
     build_ass_from_srt_text,
     build_timed_subtitles,
     build_vtt_from_srt_text,
@@ -31,6 +32,7 @@ class WhisperService:
         output_base_path: Path,
         duration_seconds: float,
         beat_overlays: list[dict[str, object]] | None = None,
+        beat_texts: list[str] | None = None,
         style_profile: str = "short",
     ) -> SubtitleAsset:
         output_base_path.parent.mkdir(parents=True, exist_ok=True)
@@ -59,6 +61,12 @@ class WhisperService:
             srt_text = build_timed_subtitles(lines, duration_seconds)
             write_text(srt_path, srt_text)
             write_text(vtt_path, build_vtt_from_srt_text(srt_text))
+            timed_overlays = self._time_beat_overlays(
+                beat_overlays,
+                beat_texts,
+                srt_text,
+                duration_seconds,
+            )
             write_text(
                 ass_path,
                 build_ass_from_srt_text(
@@ -76,6 +84,7 @@ class WhisperService:
                     style_name=style["style_name"],
                     play_res_x=style["play_res_x"],
                     play_res_y=style["play_res_y"],
+                    beat_overlays=timed_overlays,
                 ),
             )
             return SubtitleAsset(srt_path=srt_path, vtt_path=vtt_path, ass_path=ass_path)
@@ -118,6 +127,12 @@ class WhisperService:
         )
         write_text(srt_path, normalized_srt_text)
         write_text(vtt_path, build_vtt_from_srt_text(normalized_srt_text))
+        timed_overlays = self._time_beat_overlays(
+            beat_overlays,
+            beat_texts,
+            normalized_srt_text,
+            duration_seconds,
+        )
         write_text(
             ass_path,
             build_ass_from_srt_text(
@@ -135,7 +150,36 @@ class WhisperService:
                 style_name=style["style_name"],
                 play_res_x=style["play_res_x"],
                 play_res_y=style["play_res_y"],
-                beat_overlays=beat_overlays,
+                beat_overlays=timed_overlays,
             ),
         )
         return SubtitleAsset(srt_path=srt_path, vtt_path=vtt_path if vtt_path.exists() else None, ass_path=ass_path)
+
+    def _time_beat_overlays(
+        self,
+        overlays: list[dict[str, object]] | None,
+        beat_texts: list[str] | None,
+        srt_text: str,
+        duration_seconds: float,
+    ) -> list[dict[str, object]] | None:
+        if not overlays or not beat_texts:
+            return overlays
+        boundaries = beat_boundaries_from_srt(srt_text, beat_texts, duration_seconds)
+        if len(boundaries) != len(beat_texts):
+            return overlays
+        return [
+            {
+                **overlay,
+                "start_seconds": round(boundaries[int(overlay.get("beat_index", index))][0], 2),
+                "end_seconds": round(
+                    min(
+                        boundaries[int(overlay.get("beat_index", index))][0] + 1.25,
+                        boundaries[int(overlay.get("beat_index", index))][1],
+                        duration_seconds,
+                    ),
+                    2,
+                ),
+            }
+            for index, overlay in enumerate(overlays)
+            if 0 <= int(overlay.get("beat_index", index)) < len(boundaries)
+        ]

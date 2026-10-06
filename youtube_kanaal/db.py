@@ -167,6 +167,7 @@ class Database:
         stage: str,
         error_message: str,
         completed_at: str,
+        needs_review: bool = False,
     ) -> None:
         with self.connect() as connection:
             connection.execute(
@@ -175,7 +176,7 @@ class Database:
                 SET status = ?, current_stage = ?, error_stage = ?, error_message = ?, completed_at = ?
                 WHERE run_id = ?
                 """,
-                ("failed", stage, stage, error_message, completed_at, run_id),
+                ("needs_review" if needs_review else "failed", stage, stage, error_message, completed_at, run_id),
             )
 
     def record_topic(
