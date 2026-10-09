@@ -71,6 +71,12 @@ class Settings(BaseSettings):
         le=8192,
         validation_alias=AliasChoices("OLLAMA_LONG_MAX_OUTPUT_TOKENS"),
     )
+    ollama_short_max_output_tokens: int = Field(
+        default=1024,
+        ge=256,
+        le=2048,
+        validation_alias=AliasChoices("OLLAMA_SHORT_MAX_OUTPUT_TOKENS"),
+    )
     ollama_temperature: float = Field(default=0.2, ge=0.0, le=2.0, validation_alias=AliasChoices("OLLAMA_TEMPERATURE"))
     pexels_api_key: str | None = Field(default=None, validation_alias=AliasChoices("PEXELS_API_KEY"))
 
@@ -225,6 +231,12 @@ class Settings(BaseSettings):
     network_timeout_seconds: int = Field(default=30, validation_alias=AliasChoices("NETWORK_TIMEOUT_SECONDS"))
     ollama_timeout_seconds: int = Field(default=900, validation_alias=AliasChoices("OLLAMA_TIMEOUT_SECONDS"))
     retry_attempts: int = Field(default=3, validation_alias=AliasChoices("RETRY_ATTEMPTS"))
+    short_topic_attempts: int = Field(
+        default=6,
+        ge=1,
+        le=20,
+        validation_alias=AliasChoices("SHORT_TOPIC_ATTEMPTS"),
+    )
     allow_placeholder_video: bool = Field(
         default=False,
         validation_alias=AliasChoices("ALLOW_PLACEHOLDER_VIDEO"),

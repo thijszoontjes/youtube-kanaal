@@ -419,10 +419,11 @@ class ShortPipeline:
 
         attempted_topics: list[str] = []
         recent_topics = self.database.recent_topics(limit=100)
-        max_topic_attempts = max(
+        available_topic_attempts = max(
             1,
             sum(len(topics) for _, topics in self._topic_catalog_items()) - len({topic.lower() for topic in recent_topics}),
         )
+        max_topic_attempts = min(available_topic_attempts, self.settings.short_topic_attempts)
         last_error: PipelineStageError | None = None
 
         for attempt in range(1, max_topic_attempts + 1):
@@ -431,12 +432,12 @@ class ShortPipeline:
             try:
                 content = self.generate_content(runtime, topic)
             except PipelineStageError as exc:
-                retryable_generation_error = self._is_duplicate_title_generation_error(exc)
+                retryable_generation_error = self._is_retryable_content_generation_error(exc)
                 if runtime.request.preferred_topic or not retryable_generation_error:
                     raise
                 last_error = exc
                 runtime.logger.warning(
-                    "content_generation: duplicate_retry_with_new_topic",
+                    "content_generation: retry_with_new_topic",
                     extra={
                         "run_id": runtime.run_id,
                         "stage": "content_generation",
@@ -714,7 +715,7 @@ class ShortPipeline:
         clips: list[VideoClipAsset],
         beats: list[ShortBeat],
     ) -> list[list[VideoClipAsset]]:
-        """Reserve a distinct primary per beat and keep secondary clips reusable."""
+        """Prefer distinct matching clips, reusing a matching clip when needed."""
 
         if not clips:
             raise PipelineStageError(
@@ -733,10 +734,29 @@ class ShortPipeline:
                 key=lambda clip: self._clip_match_score(beat.visual_query, clip),
                 reverse=True,
             )
-            if not ranked or self._clip_match_score(beat.visual_query, ranked[0]) == float("-inf"):
+            ranked = [
+                clip
+                for clip in ranked
+                if self._clip_match_score(beat.visual_query, clip) != float("-inf")
+            ]
+            if not ranked:
+                # Pexels often returns only one clip whose title matches a very
+                # specific beat query. Reuse the best matching clip rather than
+                # failing the whole Short; beat-specific crops and timing still
+                # provide visual variation downstream.
+                ranked = sorted(
+                    (
+                        clip
+                        for clip in clips
+                        if self._clip_match_score(beat.visual_query, clip) != float("-inf")
+                    ),
+                    key=lambda clip: self._clip_match_score(beat.visual_query, clip),
+                    reverse=True,
+                )
+            if not ranked:
                 raise PipelineStageError(
                     stage="asset_planning",
-                    message=f"No distinct stock clip matches the {beat.beat_type} scene.",
+                    message=f"No relevant stock clip matches the {beat.beat_type} scene.",
                     probable_cause=f"The available asset titles do not support: {beat.visual_query}",
                 )
             primary = ranked[0]
@@ -1082,6 +1102,16 @@ class ShortPipeline:
         )
         return "too similar to recent history" in details or "near-duplicate title" in details
 
+    def _is_retryable_content_generation_error(self, exc: PipelineStageError) -> bool:
+        if self._is_duplicate_title_generation_error(exc):
+            return True
+        if exc.stage != "content_generation":
+            return False
+        if "quality gate" in exc.message.lower():
+            return True
+        cause = exc.__cause__
+        return isinstance(cause, ValueError) or type(cause).__name__ in {"ValidationError", "CoreValidationError"}
+
     def select_world_cup_topic_and_content(self, runtime: PipelineRuntime) -> tuple[TopicChoice, GeneratedShort]:
         recent_topics = self.database.recent_topics(limit=100)
         recent_titles = self.database.recent_titles(limit=100)
@@ -1356,10 +1386,10 @@ class ShortPipeline:
         }
 
         for index, fact in enumerate(content.facts):
-            fact_text = fact.lower()
+            fact_tokens = set(normalize_for_similarity(fact).split())
             query = ""
             for keyword, keyword_query in keyword_map.items():
-                if keyword in fact_text:
+                if keyword in fact_tokens:
                     query = keyword_query
                     break
             if not query:

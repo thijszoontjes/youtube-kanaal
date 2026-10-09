@@ -57,6 +57,8 @@ python -m youtube_kanaal daily-content --for today --short-times "16:00, 17:00, 
 ## op mac
 .venv/bin/python -m youtube_kanaal daily-content --for tomorrow --short-times "11:00,17:00,19:00,20:00" --video-time "17:00"
 
+.venv/bin/python -m youtube_kanaal daily-content --for tomorrow --short-times "11:00,17:00,19:00,20:00"
+
 cd /Users/thijszoontjes/Projects/youtube-kanaal
 ollama pull llama3.2:3b 
 ##video upload

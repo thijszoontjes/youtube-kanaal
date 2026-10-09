@@ -81,17 +81,17 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
         Constraints:
         - English only
         - Exactly 3 concise, concrete facts that act as evidence inside one story; never present them as a list
-        - A specific title that states the subject and the supported discovery, no emoji
+        - A specific title of at most 80 characters that states the subject and the supported discovery, no emoji
         - The title must match {topic.topic}; do not use another catalog topic or unrelated bait
         - Do not use curiosity filler such as "weird", "secret", or "nobody knows" in place of the actual discovery
         - Do not use bland title shapes like "X Wonders", "X Explained", or "3 Facts About X"
         - Write title_hook as a second specific, accurate title, not as a more sensational version
-        - Build one promise through exactly four beats: hook, evidence, reversal, payoff. Add one optional loop beat only when it creates a genuinely satisfying return to the hook
-        - The spoken hook must be 5-16 words and work in the first second: name or unmistakably identify {topic.topic}, state a concrete surprise, and begin answering it
+        - Build one promise through exactly four beats: hook, evidence, escalation with a reversal, payoff. Add one optional loop beat only when it creates a genuinely satisfying return to the hook
+        - The spoken hook should be 5-25 words: name or unmistakably identify {topic.topic}, state a concrete surprise, and get to the point quickly
         - Do not spend the hook establishing atmosphere; put the subject and surprising claim first
         - Make every later beat add new information: the evidence beat proves the claim, the reversal changes how the viewer sees it, and the payoff answers or reframes the hook
         - Reveal useful proof in the evidence beat, then save the strongest reframe for the payoff instead of withholding every answer until the end
-        - The final payoff or loop must be 4-16 spoken words, directly answer or reframe the hook, and end immediately after the strongest idea
+        - The final payoff or loop should be 4-25 spoken words, directly answer or reframe the hook, and end after the strongest idea
         - Never end with a recap, moral, generic importance statement, disclaimer, or production comment
         - The narration should feel like natural spoken English, with contractions, purposeful rhythm, and varied sentence length
         - Spoken narration must use normal sentence capitalization; never write narration in ALL CAPS
@@ -106,7 +106,7 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
         - Avoid stock endings or recap lines
         - Do not end with phrases like "That is why..." or "People remember..." or "it looks unusual on screen"
         - No bullet points, stage directions, or narrator-style labels inside the narration
-        - Narration length roughly 20-35 seconds (about 55-90 words)
+        - Narration length roughly 16-44 seconds (about 40-110 words)
         - Description must be 1-2 specific sentences about this exact Short; never leave it blank
         - The facts array must contain exactly 3 complete, concrete facts, not generic video-production statements
         - The facts must support the title and narration
@@ -121,7 +121,7 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
         - Every beat needs a literal, Pexels-friendly visual_query describing the exact subject, action, scale, or comparison that proves that spoken line
         - Write visual_query so the beat can support a primary proof shot and a distinct cutaway or detail shot; prefer visible action over static scenery
         - Never request a scientist, laboratory, crowd, or generic landscape as a proxy for a fact unless that person or place is literally discussed
-        - Every beat needs concrete on_screen_text of 2-4 words and at most 24 characters; use a number, mechanism, contrast, or answer that adds information
+        - Every beat needs concrete on_screen_text of 1-4 words and at most 24 characters; use a number, mechanism, contrast, or answer that adds information
         - Never use vague overlays such as "Scientific Findings", "Hidden Truth", "Learn More", "Understanding X", or "The Secret Life"
         - visual_query must prioritize the exact subject and visible action before style words
         - energy controls delivery and editing; transition and sfx must support meaning rather than decorate every cut
@@ -147,7 +147,7 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
             {{
               "beat_type": "hook",
               "narration": "<spoken hook phrase>",
-              "on_screen_text": "<2-5 word visual promise>",
+              "on_screen_text": "<1-4 word visual promise>",
               "visual_query": "<literal subject and action>",
               "energy": "high",
               "transition": "punch",
@@ -157,7 +157,7 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
             {{
               "beat_type": "evidence",
               "narration": "<spoken proof phrase>",
-              "on_screen_text": "<2-5 proof words>",
+              "on_screen_text": "<1-4 proof words>",
               "visual_query": "<literal proof subject and action>",
               "energy": "medium",
               "transition": "cut",
@@ -167,7 +167,7 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
             {{
               "beat_type": "escalation",
               "narration": "<spoken reversal phrase>",
-              "on_screen_text": "<2-5 reversal words>",
+              "on_screen_text": "<1-4 reversal words>",
               "visual_query": "<literal reversal subject and action>",
               "energy": "high",
               "transition": "punch",
@@ -177,7 +177,7 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
             {{
               "beat_type": "payoff",
               "narration": "<spoken answer to the hook>",
-              "on_screen_text": "<2-5 payoff words>",
+              "on_screen_text": "<1-4 payoff words>",
               "visual_query": "<literal payoff subject and action>",
               "energy": "high",
               "transition": "hold",

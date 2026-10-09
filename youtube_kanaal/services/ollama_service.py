@@ -232,34 +232,50 @@ class OllamaService:
             return content
         base_prompt = build_content_generation_prompt(topic, excluded_titles)
         prompt = base_prompt
-        last_quality_error: Exception | None = None
-        for _ in range(max(1, self.settings.retry_attempts)):
+        last_error: Exception | None = None
+        attempts = max(1, self.settings.retry_attempts)
+        for attempt in range(attempts):
             write_text(prompt_path, prompt)
-            content = self._generate_model(
-                prompt=prompt,
-                stage="content_generation",
-                prompt_output_path=response_path,
-                model_cls=GeneratedShort,
-            )
             try:
+                content = self._generate_model(
+                    prompt=prompt,
+                    stage="content_generation",
+                    prompt_output_path=response_path,
+                    model_cls=GeneratedShort,
+                )
                 normalized = self._normalize_generated_short(content, topic)
                 self.validate_short_content(normalized, topic)
+            except PipelineStageError as exc:
+                if not isinstance(exc.__cause__, (ValueError, *_VALIDATION_ERROR_TYPES)):
+                    raise
+                last_error = exc
+                try:
+                    response = json.loads(response_path.read_text(encoding="utf-8")).get("response", "")
+                    previous_draft = response if isinstance(response, str) else json.dumps(response)
+                except (OSError, json.JSONDecodeError, AttributeError):
+                    previous_draft = ""
             except (ValueError, *_VALIDATION_ERROR_TYPES) as exc:
-                last_quality_error = exc
+                last_error = exc
+                previous_draft = content.model_dump_json()
+            else:
+                return normalized
+
+            if attempt + 1 < attempts:
                 prompt = (
-                    "Return only corrected JSON for the same topic. Preserve every supported factual claim, "
-                    "but repair the draft against every publishing-gate issue below. Do not explain the fixes.\n"
-                    f"Topic: {topic.topic}\n"
-                    f"Publishing-gate issues: {exc}\n"
-                    "Previous draft:\n"
-                    f"{content.model_dump_json()}"
+                    f"{base_prompt}\n\n"
+                    "Return corrected JSON only for the same topic. Apply all constraints above. "
+                    "Fix every validation issue. If a fact is not explicitly supported by the narration, "
+                    "remove or revise it without inventing a replacement claim.\n"
+                    f"Validation issues: {last_error.probable_cause if isinstance(last_error, PipelineStageError) else last_error}\n"
+                    f"Previous draft:\n{previous_draft}"
                 )
-                continue
-            return normalized
+
+        if isinstance(last_error, PipelineStageError):
+            raise last_error
         raise PipelineStageError(
             stage="content_generation",
             message="Generated Short did not pass the publishing quality gate.",
-            probable_cause=str(last_quality_error or "The model kept producing weak or mismatched content."),
+            probable_cause=str(last_error or "The model kept producing weak or mismatched content."),
             details_path=response_path,
         )
 
@@ -399,33 +415,62 @@ class OllamaService:
             reraise=True,
         )
         def _request() -> TModel:
-            response = self.client.post(
-                "/api/generate",
-                json={
-                    "model": self.settings.ollama_model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "format": self._response_schema(model_cls),
-                    "keep_alive": self.settings.ollama_keep_alive,
-                    "options": {
-                        "num_ctx": (
-                            self.settings.ollama_long_context_length
-                            if model_cls is GeneratedLongVideo
-                            else self.settings.ollama_context_length
-                        ),
-                        **(
-                            {"num_predict": self.settings.ollama_long_max_output_tokens}
-                            if model_cls is GeneratedLongVideo
-                            else {}
-                        ),
-                        "temperature": self.settings.ollama_temperature,
+            options: dict[str, object] = {
+                "num_ctx": (
+                    self.settings.ollama_long_context_length
+                    if model_cls is GeneratedLongVideo
+                    else self.settings.ollama_context_length
+                ),
+                "temperature": self.settings.ollama_temperature,
+            }
+            if model_cls is GeneratedLongVideo:
+                options["num_predict"] = self.settings.ollama_long_max_output_tokens
+            elif model_cls is GeneratedShort:
+                options["num_predict"] = self.settings.ollama_short_max_output_tokens
+            else:
+                options["num_predict"] = 256
+
+            payload: dict[str, object] = {}
+            response_parts: list[str] = []
+            try:
+                with self.client.stream(
+                    "POST",
+                    "/api/generate",
+                    json={
+                        "model": self.settings.ollama_model,
+                        "prompt": prompt,
+                        "stream": True,
+                        "format": self._response_schema(model_cls),
+                        "keep_alive": self.settings.ollama_keep_alive,
+                        "options": options,
                     },
-                },
-            )
-            response.raise_for_status()
-            payload = response.json()
+                ) as response:
+                    response.raise_for_status()
+                    for line in response.iter_lines():
+                        if not line:
+                            continue
+                        chunk = json.loads(line)
+                        if not isinstance(chunk, dict):
+                            raise ValueError("Ollama returned an invalid streaming response.")
+                        if chunk.get("error"):
+                            raise ValueError(str(chunk["error"]))
+                        response_parts.append(str(chunk.get("response", "")))
+                        payload.update({key: value for key, value in chunk.items() if key != "response"})
+            except httpx.HTTPError:
+                if response_parts:
+                    write_json(
+                        prompt_output_path,
+                        {
+                            **payload,
+                            "response": "".join(response_parts),
+                            "stream_interrupted": True,
+                        },
+                    )
+                raise
+
+            payload["response"] = "".join(response_parts)
             write_json(prompt_output_path, payload)
-            response_text = payload.get("response", "").strip()
+            response_text = str(payload.get("response", "")).strip()
             if not response_text:
                 raise ValueError("Ollama returned an empty response.")
             try:
@@ -831,18 +876,14 @@ class OllamaService:
                         "duration_weight": min(max(float(raw_beat.get("duration_weight", 1.0) or 1.0), 0.45), 2.5),
                     }
                 )
-        narration = raw_narration
         repaired_facts = list(repaired["facts"]) if isinstance(repaired["facts"], list) else []
+        beat_words = sum(len(str(beat["narration"]).split()) for beat in cleaned_beats)
+        keep_beats = len(cleaned_beats) >= 4 and SHORT_MIN_WORDS <= beat_words <= SHORT_MAX_WORDS
+        narration = " ".join(str(beat["narration"]) for beat in cleaned_beats) if keep_beats else raw_narration
         if not narration or not SHORT_MIN_WORDS <= len(narration.split()) <= SHORT_MAX_WORDS:
             return {}
         repaired["narration"] = narration
-
-        beat_words = sum(len(str(beat["narration"]).split()) for beat in cleaned_beats)
-        repaired["beats"] = (
-            cleaned_beats
-            if len(cleaned_beats) >= 4 and SHORT_MIN_WORDS <= beat_words <= SHORT_MAX_WORDS
-            else []
-        )
+        repaired["beats"] = cleaned_beats if keep_beats else []
 
         title = str(repaired.get("title", "")).strip()
         title_hook = str(repaired.get("title_hook", "")).strip()
@@ -904,7 +945,7 @@ class OllamaService:
         normalized_beats = []
         for beat in content.beats:
             beat_payload = beat.model_dump(mode="json")
-            overlay = self._normalize_overlay(beat.on_screen_text)
+            overlay = self._normalize_overlay(beat.on_screen_text, beat.narration)
             beat_payload["on_screen_text"] = overlay
             normalized_beats.append(beat_payload)
         base_payload.update(
@@ -922,10 +963,10 @@ class OllamaService:
         base_payload["subtitle_text"] = cleaned_narration
         return GeneratedShort.model_validate(base_payload)
 
-    def _normalize_overlay(self, overlay: str) -> str:
-        """Keep explicit overlays short without inventing text from the narration."""
+    def _normalize_overlay(self, overlay: str, narration: str = "") -> str:
+        """Keep overlays short, deriving a label from the beat when one is missing."""
 
-        words = overlay.split()[:4]
+        words = (overlay or narration).split()[:4]
         value = " ".join(words)
         if len(value) > 24:
             value = value[:24].rsplit(" ", 1)[0].strip()
@@ -997,9 +1038,18 @@ class OllamaService:
         )
 
         tags = repaired.get("tags")
-        cleaned_tags = [str(tag).strip().lstrip("#") for tag in tags if str(tag).strip()] if isinstance(tags, list) else []
-        cleaned_tags.extend([topic_value, bucket_value, "facts", "documentary", "explainer", "science"])
-        repaired["tags"] = list(dict.fromkeys(cleaned_tags))[:20]
+        candidates = [str(tag).strip().lstrip("#") for tag in tags if str(tag).strip()] if isinstance(tags, list) else []
+        candidates.extend([topic_value, bucket_value, "facts", "documentary", "explainer", "science", "education", "knowledge"])
+        cleaned_tags: list[str] = []
+        seen_tags: set[str] = set()
+        for tag in candidates:
+            key = tag.casefold()
+            if key and key not in seen_tags:
+                cleaned_tags.append(tag)
+                seen_tags.add(key)
+            if len(cleaned_tags) == 20:
+                break
+        repaired["tags"] = cleaned_tags
 
         facts = repaired.get("facts")
         cleaned_facts = [
@@ -1408,15 +1458,15 @@ class OllamaService:
         cleaned_title = " ".join(title.split()).strip()
         cleaned_hook = " ".join(title_hook.split()).strip()
         if cleaned_hook and self._is_better_title(cleaned_hook, cleaned_title, topic, facts):
-            return self._style_title(cleaned_hook, max_length=70)
+            return self._style_title(cleaned_hook, max_length=80)
         if cleaned_title and not self._is_generic_title(cleaned_title):
-            return self._style_title(cleaned_title, max_length=70)
+            return self._style_title(cleaned_title, max_length=80)
         if cleaned_hook and not self._is_generic_title(cleaned_hook):
-            return self._style_title(cleaned_hook, max_length=70)
+            return self._style_title(cleaned_hook, max_length=80)
         raise ValueError("Both generated titles are generic or incomplete.")
 
     def _is_better_title(self, candidate: str, current: str, topic: str, facts: list[str]) -> bool:
-        if not candidate or len(candidate) > 70:
+        if not candidate or len(candidate) > 80:
             return False
         if self._is_generic_title(candidate):
             return False
@@ -1499,9 +1549,7 @@ class OllamaService:
 
     def _style_title(self, title: str, *, max_length: int) -> str:
         cleaned = " ".join(title.split()).strip()
-        if len(cleaned) > max_length:
-            raise ValueError(f"Title must be rewritten to fit the {max_length}-character limit.")
-        return cleaned
+        return self._trim_title(cleaned, max_length)
 
     def _trim_title(self, title: str, max_length: int) -> str:
         cleaned = " ".join(title.split()).strip()
@@ -1510,6 +1558,9 @@ class OllamaService:
         trimmed = cleaned[:max_length].rstrip(" -|,:;")
         if " " in trimmed:
             trimmed = trimmed.rsplit(" ", 1)[0]
+        trailing_connectors = {"a", "an", "and", "at", "by", "for", "from", "in", "of", "on", "or", "the", "to", "with"}
+        while trimmed and trimmed.rsplit(" ", 1)[-1].lower() in trailing_connectors:
+            trimmed = trimmed.rsplit(" ", 1)[0].rstrip(" -|,:;")
         return trimmed.rstrip(" -|,:;") or cleaned[:max_length].rstrip()
 
     def _variation_seed(self, topic: str, facts: list[str]) -> int:
@@ -1608,10 +1659,10 @@ class OllamaService:
             problems.append("narration contains internal production or verification language")
         if content.beats and any(not beat.on_screen_text for beat in content.beats):
             problems.append("every story beat needs a concrete visual text accent")
-        if content.beats and any(not 2 <= len(beat.on_screen_text.split()) <= 4 for beat in content.beats):
-            problems.append("visual text accents must contain 2-4 words")
-        if content.beats and not 5 <= len(content.beats[0].narration.split()) <= 16:
-            problems.append("spoken hook must contain 5-16 words")
+        if content.beats and any(not 1 <= len(beat.on_screen_text.split()) <= 4 for beat in content.beats):
+            problems.append("visual text accents must contain 1-4 words")
+        if content.beats and not 5 <= len(content.beats[0].narration.split()) <= 25:
+            problems.append("spoken hook must contain 5-25 words")
         if any(len(beat.on_screen_text) > 24 for beat in content.beats):
             problems.append("on-screen text exceeds 24 characters")
         if any(
@@ -1622,8 +1673,8 @@ class OllamaService:
             problems.append("on-screen text contains a vague generic label")
         if content.beats:
             payoff = content.beats[-1].narration
-            if not 4 <= len(payoff.split()) <= 16:
-                problems.append("final payoff must contain 4-16 words")
+            if not 4 <= len(payoff.split()) <= 25:
+                problems.append("final payoff must contain 4-25 words")
             if any(fragment in payoff.lower() for fragment in _GENERIC_PAYOFF_FRAGMENTS):
                 problems.append("final payoff is a generic recap instead of a sharp ending")
         if self._uppercase_letter_ratio(content.narration) > 0.55:

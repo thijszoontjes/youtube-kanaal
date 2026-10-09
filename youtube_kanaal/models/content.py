@@ -517,8 +517,8 @@ _GENERIC_TITLE_HASHTAGS: tuple[str, ...] = (
     "#LearnOnYouTube",
     "#InterestingFacts",
 )
-SHORT_MIN_WORDS = 55
-SHORT_MAX_WORDS = 90
+SHORT_MIN_WORDS = 40
+SHORT_MAX_WORDS = 110
 _APP_PROMO_LINE = "Download my app SecureSets (Android only):"
 _APP_PROMO_URL = "https://play.google.com/store/apps/details?id=com.securesets.app&pli=1"
 _BUCKET_HASHTAGS: dict[str, tuple[str, ...]] = {
@@ -692,8 +692,8 @@ class GeneratedShort(BaseModel):
             self.subtitle_text = self.narration
         word_count = len(self.narration.split())
         if not SHORT_MIN_WORDS <= word_count <= SHORT_MAX_WORDS:
-            raise ValueError("Narration should be roughly 20-35 seconds of speech.")
-        if len(self.title) > 70:
+            raise ValueError("Narration should be roughly 16-44 seconds of speech.")
+        if len(self.title) > 80:
             raise ValueError("Title is too long for a Short.")
         self.hashtags = self._expand_hashtags(self.hashtags)
         return self

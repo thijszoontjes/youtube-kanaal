@@ -2,7 +2,7 @@
 
 ## Wat ik in je huidige pipeline zie
 - Je prompt stuurt al op "human, natural, unscripted" en verbiedt mechanische lijstjes, maar de structuur blijft nog streng (exact 3 facts, vaste JSON, veel constraints). Dat vergroot het risico op herkenbare AI-ritmes.
-- Je Shorts mikken op ~45-90 woorden (20-35 sec). Dat is goed voor retentie, maar té strak kan monotone cadans geven.
+- Je Shorts mikken op ~40-110 woorden (16-44 sec). Die marge voorkomt afwijzing van bruikbare scripts die net buiten de richtlengte vallen.
 - Je gebruikt vooral 1 stemprofiel (`KOKORO_VOICE=af_heart`) en vaste snelheid (`KOKORO_SPEED=1.05`), waardoor meerdere uploads hetzelfde klinken.
 - Je duplicate guard gebruikt titel/topic-similarity; goed tegen herhaling, maar nog niet tegen "zelfde vertelvorm".
 
