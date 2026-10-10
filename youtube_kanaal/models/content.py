@@ -612,7 +612,7 @@ class GeneratedShort(BaseModel):
     description: str = Field(min_length=40, max_length=500)
     hashtags: list[str] = Field(min_length=3, max_length=15)
     narration: str = Field(min_length=80, max_length=700)
-    facts: list[str] = Field(min_length=3, max_length=3)
+    facts: list[str] = Field(min_length=1, max_length=3)
     subtitle_text: str = Field(min_length=20, max_length=700)
     beats: list[ShortBeat] = Field(default_factory=list, max_length=5)
     beat_plan_source: Literal["generated", "derived"] = "generated"
@@ -669,11 +669,11 @@ class GeneratedShort(BaseModel):
     @field_validator("facts")
     @classmethod
     def _validate_facts(cls, value: list[str]) -> list[str]:
-        if len(value) != 3:
-            raise ValueError("Exactly three facts are required.")
         cleaned = [_WHITESPACE_RE.sub(" ", item.strip()) for item in value]
+        if not cleaned or any(not item for item in cleaned):
+            raise ValueError("At least one supported fact is required.")
         lowered = [item.lower() for item in cleaned]
-        if len(set(lowered)) != 3:
+        if len(set(lowered)) != len(lowered):
             raise ValueError("Facts must be distinct.")
         for item in lowered:
             if any(phrase in item for phrase in _BANNED_PHRASES):

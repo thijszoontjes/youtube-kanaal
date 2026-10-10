@@ -80,25 +80,27 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
 
         Constraints:
         - English only
-        - Exactly 3 concise, concrete facts that act as evidence inside one story; never present them as a list
+        - Name {topic.topic} in the first three spoken sentences
+        - Use up to 3 concise, concrete facts as evidence inside one story; prefer 2-3 when supported
+        - Every fact must be stated in the spoken narration with the same numbers and units
         - A specific title of at most 80 characters that states the subject and the supported discovery, no emoji
         - The title must match {topic.topic}; do not use another catalog topic or unrelated bait
         - Do not use curiosity filler such as "weird", "secret", or "nobody knows" in place of the actual discovery
         - Do not use bland title shapes like "X Wonders", "X Explained", or "3 Facts About X"
         - Write title_hook as a second specific, accurate title, not as a more sensational version
-        - Build one promise through exactly four beats: hook, evidence, escalation with a reversal, payoff. Add one optional loop beat only when it creates a genuinely satisfying return to the hook
-        - The spoken hook should be 5-25 words: name or unmistakably identify {topic.topic}, state a concrete surprise, and get to the point quickly
+        - Build one promise through 2-5 beats; keep a clear hook and payoff, adding evidence or escalation when useful
+        - The spoken hook should be 3-30 words: name or unmistakably identify {topic.topic}, state a concrete surprise, and get to the point quickly
         - Do not spend the hook establishing atmosphere; put the subject and surprising claim first
         - Make every later beat add new information: the evidence beat proves the claim, the reversal changes how the viewer sees it, and the payoff answers or reframes the hook
         - Reveal useful proof in the evidence beat, then save the strongest reframe for the payoff instead of withholding every answer until the end
-        - The final payoff or loop should be 4-25 spoken words, directly answer or reframe the hook, and end after the strongest idea
+        - The final payoff or loop should be 3-35 spoken words, directly answer or reframe the hook, and end after the strongest idea
         - Never end with a recap, moral, generic importance statement, disclaimer, or production comment
         - The narration should feel like natural spoken English, with contractions, purposeful rhythm, and varied sentence length
         - Spoken narration must use normal sentence capitalization; never write narration in ALL CAPS
         - Do not fake stutters, mistakes, self-corrections, or filler words to imitate a human
         - Put a short pause before the strongest reveal by ending the previous beat cleanly
         - Do not open with "Did you know", "Imagine a world", "Have you ever wondered", or the exact title
-        - Work the three facts into the narration naturally instead of mechanically listing "Fact 1, Fact 2, Fact 3"
+        - Work the facts into the narration naturally instead of mechanically listing them
         - Never use "Here are", "First", "Second", "Third", "Fact 1", "Fact 2", or "Fact 3" in the narration
         - Vary sentence length and rhythm
         - Slightly informal phrasing is good, but keep it clean and easy to follow
@@ -108,15 +110,15 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
         - No bullet points, stage directions, or narrator-style labels inside the narration
         - Narration length roughly 16-44 seconds (about 40-110 words)
         - Description must be 1-2 specific sentences about this exact Short; never leave it blank
-        - The facts array must contain exactly 3 complete, concrete facts, not generic video-production statements
+        - The facts array must contain 1-3 complete, concrete facts, not generic video-production statements
         - The facts must support the title and narration
         - Every fact must be explicitly stated or clearly paraphrased in the narration
         - Preserve meaningful scientific uncertainty: say when evidence supports an interpretation instead of presenting it as proven
         - Keep every number, unit, named location, and qualifier identical in meaning between the facts and narration
         - No politics, religion, celebrity gossip, explicit content, dangerous advice, or medical claims
         - Avoid title similarity to these recent titles: {excluded}
-        - Every JSON field must be filled; never use "" or [] for required fields
-        - The facts array must contain exactly 3 complete sentences copied or summarized from the narration
+        - Fill every required field; facts may contain 1-3 items and must not add unsupported claims
+        - The facts array must contain only complete sentences copied or summarized from the narration; use fewer rather than add an unsupported claim
         - Subtitle text must exactly match the spoken narration
         - Every beat needs a literal, Pexels-friendly visual_query describing the exact subject, action, scale, or comparison that proves that spoken line
         - Write visual_query so the beat can support a primary proof shot and a distinct cutaway or detail shot; prefer visible action over static scenery
@@ -128,7 +130,7 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
         - High-energy beats should be visually changeable: include a clear motion, reveal, comparison, number, texture, or close-up that can survive a fast cut
         - narration must exactly equal all beat narration fields joined with single spaces
         - subtitle_text must exactly match narration
-        - Generate at least 10 relevant hashtags
+        - Generate 5-8 relevant hashtags
         - Hashtags should start with #
         - Return strict JSON only
 
@@ -139,7 +141,7 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
           "title": "<title>",
           "title_hook": "<specific alternative title>",
           "description": "<description>",
-          "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5", "#tag6", "#tag7", "#tag8", "#tag9", "#tag10"],
+          "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5", "#tag6", "#tag7", "#tag8"],
           "narration": "<full narration>",
           "facts": ["<fact 1>", "<fact 2>", "<fact 3>"],
           "subtitle_text": "<exact narration>",

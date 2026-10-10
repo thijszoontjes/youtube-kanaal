@@ -232,7 +232,7 @@ class Settings(BaseSettings):
     ollama_timeout_seconds: int = Field(default=900, validation_alias=AliasChoices("OLLAMA_TIMEOUT_SECONDS"))
     retry_attempts: int = Field(default=3, validation_alias=AliasChoices("RETRY_ATTEMPTS"))
     short_topic_attempts: int = Field(
-        default=6,
+        default=2,
         ge=1,
         le=20,
         validation_alias=AliasChoices("SHORT_TOPIC_ATTEMPTS"),

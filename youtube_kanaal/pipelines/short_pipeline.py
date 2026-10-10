@@ -509,7 +509,7 @@ class ShortPipeline:
         recent_titles = self.database.recent_titles(limit=100)
         with self._stage(runtime, "content_generation", {"topic": topic.topic, "recent_titles": len(recent_titles)}):
             last_error: Exception | None = None
-            for _ in range(self.settings.retry_attempts):
+            for _ in range(min(2, self.settings.retry_attempts)):
                 content = self.ollama.generate_short_content(
                     topic=topic,
                     excluded_titles=recent_titles,

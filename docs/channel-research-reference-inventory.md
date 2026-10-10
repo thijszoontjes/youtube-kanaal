@@ -12,9 +12,9 @@ The research brief is an instruction set, not evidence. Claims from it must be c
 
 | Area | Reference | What it tells us | Evidence status |
 |---|---|---|---|
-| Script generation | `youtube_kanaal/prompts.py` | Four story shapes, a first-second hook, 5–7 beats, early proof, later rewards, and a short payoff/loop | Implemented design |
-| Content validation | `youtube_kanaal/services/ollama_service.py` | Rejects weak openers, formulaic narration, generic facts, mismatched titles, missing hooks, and weak payoffs | Heuristic gate, not proof of performance |
-| Short data model | `youtube_kanaal/models/content.py` | Curated topic catalog, exactly three facts, 55–90 spoken words, beat-derived subtitles and overlays | Implemented constraint |
+| Script generation | `youtube_kanaal/prompts.py` | Four story shapes, a quick hook, 2–5 beats, narrated evidence, and a short payoff/loop | Implemented design |
+| Content validation | `youtube_kanaal/services/ollama_service.py` | Aligns fact metadata to narration and normalizes titles, beat roles, and minor format variation while keeping topic and safety checks | Narration-consistency heuristic, not external fact-checking |
+| Short data model | `youtube_kanaal/models/content.py` | Curated topic catalog, one to three narration-aligned facts, 40–110 spoken words, beat-derived subtitles and overlays | Implemented constraint |
 | Production flow | `youtube_kanaal/pipelines/short_pipeline.py` | Topic → script → narration → subtitles → B-roll → asset plan → render → validation → upload → history | Implemented pipeline |
 | Visual matching | `youtube_kanaal/pipelines/short_pipeline.py` and `youtube_kanaal/services/pexels_service.py` | Fact-first queries, topic-specific fallbacks, subject matching and portrait stock-video search | Implemented retrieval strategy |
 | Voice | `youtube_kanaal/services/chatterbox_service.py`, `xtts_service.py`, `kokoro_service.py` | Chatterbox/XTTS use reference audio; Kokoro uses beat-specific speed and pauses | Implemented audio behavior |
