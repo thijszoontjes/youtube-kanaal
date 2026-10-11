@@ -721,9 +721,18 @@ class PexelsService:
         viable_candidates = [
             clip
             for clip in candidates
-            if clip.score >= 3.0 and self._matches_required_subject(clip, required_subjects)
+            if clip.score >= 3.0
         ]
-        for clip in self._prioritized_candidates(viable_candidates, queries):
+        exact_subject_matches = [
+            clip for clip in viable_candidates if self._matches_required_subject(clip, required_subjects)
+        ]
+        # Pexels often has suitable supporting footage without the exact topic name in its URL.
+        fallback_candidates = [
+            clip for clip in viable_candidates if not self._matches_required_subject(clip, required_subjects)
+        ]
+        prioritized = self._prioritized_candidates(exact_subject_matches, queries)
+        prioritized.extend(self._prioritized_candidates(fallback_candidates, queries))
+        for clip in prioritized:
             if clip.source_id in used_ids:
                 continue
             if not self._prepare_clip_for_use(clip):

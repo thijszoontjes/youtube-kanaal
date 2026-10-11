@@ -953,6 +953,26 @@ class OllamaService:
             beat_payload["on_screen_text"] = overlay
             beat_payload["beat_type"] = expected_types[len(beats_to_normalize)][index]
             normalized_beats.append(beat_payload)
+        if len(normalized_beats) > 1 and not 3 <= len(normalized_beats[0]["narration"].split()) <= 30:
+            hook_sentences = []
+            sentences = [
+                sentence.strip()
+                for sentence in _SENTENCE_SPLIT_RE.split(normalized_beats[0]["narration"])
+                if sentence.strip()
+            ]
+            for sentence in sentences:
+                if len(" ".join([*hook_sentences, sentence]).split()) > 30:
+                    break
+                hook_sentences.append(sentence)
+                if len(" ".join(hook_sentences).split()) >= 3:
+                    break
+            hook = " ".join(hook_sentences)
+            if 3 <= len(hook.split()) <= 30 and len(hook_sentences) < len(sentences):
+                remaining = " ".join(sentences[len(hook_sentences):])
+                normalized_beats[0]["narration"] = hook
+                normalized_beats[1]["narration"] = " ".join(
+                    part for part in (remaining, normalized_beats[1]["narration"]) if part
+                )
         description = content.description.strip()
         if self._contains_generic_repair_text(description):
             first_sentence = self._first_sentence(cleaned_narration)
