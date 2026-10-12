@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from itertools import chain
 from pathlib import Path
 from typing import TypeVar
@@ -35,6 +36,14 @@ from youtube_kanaal.utils.files import write_json, write_text
 TModel = TypeVar("TModel", bound=BaseModel)
 _VALIDATION_ERROR_TYPES = (ValidationError, CoreValidationError)
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+
+
+def _fold_diacritics(value: str) -> str:
+    return "".join(
+        char for char in unicodedata.normalize("NFKD", value) if not unicodedata.combining(char)
+    )
+
+
 _LONG_INTRO_STOCK_RE = re.compile(
     r"\b(?:in this video|join us on a journey|follow the clues|chapter by chapter|"
     r"we(?:'ll| will) explore|let(?:'s| us) explore)\b",
@@ -1733,8 +1742,9 @@ class OllamaService:
 
     def _mentions_topic_early(self, narration: str, topic: str, *, sentence_count: int = 2) -> bool:
         early_text = " ".join(self._first_sentences(narration, sentence_count).lower().split())
-        topic_tokens = self._important_topic_tokens(topic)
-        return bool(topic_tokens and any(token in _TOKEN_RE.findall(early_text) for token in topic_tokens))
+        topic_tokens = self._important_topic_tokens(_fold_diacritics(topic))
+        narration_tokens = _TOKEN_RE.findall(_fold_diacritics(early_text))
+        return bool(topic_tokens and any(token in narration_tokens for token in topic_tokens))
 
     def _important_topic_tokens(self, topic: str) -> set[str]:
         stop_words = {"the", "a", "an", "your", "you", "and", "of", "in", "to"}
