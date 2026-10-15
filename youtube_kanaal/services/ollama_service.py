@@ -395,6 +395,12 @@ class OllamaService:
         prompt_output_path: Path,
         model_cls: type[TModel],
     ) -> TModel:
+        timeout_seconds = (
+            self.settings.ollama_long_timeout_seconds
+            if model_cls is GeneratedLongVideo
+            else self.settings.ollama_timeout_seconds
+        )
+
         @retry(
             stop=stop_after_attempt(self.settings.retry_attempts),
             wait=wait_exponential(multiplier=1, min=1, max=8),
@@ -423,6 +429,7 @@ class OllamaService:
                 with self.client.stream(
                     "POST",
                     "/api/generate",
+                    timeout=timeout_seconds,
                     json={
                         "model": self.settings.ollama_model,
                         "prompt": prompt,
@@ -486,7 +493,7 @@ class OllamaService:
             probable_cause = str(exc)
             if isinstance(exc, httpx.ReadTimeout):
                 probable_cause = (
-                    f"Ollama read timeout after {self.settings.ollama_timeout_seconds} seconds; "
+                    f"Ollama read timeout after {timeout_seconds} seconds; "
                     "generation returned no complete response."
                 )
             raise PipelineStageError(
@@ -523,6 +530,7 @@ class OllamaService:
         )
         response = self.client.post(
             "/api/generate",
+            timeout=self.settings.ollama_long_timeout_seconds,
             json={
                 "model": self.settings.ollama_model,
                 "prompt": repair_prompt,

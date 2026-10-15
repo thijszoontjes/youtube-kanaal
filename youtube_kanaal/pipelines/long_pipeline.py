@@ -212,7 +212,7 @@ class LongPipeline(ShortPipeline):
             raise
 
     def generate_long_content(self, runtime: "LongPipelineRuntime", topic: TopicChoice) -> GeneratedLongVideo:
-        recent_titles = self.database.recent_titles(limit=100)
+        recent_titles = self.database.recent_long_titles()
         with self._long_stage(runtime, "long_content_generation", {"topic": topic.topic, "recent_titles": len(recent_titles)}):
             chapter_subjects = self.ollama.generate_long_chapter_plan(
                 topic=topic,
@@ -852,6 +852,7 @@ class LongPipeline(ShortPipeline):
                 normalized_topic=normalize_for_similarity(topic.topic),
                 content_type="long",
             )
+            self.database.record_long_title(title=content.title, created_at=completed_at)
             self.database.record_asset(
                 run_id=runtime.run_id,
                 asset_type="long_subtitles",

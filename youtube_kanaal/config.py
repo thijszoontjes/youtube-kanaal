@@ -230,6 +230,7 @@ class Settings(BaseSettings):
 
     network_timeout_seconds: int = Field(default=30, validation_alias=AliasChoices("NETWORK_TIMEOUT_SECONDS"))
     ollama_timeout_seconds: int = Field(default=900, validation_alias=AliasChoices("OLLAMA_TIMEOUT_SECONDS"))
+    ollama_long_timeout_seconds: int = Field(default=3600, validation_alias=AliasChoices("OLLAMA_LONG_TIMEOUT_SECONDS"))
     retry_attempts: int = Field(default=3, validation_alias=AliasChoices("RETRY_ATTEMPTS"))
     short_topic_attempts: int = Field(
         default=2,

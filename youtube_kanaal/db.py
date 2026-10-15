@@ -61,6 +61,11 @@ class Database:
                     created_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS long_video_titles (
+                    title TEXT PRIMARY KEY,
+                    created_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS uploads (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     run_id TEXT NOT NULL,
@@ -93,6 +98,18 @@ class Database:
             except sqlite3.OperationalError as exc:
                 if "duplicate column name" not in str(exc).lower():
                     raise
+            connection.execute(
+                "INSERT OR IGNORE INTO long_video_titles (title, created_at) "
+                "SELECT title, created_at FROM topics WHERE title IS NOT NULL AND content_type = 'long'"
+            )
+            title_history_path = Path(__file__).resolve().parents[1] / "data" / "long_video_title_history.json"
+            if title_history_path.exists():
+                history = json.loads(title_history_path.read_text(encoding="utf-8"))
+                connection.executemany(
+                    "INSERT OR IGNORE INTO long_video_titles (title, created_at) VALUES (?, ?)",
+                    [(item["title"], item["created_at"]) for item in history],
+                )
+            connection.execute("DELETE FROM long_video_titles WHERE datetime(created_at) < datetime('now', '-60 days')")
 
     def insert_run(
         self,
@@ -302,6 +319,30 @@ class Database:
                 (limit,),
             ).fetchall()
         return [row["bucket"] for row in rows if row["bucket"]]
+
+    def recent_long_topics(self) -> list[str]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT topic FROM topics "
+                "WHERE content_type = 'long' AND datetime(created_at) >= datetime('now', '-60 days') "
+                "ORDER BY created_at DESC"
+            ).fetchall()
+        return [row["topic"] for row in rows if row["topic"]]
+
+    def record_long_title(self, *, title: str, created_at: str) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO long_video_titles (title, created_at) VALUES (?, ?)",
+                (title, created_at),
+            )
+
+    def recent_long_titles(self) -> list[str]:
+        with self.connect() as connection:
+            connection.execute("DELETE FROM long_video_titles WHERE datetime(created_at) < datetime('now', '-60 days')")
+            rows = connection.execute(
+                "SELECT title FROM long_video_titles ORDER BY created_at DESC"
+            ).fetchall()
+        return [row["title"] for row in rows if row["title"]]
 
     def recent_titles(self, limit: int = 100) -> list[str]:
         with self.connect() as connection:

@@ -365,7 +365,11 @@ class ShortPipeline:
         additional_excluded_topics: list[str] | None = None,
         long_form: bool = False,
     ) -> TopicChoice:
-        recent_topics = self.database.recent_topics(limit=100)
+        recent_topics = (
+            self.database.recent_long_topics()
+            if long_form
+            else self.database.recent_topics(limit=100)
+        )
         recent_buckets = self.database.recent_buckets(limit=4)
         excluded_topics = list(dict.fromkeys([*recent_topics, *(additional_excluded_topics or [])]))
         with self._stage(
