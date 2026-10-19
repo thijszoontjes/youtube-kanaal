@@ -667,6 +667,9 @@ def daily_content(
         )
     )
     _render_long_result(long_result)
+    if effective_upload and not long_result.uploaded:
+        console.print("[red]Daily content incomplete: the long-form video was not uploaded. Inspect upload_status.json.[/red]")
+        raise typer.Exit(code=1)
 
 
 @app.command()

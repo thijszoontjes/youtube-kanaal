@@ -36,6 +36,10 @@ The new topics are available after the next process start and are included in au
 
 ## Daily Content Run
 
+For daily cloud generation while your laptop is off, use the persistent Ubuntu
+server timer in [docs/daily-cloud-content.md](docs/daily-cloud-content.md).
+It runs this branch's four Shorts plus one long video workflow for tomorrow.
+
 The normal daily command generates and schedules 4 Shorts first, then 1 English long-form video. Shorts use `SCHEDULED_RUN_TIMES` (`10:00,13:00,15:00,19:00` by default), and the long-form video publishes at `17:00` in `SCHEDULED_TIMEZONE`.
 
 The Windows logon task uses the `gratis-ai-stem-chatterbox` branch by default. At logon it fetches that branch, switches the local checkout to it, pulls fast-forward-only updates, starts Ollama if needed, and runs `make-short-schedule`, which generates and schedules the four Shorts for the next day.
