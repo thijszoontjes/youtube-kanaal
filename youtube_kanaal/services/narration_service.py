@@ -10,6 +10,7 @@ from youtube_kanaal.services.chatterbox_service import ChatterboxService
 from youtube_kanaal.services.kokoro_service import KokoroService
 from youtube_kanaal.services.piper_service import PiperService
 from youtube_kanaal.services.xtts_service import XTTSService
+from youtube_kanaal.services.voicestudio_service import VoiceStudioService
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,8 @@ class NarrationInspection:
     chatterbox_reason: str | None = None
     piper_ready: bool = False
     piper_reason: str | None = None
+    voicestudio_ready: bool = False
+    voicestudio_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -61,12 +64,14 @@ class NarrationService:
         piper_service: PiperService | None = None,
         xtts_service: XTTSService | None = None,
         chatterbox_service: ChatterboxService | None = None,
+        voicestudio_service: VoiceStudioService | None = None,
     ) -> None:
         self.settings = settings
         self.kokoro = kokoro_service or KokoroService(settings)
         self.piper = piper_service or PiperService(settings)
         self.xtts = xtts_service or XTTSService(settings)
         self.chatterbox = chatterbox_service or ChatterboxService(settings)
+        self.voicestudio = voicestudio_service or VoiceStudioService(settings)
 
     def inspect(
         self,
@@ -75,6 +80,14 @@ class NarrationService:
         engine_override: str | None = None,
     ) -> NarrationInspection:
         requested_engine = (engine_override or self.settings.narration_engine).strip().lower()
+        if requested_engine == "voicestudio":
+            ready, reason = self.voicestudio.runtime_ready()
+            return NarrationInspection(
+                requested_engine=requested_engine,
+                resolved_engine="voicestudio",
+                voicestudio_ready=ready,
+                voicestudio_reason=reason,
+            )
         kokoro_ready, kokoro_reason = self.kokoro.runtime_ready()
         piper_ready, piper_reason = self.piper.runtime_ready()
         if requested_engine == "piper":
@@ -234,6 +247,10 @@ class NarrationService:
                         ),
                     )
                 raise
+
+        if inspection.resolved_engine == "voicestudio":
+            self.voicestudio.synthesize(text=text, output_path=output_path)
+            return NarrationSynthesisResult(output_path=output_path, inspection=inspection)
 
         if inspection.resolved_engine == "xtts":
             try:

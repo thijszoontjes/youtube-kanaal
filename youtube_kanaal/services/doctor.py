@@ -12,6 +12,7 @@ from youtube_kanaal.services.ollama_service import OllamaService
 from youtube_kanaal.services.pexels_service import PexelsService
 from youtube_kanaal.services.piper_service import PiperService
 from youtube_kanaal.services.xtts_service import XTTSService
+from youtube_kanaal.services.voicestudio_service import VoiceStudioService
 from youtube_kanaal.utils.files import is_writable_directory
 from youtube_kanaal.utils.process import command_exists, run_command
 
@@ -68,6 +69,16 @@ class DoctorService:
             return self._xtts_checks()
         if self.settings.narration_engine == "chatterbox":
             return self._chatterbox_checks()
+        if self.settings.narration_engine == "voicestudio":
+            ready, reason = VoiceStudioService(self.settings).runtime_ready()
+            return [
+                DoctorCheck(
+                    name="VoiceStudio",
+                    status="ok" if ready else "fail",
+                    details=f"{self.settings.voicestudio_api_url} | {reason or 'saved voice ready'}",
+                    action=None if ready else reason,
+                )
+            ]
         return [
             self._binary_check("Piper", self.settings.piper_binary),
             self._piper_voice_check(),

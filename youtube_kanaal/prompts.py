@@ -96,6 +96,7 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
         - The final payoff or loop should be 3-35 spoken words, directly answer or reframe the hook, and end after the strongest idea
         - Never end with a recap, moral, generic importance statement, disclaimer, or production comment
         - The narration should feel like natural spoken English, with contractions, purposeful rhythm, and varied sentence length
+        - Give the narration a lively, upbeat YouTube-host rhythm with punchy phrasing and clear emphasis, without shouting or empty hype
         - Spoken narration must use normal sentence capitalization; never write narration in ALL CAPS
         - Do not fake stutters, mistakes, self-corrections, or filler words to imitate a human
         - Put a short pause before the strongest reveal by ending the previous beat cleanly

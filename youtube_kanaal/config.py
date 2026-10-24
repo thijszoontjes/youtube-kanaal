@@ -170,6 +170,24 @@ class Settings(BaseSettings):
         default=False,
         validation_alias=AliasChoices("CHATTERBOX_FALLBACK_TO_PIPER"),
     )
+    voicestudio_api_url: str = Field(
+        default="http://127.0.0.1:3900",
+        validation_alias=AliasChoices("VOICESTUDIO_API_URL"),
+    )
+    voicestudio_voice_id: str = Field(default="", validation_alias=AliasChoices("VOICESTUDIO_VOICE_ID"))
+    voicestudio_instruct: str = Field(default="", validation_alias=AliasChoices("VOICESTUDIO_INSTRUCT"))
+    voicestudio_speed: float = Field(
+        default=1.0,
+        ge=0.25,
+        le=4.0,
+        validation_alias=AliasChoices("VOICESTUDIO_SPEED"),
+    )
+    voicestudio_timeout_seconds: int = Field(
+        default=300,
+        ge=1,
+        le=1200,
+        validation_alias=AliasChoices("VOICESTUDIO_TIMEOUT_SECONDS"),
+    )
     whisper_cpp_binary: str = Field(
         default="whisper-cli",
         validation_alias=AliasChoices("WHISPER_CPP_BINARY"),
@@ -332,8 +350,8 @@ class Settings(BaseSettings):
     @classmethod
     def _validate_narration_engine(cls, value: str) -> str:
         normalized = value.strip().lower()
-        if normalized not in {"kokoro", "piper", "xtts", "chatterbox"}:
-            raise ValueError("Narration engines must be kokoro, piper, xtts, or chatterbox.")
+        if normalized not in {"kokoro", "piper", "xtts", "chatterbox", "voicestudio"}:
+            raise ValueError("Narration engines must be kokoro, piper, xtts, chatterbox, or voicestudio.")
         return normalized
 
     @field_validator("kokoro_lang_code", "kokoro_device")
@@ -432,6 +450,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_duration_window(self) -> "Settings":
+        if self.long_narration_engine == "voicestudio":
+            raise ValueError("VoiceStudio currently supports Short narration only.")
         if self.min_short_duration_seconds >= self.max_short_duration_seconds:
             raise ValueError("MIN_SHORT_DURATION_SECONDS must be lower than MAX_SHORT_DURATION_SECONDS.")
         if self.min_long_duration_seconds >= self.max_long_duration_seconds:

@@ -4,7 +4,7 @@ Local, terminal-first YouTube automation for English Shorts and daily long-form 
 
 ## Long-form branch
 
-The `long-term-videos` branch is dedicated to long-form videos. Shorts are not part of this workflow. A production video is rendered between 8:30 and 11:00 using an AI-generated English script, the configured local voice engine, copyright-friendly Pexels photos, a white explainer layout inspired by the supplied reference video, short visual text fragments, faster image changes, subtitles burned into the final video, background audio ducking, metadata, and a 16:9 thumbnail.
+The `long-term-videos` branch focuses on long-form videos, while the one-off Short command remains available for local drafts. A production video is rendered between 8:30 and 11:00 using an AI-generated English script, the configured local voice engine, copyright-friendly Pexels photos, a white explainer layout inspired by the supplied reference video, short visual text fragments, faster image changes, subtitles burned into the final video, background audio ducking, metadata, and a 16:9 thumbnail.
 
 The supplied reference thumbnail is stored at `data/long-form-thumbnail-reference.png` and is used by the local test command:
 
@@ -381,6 +381,20 @@ Preview the active voice:
 ```
 
 If Kokoro is not installed yet, the pipeline can fall back to Piper when `KOKORO_FALLBACK_TO_PIPER=true`.
+
+## VoiceStudio Clone for Short Drafts
+
+The Short pipeline can use a saved voice profile from the local VoiceStudio app. Keep VoiceStudio running, then set these values in `.env`:
+
+```dotenv
+NARRATION_ENGINE=voicestudio
+VOICESTUDIO_API_URL=http://127.0.0.1:3900
+VOICESTUDIO_VOICE_ID=your-local-profile-id
+VOICESTUDIO_INSTRUCT=
+VOICESTUDIO_SPEED=1.08
+```
+
+VoiceStudio profile IDs are local to the app and are not included in the repository. OmniVoice does not currently accept free-form emotion prompts, so an upbeat script, punctuation, and slightly brisker speed are the available controls; its expressiveness still follows the reference recording. The pipeline stops with a clear error if VoiceStudio or the selected profile is unavailable; it does not silently switch to another voice. Generate a local draft with `.venv/bin/python -m youtube_kanaal make-short --topic "your topic" --no-downloads`; uploading requires the separate `--upload` option.
 
 ## Free AI Voice From Your Own English Samples
 

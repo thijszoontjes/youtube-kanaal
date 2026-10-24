@@ -343,6 +343,8 @@ def _narration_required_check_names(settings: Settings) -> set[str]:
         return {"XTTS runtime", "XTTS speaker samples"}
     if inspection.resolved_engine == "chatterbox":
         return {"Chatterbox runtime", "Chatterbox speaker samples"}
+    if inspection.resolved_engine == "voicestudio":
+        return {"VoiceStudio"}
     return {"Piper", "Piper voice model"}
 
 
@@ -906,6 +908,8 @@ def diagnose_voice(
     table.add_row("Chatterbox details", inspection.chatterbox_reason or "ready")
     table.add_row("Piper ready", "yes" if inspection.piper_ready else "no")
     table.add_row("Piper details", inspection.piper_reason or "ready")
+    table.add_row("VoiceStudio ready", "yes" if inspection.voicestudio_ready else "no")
+    table.add_row("VoiceStudio details", inspection.voicestudio_reason or "ready")
     table.add_row("Reference clips", str(len(inspection.reference_sources)))
     console.print(table)
 
