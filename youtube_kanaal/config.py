@@ -21,14 +21,17 @@ def project_root() -> Path:
 def _expand_path(value: str | Path | None) -> Path | None:
     if value in (None, ""):
         return None
-    return Path(value).expanduser().resolve()
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = project_root() / path
+    return path.resolve()
 
 
 class Settings(BaseSettings):
     """Application settings loaded from .env and environment variables."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=project_root() / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,

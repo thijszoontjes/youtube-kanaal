@@ -301,6 +301,47 @@ def test_ollama_service_generate_model_repairs_core_validation_errors(configured
     assert repaired.bucket == "geography"
 
 
+def test_ollama_service_repairs_long_beat_plan_from_top_level_narration(configured_env) -> None:
+    service = OllamaService(load_settings())
+    payload = {
+        "bucket": "history",
+        "topic": "Pompeii",
+        "title": "The City Frozen in Time",
+        "title_hook": "POMPEII'S STRANGEST SECRET",
+        "description": "A fast history explainer about how Pompeii remained visible through the centuries.",
+        "hashtags": ["#Pompeii", "#History", "#Shorts"],
+        "narration": (
+            "Pompeii was buried by a volcanic eruption almost two thousand years ago. "
+            "Ash preserved streets, houses, and writing in remarkable detail. "
+            "That frozen snapshot still helps researchers understand Roman life today. "
+            "The buried city reveals ordinary routines as well as grand public spaces. "
+            "It remains one of history's most vivid time capsules for modern viewers."
+        ),
+        "facts": [
+            "Pompeii was buried by Mount Vesuvius.",
+            "Ash preserved buildings and everyday objects.",
+            "The site reveals details about Roman life.",
+        ],
+        "subtitle_text": "",
+        "beats": [
+            {
+                "beat_type": beat_type,
+                "narration": "Pompeii was buried by a volcanic eruption, and the remarkable preservation still reveals details about ancient Roman life today.",
+                "on_screen_text": "Ancient secret",
+                "visual_query": {"subject": "Pompeii", "action": "ancient ruins", "scale": "wide shot"},
+            }
+            for beat_type in ("hook", "setup", "evidence", "escalation", "payoff")
+        ],
+    }
+
+    repaired = service._repair_generated_short_payload(payload)
+    validated = GeneratedShort.model_validate(repaired)
+
+    assert len(validated.beats) == 5
+    assert 55 <= len(validated.narration.split()) <= 90
+    assert all(isinstance(beat.visual_query, str) for beat in validated.beats)
+
+
 def test_ollama_service_normalization_strips_stock_outro_phrases(configured_env) -> None:
     service = OllamaService(load_settings())
     topic = TopicChoice(

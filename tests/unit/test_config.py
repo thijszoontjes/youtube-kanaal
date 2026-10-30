@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from youtube_kanaal.config import Settings
+from youtube_kanaal.config import Settings, load_settings, project_root
 
 
 def test_settings_default_to_kokoro_narration() -> None:
@@ -25,6 +25,14 @@ def test_settings_reject_invalid_duration_window() -> None:
 def test_settings_expand_downloads_path(tmp_path) -> None:
     settings = Settings(app_debug=False, downloads_dir=str(tmp_path / "downloads"))
     assert settings.downloads_dir.name == "downloads"
+
+
+def test_settings_resolve_relative_paths_from_project_root(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    settings = load_settings(_env_file=None, output_dir="relative-output")
+
+    assert settings.output_dir == (project_root() / "relative-output").resolve()
 
 
 def test_settings_reject_invalid_schedule_times() -> None:

@@ -2,7 +2,7 @@ param(
     [string]$RepoRoot = "",
     [string]$PythonExe = "",
     [string]$TaskName = "youtube-kanaal-startup-upload",
-    [string]$BranchName = "shorts-retention-editing",
+    [string]$BranchName = "algemene-videos-verbeteringen",
     [string]$ShortTimes = "10:00,13:00,15:00,19:00",
     [string]$ScheduleDate = "",
     [switch]$SkipPull,
@@ -48,7 +48,7 @@ if ($RepoRoot -ne $defaultRepoRoot) {
 if ($PythonExe -ne "python" -and $PythonExe -ne $defaultPythonExe) {
     $scriptArgs += @("-PythonExe", "`"$PythonExe`"")
 }
-if ($BranchName -ne "shorts-retention-editing") {
+if ($BranchName -ne "algemene-videos-verbeteringen") {
     $scriptArgs += @("-BranchName", "`"$BranchName`"")
 }
 if ($ShortTimes -ne "10:00,13:00,15:00,19:00") {

@@ -450,7 +450,31 @@ class OllamaService:
                         "duration_weight": min(max(float(raw_beat.get("duration_weight", 1.0) or 1.0), 0.45), 2.5),
                     }
                 )
-        repaired["beats"] = cleaned_beats if len(cleaned_beats) >= 5 else []
+        # Ollama can return beat-level narration that is longer than the
+        # top-level narration. GeneratedShort validates the combined beat
+        # narration, so trim oversized beat lines while keeping the visual
+        # plan intact. If the plan is still unusable, let the model derive it
+        # from the normalized narration.
+        beat_word_count = sum(len(str(beat["narration"]).split()) for beat in cleaned_beats)
+        if len(cleaned_beats) >= 5 and beat_word_count > SHORT_MAX_WORDS:
+            max_words_per_beat = max(5, SHORT_MAX_WORDS // len(cleaned_beats))
+            for beat in cleaned_beats:
+                words = str(beat["narration"]).split()
+                if len(words) > max_words_per_beat:
+                    beat["narration"] = " ".join(words[:max_words_per_beat]).rstrip(" ,;:") + "."
+            beat_word_count = sum(len(str(beat["narration"]).split()) for beat in cleaned_beats)
+            while beat_word_count > SHORT_MAX_WORDS:
+                longest = max(cleaned_beats, key=lambda item: len(str(item["narration"]).split()))
+                words = str(longest["narration"]).split()
+                if len(words) <= 5:
+                    break
+                longest["narration"] = " ".join(words[:-1]).rstrip(" ,;:") + "."
+                beat_word_count = sum(len(str(beat["narration"]).split()) for beat in cleaned_beats)
+        repaired["beats"] = (
+            cleaned_beats
+            if len(cleaned_beats) >= 5 and SHORT_MIN_WORDS <= beat_word_count <= SHORT_MAX_WORDS
+            else []
+        )
 
         narration = raw_narration
         repaired_facts = list(repaired["facts"]) if isinstance(repaired["facts"], list) else []
