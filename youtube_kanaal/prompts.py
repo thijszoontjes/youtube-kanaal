@@ -80,6 +80,9 @@ def build_content_generation_prompt(topic: TopicChoice, excluded_titles: list[st
 
         Constraints:
         - English only
+        - For GTA 6 topics, use only details confirmed by official Rockstar Games or Take-Two material
+        - Never present leaks, rumors, fan theories, or speculation as confirmed facts; omit them unless clearly labeled unconfirmed
+        - Never invent gameplay details, characters, features, or release information
         - Name {topic.topic} in the first three spoken sentences
         - Use up to 3 concise, concrete facts as evidence inside one story; prefer 2-3 when supported
         - Every fact must be stated in the spoken narration with the same numbers and units
