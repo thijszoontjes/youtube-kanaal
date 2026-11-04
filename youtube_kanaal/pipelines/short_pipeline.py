@@ -655,10 +655,10 @@ class ShortPipeline:
                 clips = self.gta6_media.fetch_clips(
                     topic=topic.topic,
                     target_duration_seconds=narration.duration_seconds,
-                    output_dir=runtime.artifacts.assets_dir / "gta6_screenshots",
+                    output_dir=runtime.artifacts.assets_dir / "gta6_trailers",
                     response_path=runtime.artifacts.responses_dir / "gta6_media.json",
                 )
-                source = "rockstar_gta6_official_screenshots"
+                source = "rockstar_gta6_official_trailers"
             else:
                 clips = self.pexels.fetch_clips(
                     queries=queries,
