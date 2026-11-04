@@ -1,10 +1,11 @@
 # youtube-kanaal
 
-Local, terminal-first YouTube automation for English Shorts and daily long-form fact explainers.
+This branch is dedicated to English YouTube Shorts about GTA 6. Automatic topic selection is limited to GTA 6 subjects, and the writing prompt requires confirmed information to be distinguished from rumors. Use `.venv/bin/python -m youtube_kanaal make-short` to generate one Short or `make-short-schedule` to generate a batch. Long-form code is inherited from `long-term-videos`, but it is outside this branch's GTA 6 Shorts focus.
 
 ## Long-form branch
 
 The `long-term-videos` branch is dedicated to long-form videos. Shorts are not part of this workflow. A production video is rendered between 8:30 and 11:00 using an AI-generated English script, the configured local voice engine, copyright-friendly Pexels photos, a white explainer layout inspired by the supplied reference video, short visual text fragments, faster image changes, subtitles burned into the final video, background audio ducking, metadata, and a 16:9 thumbnail.
+
 
 The supplied reference thumbnail is stored at `data/long-form-thumbnail-reference.png` and is used by the local test command:
 
