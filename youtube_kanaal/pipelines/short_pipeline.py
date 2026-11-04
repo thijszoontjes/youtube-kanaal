@@ -30,6 +30,7 @@ from youtube_kanaal.models import (
     VideoClipAsset,
 )
 from youtube_kanaal.services.ffmpeg_service import FFmpegService
+from youtube_kanaal.services.gta6_media_service import GTA6MediaService
 from youtube_kanaal.services.kokoro_service import KokoroService
 from youtube_kanaal.services.narration_service import NarrationService
 from youtube_kanaal.services.ollama_service import OllamaService
@@ -148,6 +149,7 @@ class ShortPipeline:
         whisper_service: WhisperService | None = None,
         pexels_service: PexelsService | None = None,
         ffmpeg_service: FFmpegService | None = None,
+        gta6_media_service: GTA6MediaService | None = None,
         sound_design_service: SoundDesignService | None = None,
         youtube_service: YouTubeService | None = None,
         world_cup_service: WorldCupService | None = None,
@@ -164,6 +166,7 @@ class ShortPipeline:
         self.whisper = whisper_service or WhisperService(settings)
         self.pexels = pexels_service or PexelsService(settings)
         self.ffmpeg = ffmpeg_service or FFmpegService(settings)
+        self.gta6_media = gta6_media_service or GTA6MediaService(settings)
         self.sound_design = sound_design_service or SoundDesignService(settings)
         self.youtube = youtube_service or YouTubeService(settings)
         self.world_cup = world_cup_service or WorldCupService(settings)
@@ -214,7 +217,7 @@ class ShortPipeline:
                 "beat_boundaries": beat_boundaries,
             }
             sound_design = self.apply_sound_design(runtime, narration, content, beat_boundaries)
-            clips = self.download_stock_video(runtime, visual_queries, narration)
+            clips = self.download_stock_video(runtime, visual_queries, narration, topic)
             plan = self.plan_assets(runtime, clips, narration, content, beat_boundaries)
             final_video_path = self.render_video(runtime, plan, sound_design.mixed_path, subtitles, content)
             validation_payload = self.validate_output(runtime, final_video_path)
@@ -402,7 +405,7 @@ class ShortPipeline:
                         excluded_topics,
                         only_buckets=set(preferred_buckets),
                     )
-                if self._bucket_is_overused(topic.bucket, recent_buckets):
+                if len(self._topic_catalog_items()) > 1 and self._bucket_is_overused(topic.bucket, recent_buckets):
                     topic = self._fallback_topic_excluding(excluded_topics, avoid_buckets={topic.bucket})
             runtime.stage_summaries["topic_selection"] = topic.model_dump(mode="json")
             return topic
@@ -641,16 +644,32 @@ class ShortPipeline:
         runtime: PipelineRuntime,
         queries: list[str],
         narration: NarrationAsset,
+        topic: TopicChoice,
     ) -> list[VideoClipAsset]:
         with self._stage(runtime, "stock_video_download", {"queries": queries}):
-            clips = self.pexels.fetch_clips(
-                queries=queries,
-                target_duration_seconds=narration.duration_seconds,
-                response_path=runtime.artifacts.responses_dir / "pexels_search.json",
-            )
+            if (
+                topic.bucket == "gaming"
+                and "gta 6" in topic.topic.casefold()
+                and not (runtime.request.mock_mode or self.settings.mock_mode)
+            ):
+                clips = self.gta6_media.fetch_clips(
+                    topic=topic.topic,
+                    target_duration_seconds=narration.duration_seconds,
+                    output_dir=runtime.artifacts.assets_dir / "gta6_screenshots",
+                    response_path=runtime.artifacts.responses_dir / "gta6_media.json",
+                )
+                source = "rockstar_gta6_official_screenshots"
+            else:
+                clips = self.pexels.fetch_clips(
+                    queries=queries,
+                    target_duration_seconds=narration.duration_seconds,
+                    response_path=runtime.artifacts.responses_dir / "pexels_search.json",
+                )
+                source = "pexels"
             runtime.stage_summaries["stock_video_download"] = {
                 "clip_count": len(clips),
                 "queries": queries,
+                "source": source,
             }
             return clips
 
@@ -1061,6 +1080,9 @@ class ShortPipeline:
                         visual_queries=[topic, f"{topic} cinematic", bucket],
                         search_terms=[topic, f"{topic} {bucket}", bucket],
                     )
+        catalog_items = self._topic_catalog_items()
+        if len(catalog_items) == 1 and catalog_items[0][1]:
+            return self._preferred_topic(catalog_items[0][1][0], catalog_items[0][0])
         return self._preferred_topic("axolotls", "animals")
 
     def _bucket_is_overused(self, candidate_bucket: str, recent_buckets: list[str]) -> bool:

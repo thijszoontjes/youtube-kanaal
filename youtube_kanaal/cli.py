@@ -265,6 +265,11 @@ def _preflight_pipeline_requirements(request: ShortRunRequest, settings: Setting
         settings,
         upload=request.upload,
         require_ollama=request.content_path is None,
+        require_pexels=bool(
+            request.preferred_topic
+            and "gta 6" not in request.preferred_topic.casefold()
+            and request.content_path is None
+        ),
     )
     blocking = [
         check
@@ -317,6 +322,7 @@ def _pipeline_required_check_names(
     *,
     upload: bool,
     require_ollama: bool = True,
+    require_pexels: bool = True,
 ) -> set[str]:
     required_names = {
         "Python version",
@@ -330,6 +336,8 @@ def _pipeline_required_check_names(
     if require_ollama:
         required_names.update({"Ollama reachable", "Ollama model"})
     required_names.update(_narration_required_check_names(settings))
+    if not require_pexels:
+        required_names.discard("Pexels API key")
     if upload:
         required_names.add("YouTube OAuth client JSON")
     return required_names
