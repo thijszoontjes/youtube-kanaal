@@ -99,13 +99,9 @@ class GTA6MediaService:
     def _render_trailer_scene(self, trailer: TrailerSource, start_seconds: float, output_path: Path) -> None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         filter_graph = (
-            "[0:v]scale=1080:-2,setsar=1,split[foreground][background];"
-            "[background]scale=1080:1920:force_original_aspect_ratio=increase,"
-            "crop=1080:1920,boxblur=32:16[bg];"
-            "[foreground]scale=1120:630:force_original_aspect_ratio=increase,"
-            "crop=1080:607:x='(in_w-out_w)/2+18*sin(t*0.22)':"
-            "y='(in_h-out_h)/2+10*cos(t*0.18)'[fg];"
-            "[bg][fg]overlay=(W-w)/2:(H-h)/2,format=yuv420p[out]"
+            "[0:v]crop=w='trunc(ih*0.85*9/16/2)*2':h='ih*0.85':"
+            "x='(iw-ow)/2+40*sin(t*0.22)':y='(ih-oh)/2',"
+            "scale=1080:1920,setsar=1,format=yuv420p[out]"
         )
         run_command(
             [
