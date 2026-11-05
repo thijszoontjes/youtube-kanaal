@@ -776,6 +776,13 @@ class ShortPipeline:
                     key=lambda clip: self._clip_match_score(beat.visual_query, clip),
                     reverse=True,
                 )
+            if not ranked and all(
+                clip.attribution == "Official GTA VI trailer footage, Rockstar Games"
+                for clip in clips
+            ):
+                # The Rockstar trailer service already supplies only GTA VI footage;
+                # detailed beat queries cannot be matched against its generic source URL.
+                ranked = list(clips)
             if not ranked:
                 raise PipelineStageError(
                     stage="asset_planning",

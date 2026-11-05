@@ -452,7 +452,7 @@ class TopicChoice(BaseModel):
 
 class ShortBeat(BaseModel):
     beat_type: Literal["hook", "setup", "evidence", "escalation", "payoff", "loop"]
-    narration: str = Field(min_length=3, max_length=220)
+    narration: str = Field(min_length=3, max_length=700)
     on_screen_text: str = Field(default="", max_length=42)
     visual_query: str = Field(min_length=3, max_length=120)
     energy: Literal["low", "medium", "high"] = "medium"
